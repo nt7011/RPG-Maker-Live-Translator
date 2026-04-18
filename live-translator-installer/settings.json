@@ -1,0 +1,18 @@
+{
+    "logging": {
+        "enabled": false,
+        "suppressExact": [
+        ]
+    },
+    "debug": {
+        "level": "trace"
+    },
+    "translation": {
+        "disableCjkFilter": false
+    },
+    "diskCache": {
+        "enabled": true,
+        "maxMegabytes": 2048,
+        "clearOnLaunch": false
+    }
+}
