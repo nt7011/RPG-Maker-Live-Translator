@@ -32,9 +32,13 @@ Since RPG Maker is a scriptable platform, no implementation of a translator will
 3. Use included `launch.json` configurations to launch nwjs debugging session.
 4. Open up your vibecodingpromasterTM software of your choice because surely you're not manually debugging this 2000 line jank like what, some kind of a caveman.
 
+To translate other languages than Chinese, Japanese, or Korean, set `"disableCjkFilter": true` in `settings.json`
+
 ## Changelog
 1.0 - major refactor - performance and accuracy improvements, etc
 
 1.1 - fix DeepL 429, fix installer messing up `plugins.json` encoding
+
+1.7 - move to Gemma 4 and fix game dependent crashes
 
 ![License](https://img.shields.io/badge/License-CC%20BY%204.0-blue.svg)
