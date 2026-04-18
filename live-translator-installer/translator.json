@@ -1,0 +1,21 @@
+{
+    "provider": "local",
+    "settings": {
+        "local": {
+            "address": "127.0.0.1",
+            "port": 1234,
+            "model": "google_gemma-4-26b-a4b-it",
+            "system_prompt": "Translate the user's text into accurate and natural Korean. Preserve any tags like ⟦TAG0⟧ exactly as written. Return only the translated text.",
+            "separate_multiline_requests": true,
+            "temperature": 1,
+            "top_p": 0.95,
+            "top_k": 64,
+            "min_p": 0.05,
+            "repeat_penalty": 1.1
+        },
+        "deepl": {
+            "language": "KO",
+            "apiKey": "________NONE________"
+        }
+    }
+}

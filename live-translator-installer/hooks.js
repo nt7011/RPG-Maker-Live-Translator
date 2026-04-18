@@ -1,0 +1,2003 @@
+(() => {
+    'use strict';
+
+    const globalScope = typeof window !== 'undefined'
+        ? window
+        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
+
+    if (!globalScope.LiveTranslatorModules) {
+        globalScope.LiveTranslatorModules = {};
+    }
+
+    globalScope.LiveTranslatorModules.createTextHookInstallers = function createTextHookInstallers(options = {}) {
+        const {
+            logger,
+            dbg,
+            diag,
+            preview,
+            stripRpgmEscapes,
+            prepareTextForTranslation,
+            restoreControlCodes,
+            telemetry,
+            translationCache,
+            captureBitmapDrawState,
+            applyBitmapDrawState,
+            generateKey,
+            contentsOwners,
+            windowRegistry,
+            registeredWindows,
+            PER_CHAR_MARK,
+            REDRAW_SIGNATURE,
+        } = options;
+
+        const logEscape = (level, message, details) => {
+            try {
+                const logFn = logger && typeof logger[level] === 'function'
+                    ? logger[level]
+                    : (level === 'trace' && logger && typeof logger.debug === 'function' ? logger.debug : null);
+                if (!logFn) return;
+                if (details) {
+                    logFn(`[EscapeCodes] ${message}`, details);
+                } else {
+                    logFn(`[EscapeCodes] ${message}`);
+                }
+            } catch (_) {
+                // swallow logging errors
+            }
+        };
+
+        if (typeof stripRpgmEscapes !== 'function'
+            || typeof prepareTextForTranslation !== 'function'
+            || typeof restoreControlCodes !== 'function') {
+            throw new Error('[TextHooks] control code helpers are required (strip/prepare/restore).');
+        }
+
+    function drawMessageFaceIfNeeded(windowInstance) {
+        try {
+            if (!windowInstance) return;
+            if (typeof windowInstance.drawMessageFace === 'function'
+                && typeof $gameMessage !== 'undefined'
+                && $gameMessage
+                && typeof $gameMessage.faceName === 'function'
+                && $gameMessage.faceName()) {
+                windowInstance.drawMessageFace();
+            }
+        } catch (_) {}
+    }
+
+    function resolveMessageStartCoordinates(windowInstance, overrides = {}) {
+        const hasNumber = (value) => typeof value === 'number' && Number.isFinite(value);
+        if (!windowInstance) return { x: 0, y: 0 };
+        let startX = hasNumber(overrides.x) ? overrides.x : undefined;
+        let startY = hasNumber(overrides.y) ? overrides.y : undefined;
+        if (!hasNumber(startX) && hasNumber(windowInstance._trMsgStartX)) startX = windowInstance._trMsgStartX;
+        if (!hasNumber(startY) && hasNumber(windowInstance._trMsgStartY)) startY = windowInstance._trMsgStartY;
+        try {
+            const state = windowInstance._textState;
+            if (state) {
+                if (!hasNumber(startX)) {
+                    if (hasNumber(state.startX)) startX = state.startX;
+                    else if (hasNumber(state.x)) startX = state.x;
+                }
+                if (!hasNumber(startY) && hasNumber(state.y)) {
+                    startY = state.y;
+                }
+            }
+            if (!hasNumber(startX)) {
+                if (typeof windowInstance.newLineX === 'function') {
+                    startX = windowInstance.newLineX(state || undefined);
+                } else if (typeof windowInstance.textPadding === 'function') {
+                    startX = windowInstance.textPadding();
+                }
+            }
+        } catch (error) {
+            logger.warn('[GameMessage] Failed to determine start coordinates; using fallback.', error);
+            if (!hasNumber(startX) && typeof windowInstance.textPadding === 'function') {
+                startX = windowInstance.textPadding();
+            }
+            if (!hasNumber(startY)) startY = 0;
+        }
+        if (!hasNumber(startX)) startX = 0;
+        if (!hasNumber(startY)) startY = 0;
+        return { x: startX, y: startY };
+    }
+
+    const stripPlaceholderDecorators = (token) => String(token || '').replace(/[^\w]/g, '');
+    const escapeRegExp = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const countOccurrences = (text, needle) => {
+        if (!needle) return 0;
+        const re = new RegExp(escapeRegExp(String(needle)), 'g');
+        let m = null;
+        let count = 0;
+        while ((m = re.exec(String(text || '')))) {
+            count++;
+            if (count > 32) break; // guard runaway
+        }
+        return count;
+    };
+
+    const isAbortErrorLike = (error) => {
+        if (!error) return false;
+        if (error.name === 'AbortError' || error.code === 'ABORT_ERR') return true;
+        const message = typeof error.message === 'string' ? error.message : String(error);
+        return /\bAbortError\b/i.test(message) || /\baborted\b/i.test(message);
+    };
+
+    function normalizePlaceholdersForRestore(text, placeholders) {
+        if (!placeholders || !placeholders.length) return null;
+        let output = String(text || '');
+        let changed = false;
+        const plainTokens = placeholders.map(stripPlaceholderDecorators);
+        placeholders.forEach((placeholder, idx) => {
+            if (output.includes(placeholder)) return;
+            const plain = plainTokens[idx];
+            if (!plain) return;
+            const patterns = [
+                new RegExp(`\\b${escapeRegExp(plain)}\\b`),
+                new RegExp(escapeRegExp(plain)),
+            ];
+            const isTag0 = idx === 0 && /TAG0/i.test(plain);
+            if (isTag0) {
+                patterns.push(new RegExp(`TAG0`, 'i'));
+            }
+            for (const pattern of patterns) {
+                if (pattern.test(output)) {
+                    output = output.replace(pattern, placeholder);
+                    changed = true;
+                    break;
+                }
+            }
+        });
+        return changed ? output : null;
+    }
+
+    function validatePlaceholderPresence(text, placeholders) {
+        if (!placeholders || !placeholders.length) return { missingStandard: [], missingPlain: [] };
+        const value = String(text || '');
+        const plainTokens = placeholders.map(stripPlaceholderDecorators);
+        const missingStandard = [];
+        const missingPlain = [];
+        const countMismatches = [];
+        placeholders.forEach((token, idx) => {
+            const countStd = countOccurrences(value, token);
+            if (countStd === 0) {
+                missingStandard.push(token);
+            } else if (countStd !== 1) {
+                countMismatches.push({ token, count: countStd });
+            }
+            const plain = plainTokens[idx];
+            if (plain && !new RegExp(escapeRegExp(plain)).test(value)) {
+                missingPlain.push(plain);
+            } else if (plain) {
+                const countPlain = countOccurrences(value, plain);
+                if (countPlain !== 1) {
+                    countMismatches.push({ token: plain, count: countPlain, plain: true });
+                }
+            }
+        });
+        return { missingStandard, missingPlain, countMismatches };
+    }
+
+    function createEscapeAwarePayload(rawText, context = 'message') {
+        const resolved = String(rawText || '');
+        const visible = stripRpgmEscapes(resolved).trim();
+        if (!visible) return null;
+
+        let placeholderInfo = null;
+        let translationSource = visible;
+        try {
+            placeholderInfo = prepareTextForTranslation(resolved);
+            translationSource = placeholderInfo && placeholderInfo.textForTranslation
+                ? String(placeholderInfo.textForTranslation || '')
+                : String(visible || '');
+        } catch (error) {
+            logger.warn(`[GameMessage ${context}] prepareTextForTranslation failed; using stripped text.`, error);
+            translationSource = String(visible || '');
+        }
+
+        const normalizedTranslationSource = String(translationSource || '').trim();
+
+        return {
+            resolved,
+            visible,
+            placeholderInfo,
+            translationSource,
+            normalizedTranslationSource,
+        };
+    }
+
+    function restoreMessageText(translated, payload) {
+        if (!payload) return translated;
+        const placeholders = payload.placeholderInfo && Array.isArray(payload.placeholderInfo.placeholders)
+            ? payload.placeholderInfo.placeholders
+            : null;
+
+        let candidate = translated;
+
+        if (placeholders && placeholders.length) {
+            const { missingStandard, missingPlain, countMismatches } = validatePlaceholderPresence(candidate, placeholders);
+            const irregularities = [];
+            if (missingStandard.length) irregularities.push('missing_standard');
+            if (missingPlain.length) irregularities.push('missing_plain');
+            if (countMismatches.length) irregularities.push('count_mismatch');
+            if (irregularities.length) {
+                logEscape('debug', `Placeholder irregularity detected (${irregularities.join(',')}); attempting recovery.`, {
+                    translatedPreview: preview(String(candidate || '')),
+                    missingStandard,
+                    missingPlain,
+                    countMismatches,
+                });
+                const recovered = normalizePlaceholdersForRestore(candidate, placeholders);
+                if (recovered) {
+                    candidate = recovered;
+                    logEscape('debug', 'Recovered placeholders via plaintext TAG scan.', {
+                        recoveredPreview: preview(String(candidate || '')),
+                    });
+                } else {
+                    logEscape('debug', 'Recovery failed; proceeding with best-effort restore.', {
+                        translatedPreview: preview(String(candidate || '')),
+                    });
+                }
+            }
+            const postValidation = validatePlaceholderPresence(candidate, placeholders);
+            if (postValidation.missingStandard.length
+                || postValidation.missingPlain.length
+                || (postValidation.countMismatches && postValidation.countMismatches.length)) {
+                logEscape('debug', 'Placeholder validation failed after recovery; falling back to original text.', {
+                    missingStandard: postValidation.missingStandard,
+                    missingPlain: postValidation.missingPlain,
+                    countMismatches: postValidation.countMismatches,
+                });
+                const stripped = stripRpgmEscapes(candidate || '').trim();
+                logEscape('debug', 'Using stripped translated text as fallback.', {
+                    strippedPreview: preview(stripped),
+                });
+                return stripped || payload.resolved;
+            }
+        }
+
+        try {
+            const restored = restoreControlCodes(candidate, payload.placeholderInfo, payload.resolved);
+            if (typeof restored === 'string' && restored.length) {
+                if (/⟦(?:TAG|NL)\d+⟧/.test(restored)) {
+                    logEscape('debug', 'Restored text still contains placeholders; falling back to original text.', {
+                        restoredPreview: preview(restored),
+                    });
+                    const stripped = stripRpgmEscapes(candidate || '').trim();
+                    logEscape('debug', 'Using stripped translated text as fallback.', {
+                        strippedPreview: preview(stripped),
+                    });
+                    return stripped || payload.resolved;
+                }
+                return restored;
+            }
+        } catch (error) {
+            logger.warn('[GameMessage] restoreControlCodes failed; falling back to original text.', error);
+        }
+        const stripped = stripRpgmEscapes(candidate || '').trim();
+        logEscape('debug', 'restoreControlCodes threw; using stripped translated text as fallback.', {
+            strippedPreview: preview(stripped),
+        });
+        return stripped || payload.resolved;
+    }
+
+    function restoreMessageTextStreaming(translated, payload) {
+        if (!payload || typeof translated !== 'string') return translated;
+        if (!payload.placeholderInfo) return translated;
+        try {
+            const restored = restoreControlCodes(translated, payload.placeholderInfo, payload.resolved);
+            return typeof restored === 'string' ? restored : translated;
+        } catch (_) {
+            return translated;
+        }
+    }
+
+    function trackGameMessage() {
+        if (Window_Message.prototype.startMessage && Window_Message.prototype.startMessage.__trWrapped) {
+            diag('[GameMessage] Hooks already installed; skipping duplicate wrap.');
+            return;
+        }
+
+        // Ensure Window_Message contents are marked for bitmap-level bypass
+        const wrapMessageContents = (Ctor) => {
+            if (!Ctor || !Ctor.prototype || typeof Ctor.prototype.createContents !== 'function') return;
+            if (Ctor.prototype.createContents.__trWrapped) return;
+            const originalCreateContents = Ctor.prototype.createContents;
+            Ctor.prototype.createContents = function(...args) {
+                const res = originalCreateContents.apply(this, args);
+                try {
+                    this._trHasDedicatedTextHook = true;
+                    if (this.contents) {
+                        this.contents._trHasDedicatedTextHook = true;
+                        this.contents._trMessageContents = true;
+                        if (contentsOwners && typeof contentsOwners.set === 'function') {
+                            contentsOwners.set(this.contents, this);
+                        }
+                    }
+                } catch (_) {}
+                return res;
+            };
+            Ctor.prototype.createContents.__trWrapped = true;
+            Ctor.prototype.createContents.__trOriginal = originalCreateContents;
+        };
+
+        try {
+            wrapMessageContents(Window_Message);
+            wrapMessageContents(typeof Window_Message_Battle !== 'undefined' ? Window_Message_Battle : null);
+        } catch (_) {}
+
+        // Custom $gameMessage state tracker - independent of window lifecycle
+        const gameMessageState = {
+            currentText: '',
+            isActive: false,
+            lastUpdate: 0,
+            session: 0 // increments to invalidate pending translations
+        };
+
+        const redrawMessageText = (windowInstance, text, sessionId, overrides = {}) => {
+            if (!windowInstance) return false;
+            const ready = windowInstance.contents && windowInstance.visible && windowInstance.isOpen();
+            const coords = resolveMessageStartCoordinates(windowInstance, overrides);
+            if (!ready) {
+                windowInstance._trPendingRedraw = { text, sessionId, x: coords.x, y: coords.y };
+                return false;
+            }
+
+            try { windowInstance.contents.clear(); } catch (_) {}
+            if (typeof windowInstance.resetFontSettings === 'function') windowInstance.resetFontSettings();
+            drawMessageFaceIfNeeded(windowInstance);
+
+            const signed = REDRAW_SIGNATURE + text;
+            windowInstance._trBypassProcessCharacter = (windowInstance._trBypassProcessCharacter || 0) + 1;
+            try {
+                windowInstance.drawTextEx(signed, coords.x, coords.y);
+                if (windowInstance._textState) {
+                    windowInstance._textState.index = windowInstance._textState.text.length;
+                }
+                windowInstance._showFast = true;
+                windowInstance._lineShowFast = true;
+            } finally {
+                windowInstance._trBypassProcessCharacter = Math.max(0, (windowInstance._trBypassProcessCharacter || 1) - 1);
+            }
+            return true;
+        };
+
+        // Prefer hooking startMessage to get full resolved text once
+        const originalStartMessage = Window_Message.prototype.startMessage.__trOriginal || Window_Message.prototype.startMessage;
+        const wrappedStartMessage = function() {
+            const res = originalStartMessage.call(this);
+            try {
+                gameMessageState.session++;
+                gameMessageState.isActive = true;
+                gameMessageState.lastUpdate = Date.now();
+                this._trMessageSession = gameMessageState.session;
+                this._trStartedThisSession = true;
+                this._trSentTranslateThisSession = false;
+                this._trMsgStartSession = this._trMessageSession;
+                try {
+                    if (this._trStreamAbort && typeof this._trStreamAbort.abort === 'function') {
+                        this._trStreamAbort.abort();
+                    }
+                } catch (_) {}
+                this._trStreamAbort = null;
+                this._trStreamText = '';
+                this._trPendingRedraw = null;
+
+                try {
+                    if (this && this._textState) {
+                        if (typeof this._textState.startX === 'number') this._trMsgStartX = this._textState.startX;
+                        else if (typeof this._textState.x === 'number') this._trMsgStartX = this._textState.x;
+                        if (typeof this._textState.y === 'number') this._trMsgStartY = this._textState.y;
+                    }
+                } catch (_) {}
+
+                const rawAll = $gameMessage && $gameMessage.allText ? $gameMessage.allText() : '';
+                const resolved = typeof this.convertEscapeCharacters === 'function' ? this.convertEscapeCharacters(String(rawAll)) : String(rawAll);
+                const payload = createEscapeAwarePayload(resolved, 'start');
+                const finalText = payload ? payload.visible : stripRpgmEscapes(resolved).trim();
+                if (finalText && finalText !== gameMessageState.currentText) {
+                    gameMessageState.currentText = finalText;
+                    diag(`[GameMessage] Final rendered text: "${preview(finalText)}"`);
+                    if (!this._trSentTranslateThisSession) {
+                        this._trSentTranslateThisSession = true;
+                        this.processCompleteMessage(payload || resolved, gameMessageState.session);
+                    }
+                }
+            } catch (e) { logger.warn('[GameMessage startMessage hook error]', e); }
+            return res;
+        };
+        wrappedStartMessage.__trOriginal = originalStartMessage;
+        wrappedStartMessage.__trWrapped = true;
+        Window_Message.prototype.startMessage = wrappedStartMessage;
+
+        // Hook Window_Message.prototype.processCharacter only as a fallback
+        const originalProcessCharacter = Window_Message.prototype.processCharacter.__trOriginal || Window_Message.prototype.processCharacter;
+        const wrappedProcessCharacter = function(textState) {
+            // If we're drawing our own translated text, bypass translation logic
+            if (this._trBypassProcessCharacter && this._trBypassProcessCharacter > 0) {
+                return originalProcessCharacter.call(this, textState);
+            }
+
+            // If startMessage already handled this session, skip accumulation to avoid truncation issues
+            if (gameMessageState.isActive && this._trStartedThisSession && this._trMessageSession === gameMessageState.session) {
+                return originalProcessCharacter.call(this, textState);
+            }
+
+            const sourceText = textState && textState.text ? String(textState.text) : '';
+            if (!this._trCurrentMessagePayload) {
+                this._trCurrentMessagePayload = createEscapeAwarePayload(sourceText, 'processCharacter');
+                this._trMessageSession = ++gameMessageState.session;
+                gameMessageState.isActive = true;
+                gameMessageState.lastUpdate = Date.now();
+            }
+
+            const result = originalProcessCharacter.call(this, textState);
+
+            if (textState && textState.index >= textState.text.length - 1) {
+                const payload = this._trCurrentMessagePayload || createEscapeAwarePayload(sourceText, 'processCharacter-final');
+                this._trCurrentMessagePayload = null;
+                const finalText = payload ? payload.visible : stripRpgmEscapes(sourceText).trim();
+                if (finalText && finalText !== gameMessageState.currentText) {
+                    gameMessageState.currentText = finalText;
+                    diag(`[GameMessage] Final rendered text: "${preview(finalText)}"`);
+                    this.processCompleteMessage(payload || sourceText, this._trMessageSession);
+                } else if (payload) {
+                    this.processCompleteMessage(payload, this._trMessageSession);
+                }
+            }
+
+            return result;
+        };
+        wrappedProcessCharacter.__trOriginal = originalProcessCharacter;
+        wrappedProcessCharacter.__trWrapped = true;
+        Window_Message.prototype.processCharacter = wrappedProcessCharacter;
+
+        // Process complete message text for translation
+        Window_Message.prototype.processCompleteMessage = function(message, sessionId) {
+            const payload = (message && typeof message === 'object' && ('resolved' in message || 'visible' in message))
+                ? message
+                : createEscapeAwarePayload(message, 'processComplete');
+            if (!payload || !payload.visible) {
+                diag('[GameMessage] Skipping translation: empty message');
+                return;
+            }
+
+            const translationSource = payload.translationSource;
+            const normalizedSource = payload.normalizedTranslationSource
+                || String(translationSource || '').trim();
+            if (!normalizedSource || translationCache.shouldSkip(normalizedSource)) {
+                diag(`[GameMessage] Skipping translation: "${preview(payload.visible)}"`);
+                return;
+            }
+
+            this._trSessionId = sessionId;
+
+            try {
+                if (this._trStreamAbort && typeof this._trStreamAbort.abort === 'function') {
+                    this._trStreamAbort.abort();
+                }
+            } catch (_) {}
+            this._trStreamAbort = null;
+            this._trStreamText = '';
+
+            const applyStreamDelta = (partial) => {
+                if (this._trSessionId !== sessionId || !gameMessageState.isActive) return;
+                if (typeof partial !== 'string' || !partial) return;
+                const restored = restoreMessageTextStreaming(partial, payload);
+                if (!restored || restored === this._trStreamText) return;
+                const restoredVisible = stripRpgmEscapes(restored || '').trim();
+                if (!restoredVisible) return;
+                this._trStreamText = restored;
+                redrawMessageText(this, restored, sessionId);
+            };
+
+            const requestStream = translationCache
+                && typeof translationCache.requestTranslationStream === 'function'
+                    ? translationCache.requestTranslationStream
+                    : null;
+            const streamController = (requestStream && typeof AbortController !== 'undefined')
+                ? new AbortController()
+                : null;
+            if (streamController) this._trStreamAbort = streamController;
+
+            const translationPromise = requestStream
+                ? requestStream.call(translationCache, translationSource, {
+                    onDelta: applyStreamDelta,
+                    signal: streamController ? streamController.signal : undefined
+                })
+                : translationCache.requestTranslation(translationSource);
+
+            translationPromise
+                .then(translated => {
+                    // Check if session is still valid
+                    if (this._trSessionId !== sessionId || !gameMessageState.isActive) {
+                        diag(`[GameMessage] Session expired for: "${preview(payload.visible)}"`);
+                        return;
+                    }
+
+                    let restored = restoreMessageText(translated, payload);
+                    if (typeof restored !== 'string' || !restored.trim()) {
+                        restored = payload.resolved;
+                    }
+
+                    const restoredVisible = stripRpgmEscapes(restored || '').trim();
+                    if (!restoredVisible) {
+                        dbg('[GameMessage Skip] Restored text empty after stripping; keeping original.');
+                        return;
+                    }
+
+                    if (restoredVisible === payload.visible) {
+                        dbg(`[GameMessage Skip] Original and translated text are identical: "${preview(payload.visible)}"`);
+                        return;
+                    }
+
+                    dbg(`[GameMessage] Translation: "${preview(payload.visible)}" -> "${preview(restoredVisible)}"`);
+                    redrawMessageText(this, restored, sessionId);
+                })
+                .catch(err => {
+                    if (isAbortErrorLike(err)) return;
+                    logger.error('[GameMessage Translation Error]', err);
+                });
+        };
+
+        try {
+            if (typeof Window_Message !== 'undefined' && Window_Message && Window_Message.prototype) {
+                Window_Message.prototype._trHasDedicatedTextHook = true;
+                Window_Message._trHasDedicatedTextHook = true;
+            }
+            if (typeof Window_Message_Battle !== 'undefined' && Window_Message_Battle && Window_Message_Battle.prototype) {
+                Window_Message_Battle.prototype._trHasDedicatedTextHook = true;
+                Window_Message_Battle._trHasDedicatedTextHook = true;
+            }
+        } catch (_) {}
+
+        // Hook $gameMessage.clear() - when message is cleared/becomes invisible
+        const originalClear = Game_Message.prototype.clear;
+        Game_Message.prototype.clear = function() {
+            const result = originalClear.call(this);
+            
+            // Update our state tracker
+            gameMessageState.currentText = '';
+            gameMessageState.isActive = false;
+            gameMessageState.lastUpdate = Date.now();
+            gameMessageState.session++; // invalidate pending translations
+            try {
+                const wm = SceneManager && SceneManager._scene && SceneManager._scene._messageWindow;
+                if (wm) {
+                    wm._trStartedThisSession = false;
+                    wm._trSentTranslateThisSession = false;
+                    wm._trMsgStartSession = null;
+                    wm._trCurrentMessagePayload = null;
+                    wm._trMsgStartX = undefined;
+                    wm._trMsgStartY = undefined;
+                    try {
+                        if (wm._trStreamAbort && typeof wm._trStreamAbort.abort === 'function') {
+                            wm._trStreamAbort.abort();
+                        }
+                    } catch (_) {}
+                    wm._trStreamAbort = null;
+                    wm._trStreamText = '';
+                    wm._trPendingRedraw = null;
+                }
+            } catch (_) {}
+            
+            diag('$gameMessage.clear() - Message cleared');
+            showGameMessageDiagnostics();
+            
+            return result;
+        };
+
+        function showGameMessageDiagnostics() {
+            if (!logger.shouldLog('trace')) return;
+            const status = gameMessageState.isActive ? 'active' : 'cleared';
+            const timestamp = new Date(gameMessageState.lastUpdate).toLocaleTimeString();
+            const textPreview = gameMessageState.currentText
+                ? preview(gameMessageState.currentText)
+                : '(empty)';
+            logger.trace(`[GameMessage] state=${status} updated=${timestamp} text="${textPreview}"`);
+        }
+    }
+
+    function trackChoiceList() {
+        if (typeof Window_ChoiceList === 'undefined' || !Window_ChoiceList || !Window_ChoiceList.prototype) {
+            diag('[Choice] Window_ChoiceList unavailable; skipping choice hooks');
+            return;
+        }
+
+        const originalMakeCommandList = Window_ChoiceList.prototype.makeCommandList;
+        if (typeof originalMakeCommandList !== 'function') {
+            logger.warn('[Choice] makeCommandList not found; skipping choice hooks');
+            return;
+        }
+
+        Window_ChoiceList.prototype.makeCommandList = function() {
+            const result = originalMakeCommandList.call(this);
+            try {
+                if (!translationCache || typeof translationCache.requestTranslation !== 'function') {
+                    return result;
+                }
+
+                const commands = Array.isArray(this._list) ? this._list : [];
+                if (!commands.length) return result;
+
+                this._trChoiceSessionId = (this._trChoiceSessionId || 0) + 1;
+                const sessionId = this._trChoiceSessionId;
+                const choiceWindow = this;
+
+                commands.forEach((command, index) => {
+                    if (!command || typeof command.name !== 'string') return;
+
+                    const rawName = command.name;
+                    let converted = rawName;
+                    try { converted = choiceWindow.convertEscapeCharacters(rawName); } catch (_) {}
+
+                    const visible = stripRpgmEscapes(converted).trim();
+                    if (!visible || translationCache.shouldSkip(visible)) {
+                        return;
+                    }
+
+                    telemetry.logTextDetected('choice', visible, index, 0, { windowType: 'Window_ChoiceList' });
+
+                    const placeholderInfo = prepareTextForTranslation(converted);
+                    const translationSource = placeholderInfo.textForTranslation;
+                    const normalizedSource = String(translationSource || '').trim();
+                    if (!normalizedSource) return;
+
+                    const applyTranslated = (translated) => {
+                        if (choiceWindow._trChoiceSessionId !== sessionId) return;
+                        if (typeof translated !== 'string' || !translated.trim()) return;
+
+                        let restored = restoreControlCodes(translated, placeholderInfo, converted);
+                        if (!restored) restored = converted;
+
+                        const restoredVisible = stripRpgmEscapes(restored).trim();
+                        if (!restoredVisible || restoredVisible === visible) {
+                            return;
+                        }
+
+                        const entry = choiceWindow._list && choiceWindow._list[index];
+                        if (!entry) return;
+
+                        const finalText = restored.startsWith(REDRAW_SIGNATURE)
+                            ? restored
+                            : REDRAW_SIGNATURE + restored;
+
+                        if (entry._trAppliedText === finalText) return;
+                        entry._trAppliedText = finalText;
+                        entry.name = finalText;
+
+                        if (typeof choiceWindow.redrawItem === 'function') {
+                            try { choiceWindow.redrawItem(index); return; } catch (_) {}
+                        }
+                        if (typeof choiceWindow.drawAllItems === 'function') {
+                            try { choiceWindow.drawAllItems(); return; } catch (_) {}
+                        }
+                    };
+
+                    if (translationCache.completed
+                        && typeof translationCache.completed.has === 'function'
+                        && translationCache.completed.has(normalizedSource)) {
+                        applyTranslated(translationCache.completed.get(normalizedSource));
+                        return;
+                    }
+
+                    translationCache.requestTranslation(translationSource)
+                        .then(applyTranslated)
+                        .catch((error) => {
+                            logger.warn('[Choice] Translation error:', error);
+                        });
+                });
+            } catch (error) {
+                logger.error('[Choice] makeCommandList hook error', error);
+            }
+            return result;
+        };
+    }
+
+    // Hook PIXI.Text and PIXI.BitmapText to capture whole-string text assignments.
+    // Still treated as best-effort: hooks are installed only when the PIXI classes expose a writable text setter.
+    function trackPixiText() {
+        try {
+            const PIXIObj = (typeof window !== 'undefined') ? (window.PIXI || window.Pixi || window.pixi) : null;
+            if (!PIXIObj) { diag('[PIXI] Not found, skipping PIXI text hooks'); return; }
+
+            const safeFindDescriptor = (proto, prop) => {
+                let obj = proto;
+                while (obj && obj !== Object.prototype) {
+                    const d = Object.getOwnPropertyDescriptor(obj, prop);
+                    if (d) return { owner: obj, desc: d };
+                    obj = Object.getPrototypeOf(obj);
+                }
+                return null;
+            };
+
+            const installSetterHook = (Ctor, label) => {
+                if (!Ctor || !Ctor.prototype) return false;
+                if (Ctor.prototype.__trTextWrapped) return true;
+                const found = safeFindDescriptor(Ctor.prototype, 'text');
+                if (!found || typeof found.desc.set !== 'function') {
+                    diag(`[PIXI] ${label}.text setter not found; skipping`);
+                    return false;
+                }
+
+                const originalSetter = found.desc.set;
+                const originalGetter = found.desc.get || function() { return this._text; };
+
+                Object.defineProperty(found.owner, 'text', {
+                    configurable: true,
+                    enumerable: found.desc.enumerable,
+                    get: originalGetter,
+                    set: function(v) {
+                        // candidate logging disabled
+                        try {
+                            const textStr = String(v);
+
+                            // Bypass when our signature is present
+                            if (textStr.startsWith(REDRAW_SIGNATURE)) {
+                                const clean = textStr.substring(REDRAW_SIGNATURE.length);
+                                return originalSetter.call(this, clean);
+                            }
+
+                            // Skip trivial strings (numbers, whitespace, symbols only)
+                            if (translationCache.shouldSkip(textStr)) {
+                                return originalSetter.call(this, textStr);
+                            }
+
+                            const placeholderInfo = prepareTextForTranslation(textStr);
+                            const translationSource = placeholderInfo.textForTranslation;
+                            const norm = String(translationSource || '').trim();
+                            if (!norm || translationCache.shouldSkip(norm)) {
+                                return originalSetter.call(this, textStr);
+                            }
+
+                            // Synchronous cache hit path
+                            try {
+                                if (translationCache.completed.has(norm)) {
+                                    let translated = translationCache.completed.get(norm);
+                                    translated = placeholderInfo
+                                        ? restoreControlCodes(translated, placeholderInfo, textStr)
+                                        : translated;
+                                    // Skip replacement if original and translated text are the same
+                                    if (typeof translated !== 'string' || translated.trim() === textStr.trim()) {
+                                        dbg(`[PIXI Skip] Original and translated text are identical: "${preview(norm)}"`);
+                                        return originalSetter.call(this, textStr);
+                                    }
+                                    const signed = REDRAW_SIGNATURE + translated;
+                                    return originalSetter.call(this, signed);
+                                }
+                            } catch (_) {}
+
+                            // Async path: set original now; when translation completes and still current, update
+                            this._trTextVersion = (this._trTextVersion | 0) + 1;
+                            const version = this._trTextVersion;
+                            const versionPlaceholder = placeholderInfo;
+                            const originalValue = textStr;
+                            originalSetter.call(this, textStr);
+                            translationCache.requestTranslation(translationSource)
+                                .then(translated => {
+                                    try {
+                                        if (this._trTextVersion !== version) return; // superseded
+                                        // Skip replacement if original and translated text are the same
+                                        let restored = versionPlaceholder
+                                            ? restoreControlCodes(translated, versionPlaceholder, originalValue)
+                                            : translated;
+                                        if (typeof restored !== 'string') restored = originalValue;
+                                        if (restored.trim() === originalValue.trim()) {
+                                            dbg(`[PIXI Async Skip] Original and translated text are identical: "${preview(norm)}"`);
+                                            return;
+                                        }
+                                        const signed = REDRAW_SIGNATURE + restored;
+                                        originalSetter.call(this, signed);
+                                    } catch (e) {
+                                        // ignore update errors
+                                    }
+                                })
+                                .catch(() => { /* keep original on failure */ });
+                        } catch (e) {
+                            try { return originalSetter.call(this, v); } catch (_) {}
+                        }
+                    }
+                });
+
+                // Mark wrapper for idempotency (stored on descriptor is not portable; keep a symbol on Ctor)
+                try { Ctor.prototype.__trTextWrapped = true; } catch (_) {}
+                dbg(`[PIXI] Hooked ${label}.text setter`);
+                return true;
+            };
+
+            let hookedAny = false;
+            try { hookedAny = installSetterHook(PIXIObj.Text, 'PIXI.Text') || hookedAny; } catch (_) {}
+            try { hookedAny = installSetterHook(PIXIObj.BitmapText, 'PIXI.BitmapText') || hookedAny; } catch (_) {}
+            if (!hookedAny) diag('[PIXI] No text classes hooked');
+        } catch (e) {
+            logger.error('[PIXI Hook Error]', e);
+        }
+    }
+
+    function trackBitmapDrawText() {
+        try {
+            if (typeof Bitmap === 'undefined' || !Bitmap || !Bitmap.prototype) {
+                diag('[bitmap/init] Bitmap unavailable; skipping bitmap hooks.');
+                return;
+            }
+
+            const DRAW_WRAPPER_TOKEN = Symbol('bitmapDrawWrapper');
+
+            if (Bitmap.prototype.drawText && Bitmap.prototype.drawText.__trBitmapWrapper === DRAW_WRAPPER_TOKEN) {
+                diag('[bitmap/init] Bitmap draw hooks already installed.');
+                return;
+            }
+
+            const bitmapStates = new WeakMap();
+            const FLUSH_DELAY_MS = 0;
+            const GAP_MIN = 6;
+            const GAP_RATIO = 0.65;
+            const perCharRegex = PER_CHAR_MARK ? new RegExp(PER_CHAR_MARK, 'g') : null;
+
+            const hasDedicatedOwnerHook = (owner) => {
+                if (!owner) return false;
+                if (owner._trHasDedicatedTextHook) return true;
+                const ctor = owner.constructor;
+                return !!(ctor && ctor._trHasDedicatedTextHook);
+            };
+
+            const sanitizePerChar = (text) => {
+                if (!text) return '';
+                return perCharRegex ? String(text).replace(perCharRegex, '') : String(text);
+            };
+
+            const nextInstanceId = (() => {
+                let counter = 0;
+                return () => `bm-${Date.now().toString(36)}-${(++counter).toString(36)}`;
+            })();
+
+            const rectFromDimensions = (x, y, width, height) => {
+                const xNum = Number(x);
+                const yNum = Number(y);
+                const wNum = Number(width);
+                const hNum = Number(height);
+                const x1 = Number.isFinite(xNum) ? xNum : 0;
+                const y1 = Number.isFinite(yNum) ? yNum : 0;
+                const w = Number.isFinite(wNum) ? wNum : 0;
+                const h = Number.isFinite(hNum) ? hNum : 0;
+                const x2 = x1 + w;
+                const y2 = y1 + h;
+                return {
+                    x1: Math.min(x1, x2),
+                    y1: Math.min(y1, y2),
+                    x2: Math.max(x1, x2),
+                    y2: Math.max(y1, y2),
+                };
+            };
+
+            const isValidRect = (rect) => rect
+                && Number.isFinite(rect.x1)
+                && Number.isFinite(rect.x2)
+                && Number.isFinite(rect.y1)
+                && Number.isFinite(rect.y2)
+                && rect.x2 >= rect.x1
+                && rect.y2 >= rect.y1;
+
+            const rectHasArea = (rect) => isValidRect(rect) && rect.x2 > rect.x1 && rect.y2 > rect.y1;
+
+            const rectanglesOverlap = (a, b) => {
+                if (!isValidRect(a) || !isValidRect(b)) return true;
+                return !(a.x2 <= b.x1 || a.x1 >= b.x2 || a.y2 <= b.y1 || a.y1 >= b.y2);
+            };
+
+            const rectanglesSimilar = (a, b, tolerance = 8) => {
+                if (!isValidRect(a) || !isValidRect(b)) return false;
+                return (
+                    Math.abs(a.x1 - b.x1) <= tolerance
+                    && Math.abs(a.x2 - b.x2) <= tolerance
+                    && Math.abs(a.y1 - b.y1) <= tolerance
+                    && Math.abs(a.y2 - b.y2) <= tolerance
+                );
+            };
+
+            const deriveEntryRect = (entry) => {
+                if (!entry) return null;
+                if (entry.bounds && isValidRect(entry.bounds)) return entry.bounds;
+                const width = Number.isFinite(entry.drawParams && entry.drawParams.maxWidth)
+                    ? entry.drawParams.maxWidth
+                    : Math.max(1, entry.visibleText ? entry.visibleText.length * 12 : 0);
+                const height = Number.isFinite(entry.drawParams && entry.drawParams.lineHeight)
+                    ? entry.drawParams.lineHeight
+                    : 24;
+                const x = entry.drawParams ? entry.drawParams.x : (entry.position ? entry.position.x : 0);
+                const y = entry.drawParams ? entry.drawParams.y : (entry.position ? entry.position.y : 0);
+                return rectFromDimensions(x, y, width, height);
+            };
+
+            const fragmentRect = (fragment) => {
+                if (!fragment) return null;
+                const lineHeight = Number.isFinite(fragment.lineHeight) && fragment.lineHeight > 0
+                    ? fragment.lineHeight
+                    : (fragment.drawState && Number.isFinite(fragment.drawState.fontSize)
+                        ? fragment.drawState.fontSize
+                        : 24);
+                const w = Number.isFinite(fragment.width) && fragment.width > 0
+                    ? fragment.width
+                    : (Number.isFinite(fragment.maxWidth) ? fragment.maxWidth : lineHeight);
+                return rectFromDimensions(
+                    fragment.x,
+                    fragment.y,
+                    Math.max(1, w),
+                    Math.max(1, lineHeight)
+                );
+            };
+
+            const skipLikeCounter = (text) => {
+                const trimmed = String(text || '').trim();
+                if (!trimmed) return true;
+                const nonSpace = trimmed.replace(/\s+/g, '');
+                const cjkMatch = trimmed.match(/[\u3040-\u30FF\u4E00-\u9FFF]/g);
+                const cjkCount = cjkMatch ? cjkMatch.length : 0;
+                const hasDigit = /\d/.test(trimmed);
+                const onlyNumPunct = /^[0-9()\[\]\-+/*.,:;!?％%]+$/u.test(nonSpace);
+                const comboMatch = /\d+\s*[\u3040-\u30FF\u4E00-\u9FFF]\s*\(\d+\)/u.test(trimmed);
+                return (hasDigit && cjkCount <= 1 && nonSpace.length <= 10) || onlyNumPunct || comboMatch;
+            };
+
+            const ensureBitmapState = (bitmap) => {
+                if (!bitmap) return null;
+                let state = bitmapStates.get(bitmap);
+                if (!state) {
+                    state = {
+                        id: bitmap._trBitmapId || (bitmap._trBitmapId = Math.random().toString(36).substring(2, 11)),
+                        fragments: [],
+                        entries: new Map(),
+                        flushTimer: null,
+                        instanceMap: new Map(),
+                        renderOps: [],
+                        drawOrderCounter: 0,
+                    };
+                    bitmapStates.set(bitmap, state);
+                } else if (!state.instanceMap) {
+                    state.instanceMap = new Map();
+                }
+                if (!Array.isArray(state.renderOps)) {
+                    state.renderOps = [];
+                }
+                if (!Number.isFinite(state.drawOrderCounter)) {
+                    state.drawOrderCounter = 0;
+                }
+                return state;
+            };
+
+            const nextDrawOrder = (state) => {
+                if (!state) return 0;
+                state.drawOrderCounter = (state.drawOrderCounter || 0) + 1;
+                return state.drawOrderCounter;
+            };
+
+            const estimateWidth = (bitmap, text, maxWidth) => {
+                const cleaned = sanitizePerChar(text);
+                if (!cleaned) return 0;
+                let measured = 0;
+                try {
+                    if (bitmap && typeof bitmap.measureTextWidth === 'function') {
+                        const w = bitmap.measureTextWidth(cleaned);
+                        if (Number.isFinite(w)) measured = Math.ceil(w);
+                    }
+                } catch (_) { /* ignore */ }
+                if (!measured) {
+                    const fontSize = bitmap && Number.isFinite(bitmap.fontSize) ? bitmap.fontSize : 24;
+                    measured = Math.ceil(cleaned.length * Math.max(6, fontSize * 0.6));
+                }
+                if (Number.isFinite(maxWidth) && maxWidth > 0 && maxWidth !== Infinity) {
+                    return Math.max(1, Math.max(measured, Math.ceil(maxWidth)));
+                }
+                return measured;
+            };
+
+            const computeFontSignature = (drawState, bitmap) => {
+                if (drawState && typeof drawState === 'object') {
+                    return [
+                        drawState.fontFace,
+                        drawState.fontSize,
+                        drawState.fontBold,
+                        drawState.fontItalic,
+                        drawState.textColor,
+                        drawState.outlineColor,
+                        drawState.outlineWidth
+                    ].join('|');
+                }
+                if (bitmap) {
+                    return [
+                        bitmap.fontFace,
+                        bitmap.fontSize,
+                        bitmap.fontBold,
+                        bitmap.fontItalic,
+                        bitmap.textColor,
+                        bitmap.outlineColor,
+                        bitmap.outlineWidth
+                    ].join('|');
+                }
+                return 'default';
+            };
+
+            const discardRenderOpsInRect = (state, rect) => {
+                if (!state || !Array.isArray(state.renderOps) || state.renderOps.length === 0) return;
+                if (!rect || !isValidRect(rect)) {
+                    state.renderOps.length = 0;
+                    return;
+                }
+                state.renderOps = state.renderOps.filter((op) => !op || !op.rect || !rectanglesOverlap(rect, op.rect));
+            };
+
+            const recordBitmapRenderOp = (bitmap, op) => {
+                if (!bitmap || !op || !op.methodName) return null;
+                const state = ensureBitmapState(bitmap);
+                if (!state) return null;
+                const rect = op.fullBitmap
+                    ? rectFromDimensions(0, 0, bitmap.width, bitmap.height)
+                    : op.rect;
+                if (!rect || !isValidRect(rect)) return null;
+                const record = {
+                    methodName: op.methodName,
+                    args: Array.isArray(op.args) ? op.args.slice() : [],
+                    rect,
+                    drawOrder: nextDrawOrder(state),
+                    recordedAt: Date.now(),
+                };
+                state.renderOps.push(record);
+                if (state.renderOps.length > 256) {
+                    state.renderOps.splice(0, state.renderOps.length - 256);
+                }
+                return record;
+            };
+
+            const withBitmapReplay = (bitmap, fn) => {
+                if (!bitmap || typeof fn !== 'function') return undefined;
+                bitmap._trBitmapReplayDepth = (bitmap._trBitmapReplayDepth || 0) + 1;
+                try {
+                    return fn();
+                } finally {
+                    bitmap._trBitmapReplayDepth = Math.max(0, (bitmap._trBitmapReplayDepth || 1) - 1);
+                }
+            };
+
+            const drawBitmapTextValue = (bitmap, entry, text) => {
+                if (!bitmap || !entry || typeof text !== 'string' || !text) return;
+                try { applyBitmapDrawState(bitmap, entry.drawState); } catch (_) {}
+                const drawMethodName = entry.methodName && typeof bitmap[entry.methodName] === 'function'
+                    ? entry.methodName
+                    : 'drawText';
+                const drawFn = bitmap[drawMethodName] || bitmap.drawText;
+                if (typeof drawFn !== 'function') return;
+                drawFn.call(
+                    bitmap,
+                    text,
+                    entry.drawParams.x,
+                    entry.drawParams.y,
+                    entry.drawParams.maxWidth,
+                    entry.drawParams.lineHeight,
+                    entry.drawParams.align
+                );
+            };
+
+            const replayBitmapEntry = (bitmap, entry) => {
+                if (!bitmap || !entry || entry._trStale) return;
+                const text = entry.translationStatus === 'completed' && entry.translatedText
+                    ? entry.translatedText
+                    : entry.rawText;
+                drawBitmapTextValue(bitmap, entry, text);
+            };
+
+            const replayBitmapRenderOp = (bitmap, op) => {
+                if (!bitmap || !op || !op.methodName) return;
+                switch (op.methodName) {
+                case 'fillRect':
+                    if (typeof bitmap.fillRect === 'function') bitmap.fillRect(...op.args);
+                    break;
+                case 'gradientFillRect':
+                    if (typeof bitmap.gradientFillRect === 'function') bitmap.gradientFillRect(...op.args);
+                    break;
+                case 'fillAll':
+                    if (typeof bitmap.fillAll === 'function') bitmap.fillAll(...op.args);
+                    break;
+                case 'blt':
+                    if (typeof bitmap.blt === 'function') bitmap.blt(...op.args);
+                    break;
+                default:
+                    break;
+                }
+            };
+
+            const collectReplayItems = (state, rect, currentEntry, relation) => {
+                if (!state || !rect || !isValidRect(rect) || typeof relation !== 'function') return [];
+                const items = [];
+                if (Array.isArray(state.renderOps)) {
+                    state.renderOps.forEach((op) => {
+                        if (!op || !op.rect || !rectanglesOverlap(rect, op.rect)) return;
+                        if (!relation(op.drawOrder || 0)) return;
+                        items.push({ type: 'renderOp', drawOrder: op.drawOrder || 0, op });
+                    });
+                }
+                if (state.entries && typeof state.entries.forEach === 'function') {
+                    state.entries.forEach((entry) => {
+                        if (!entry || entry === currentEntry || entry._trStale) return;
+                        const entryRect = deriveEntryRect(entry);
+                        if (!entryRect || !rectanglesOverlap(rect, entryRect)) return;
+                        if (!relation(entry.drawOrder || 0)) return;
+                        items.push({ type: 'text', drawOrder: entry.drawOrder || 0, entry });
+                    });
+                }
+                items.sort((a, b) => (a.drawOrder || 0) - (b.drawOrder || 0));
+                return items;
+            };
+
+            const replayBitmapItems = (bitmap, items) => {
+                if (!bitmap || !Array.isArray(items) || items.length === 0) return;
+                items.forEach((item) => {
+                    if (!item) return;
+                    if (item.type === 'renderOp') {
+                        replayBitmapRenderOp(bitmap, item.op);
+                    } else if (item.type === 'text') {
+                        replayBitmapEntry(bitmap, item.entry);
+                    }
+                });
+            };
+
+            const pushInvalidationGuard = (bitmap, guard) => {
+                if (!bitmap || !guard || !guard.rect) return guard;
+                try {
+                    if (!Array.isArray(bitmap._trInvalidationGuards)) {
+                        bitmap._trInvalidationGuards = [];
+                    }
+                    bitmap._trInvalidationGuards.push(guard);
+                } catch (_) {}
+                return guard;
+            };
+
+            const popInvalidationGuard = (bitmap, guard) => {
+                if (!bitmap || !guard || !Array.isArray(bitmap._trInvalidationGuards)) return;
+                const guards = bitmap._trInvalidationGuards;
+                const idx = guards.lastIndexOf(guard);
+                if (idx >= 0) {
+                    guards.splice(idx, 1);
+                }
+            };
+
+            const consumeInvalidationGuard = (bitmap, rect, reason) => {
+                if (!bitmap || !rect || !Array.isArray(bitmap._trInvalidationGuards)) return null;
+                const guards = bitmap._trInvalidationGuards;
+                for (let i = guards.length - 1; i >= 0; i--) {
+                    const guard = guards[i];
+                    if (!guard) continue;
+                    if (guard.method && guard.method !== reason) continue;
+                    const guardRect = guard.rect;
+                    if (guardRect && rectanglesOverlap(guardRect, rect)) {
+                        guards.splice(i, 1);
+                        return guard;
+                    }
+                }
+                return null;
+            };
+
+            const calculateClearRect = (bitmap, entry, outlinePadding) => {
+                const bounds = entry && entry.bounds;
+                if (!bitmap || !bounds) return null;
+                const fontSize = entry.drawState && Number.isFinite(entry.drawState.fontSize)
+                    ? entry.drawState.fontSize
+                    : (entry.drawParams && Number.isFinite(entry.drawParams.lineHeight)
+                        ? entry.drawParams.lineHeight
+                        : 24);
+                const topPad = Math.min(Math.max(0, Math.ceil(fontSize * 0.08)), outlinePadding);
+                const bottomPad = Math.max(outlinePadding, Math.ceil(fontSize * 0.25));
+                const width = Math.max(0, Math.ceil((bounds.x2 - bounds.x1) + outlinePadding * 2));
+                const height = Math.max(0, Math.ceil((bounds.y2 - bounds.y1) + topPad + bottomPad));
+                const clearX = Math.max(0, Math.floor(bounds.x1 - outlinePadding));
+                const clearY = Math.max(0, Math.floor(bounds.y1 - topPad));
+                return {
+                    x: clearX,
+                    y: clearY,
+                    width: Math.min(Math.max(0, bitmap.width - clearX), width),
+                    height: Math.min(Math.max(0, bitmap.height - clearY), height),
+                    topPad,
+                    bottomPad,
+                };
+            };
+
+            const markEntryStale = (state, entry, reason) => {
+                if (!state || !entry || entry._trStale) return;
+                entry._trStale = true;
+                entry.canceledReason = reason;
+                entry.canceledAt = Date.now();
+                if (entry.key && state.entries && state.entries.get(entry.key) === entry) {
+                    state.entries.delete(entry.key);
+                } else if (state.entries) {
+                    try {
+                        state.entries.forEach((value, key) => {
+                            if (value === entry) state.entries.delete(key);
+                        });
+                    } catch (_) {}
+                }
+                if (state.instanceMap && entry.instanceId) {
+                    state.instanceMap.delete(entry.instanceId);
+                }
+                diag(`[bitmap/cancel] uuid=${entry.instanceId || 'unknown'} reason=${reason} text="${preview(entry.trimmedText || entry.rawText || '')}"`);
+            };
+
+            const discardFragmentsInRect = (state, rect, reason, skipEntry = null) => {
+                if (!state || !Array.isArray(state.fragments) || state.fragments.length === 0) return;
+                if (!rect || !isValidRect(rect)) {
+                    const removed = state.fragments.length;
+                    state.fragments.length = 0;
+                    if (removed) {
+                        diag(`[bitmap/invalidate] reason=${reason} fragments_cleared=${removed}`);
+                    }
+                    return;
+                }
+                const before = state.fragments.length;
+                state.fragments = state.fragments.filter((fragment) => {
+                    if (!fragment) return false;
+                    const fragRect = fragmentRect(fragment);
+                    if (skipEntry && skipEntry.bounds && fragment.ownerType === skipEntry.ownerType) {
+                        if (fragRect && rectanglesOverlap(fragRect, skipEntry.bounds)) {
+                            return true;
+                        }
+                    }
+                    return !fragRect || !rectanglesOverlap(rect, fragRect);
+                });
+                const removed = before - state.fragments.length;
+                if (removed > 0) {
+                    diag(`[bitmap/invalidate] reason=${reason} fragments_removed=${removed}`);
+                }
+            };
+
+            const invalidateEntriesInRect = (bitmap, rect, reason, skipEntry = null) => {
+                const state = bitmapStates.get(bitmap);
+                if (!state || !state.entries || state.entries.size === 0) return 0;
+                let removed = 0;
+                const targetRect = rect && isValidRect(rect) ? rect : null;
+                const entries = Array.from(state.entries.values());
+                for (const entry of entries) {
+                    if (!entry || entry === skipEntry) continue;
+                    const entryRect = deriveEntryRect(entry);
+                    if (!targetRect || !entryRect || rectanglesOverlap(targetRect, entryRect)) {
+                        markEntryStale(state, entry, `${reason}-rect`);
+                        removed++;
+                    }
+                }
+                if (removed) {
+                    discardFragmentsInRect(state, targetRect, reason, skipEntry);
+                }
+                return removed;
+            };
+
+            const handleBitmapInvalidation = (bitmap, rect, reason, options = {}) => {
+                if (!bitmap) return;
+                const skipEntry = bitmap._trActiveRedrawEntry || null;
+                const state = bitmapStates.get(bitmap);
+
+                try {
+                    if (state && Array.isArray(state.fragments) && state.fragments.length > 0) {
+                        if (rect && isValidRect(rect)) {
+                            flushAggregatedLines(bitmap, `pre-${reason}`, rect);
+                        } else {
+                            flushAggregatedLines(bitmap, `pre-${reason}`);
+                        }
+                    }
+                } catch (_) {}
+
+                if (skipEntry && rect && skipEntry.bounds && rectanglesOverlap(rect, skipEntry.bounds)) {
+                    const similar = rectanglesSimilar(rect, skipEntry.bounds, 12);
+                    if (similar) {
+                        if (state) {
+                            discardFragmentsInRect(state, rect, `${reason}-self`, skipEntry);
+                        }
+                        diag(`[bitmap/invalidate-skip] reason=${reason} uuid=${skipEntry.instanceId || 'unknown'} treated_as_self_clear`);
+                        return;
+                    }
+                }
+
+                let removed = 0;
+                if (!options.skipEntryInvalidation) {
+                    removed = invalidateEntriesInRect(bitmap, rect, reason, skipEntry);
+                } else if (state && Array.isArray(state.fragments)) {
+                    discardFragmentsInRect(state, rect, `${reason}-skip`, skipEntry);
+                }
+                if (removed) {
+                    let ownerType = 'Bitmap';
+                    try {
+                        if (skipEntry && skipEntry.ownerType) {
+                            ownerType = skipEntry.ownerType;
+                        } else if (contentsOwners && typeof contentsOwners.get === 'function') {
+                            const owner = contentsOwners.get(bitmap);
+                            if (owner && owner.constructor && owner.constructor.name) {
+                                ownerType = owner.constructor.name;
+                            }
+                        }
+                    } catch (_) {}
+                    telemetry.logDraw('bitmap_invalidate', reason, (rect && rect.x1) || 0, (rect && rect.y1) || 0, {
+                        ownerType,
+                        removed,
+                    });
+                } else if (state) {
+                    discardFragmentsInRect(state, rect, reason, skipEntry);
+                }
+            };
+
+            const installInvalidationHook = (methodName, rectResolver) => {
+                const original = Bitmap.prototype[methodName];
+                if (typeof original !== 'function') return;
+                if (original.__trInvalidationWrapped) return;
+                const wrapped = function(...args) {
+                    let rect = null;
+                    let extraOptions = {};
+                    try {
+                        const resolved = rectResolver.call(this, args);
+                        if (resolved && typeof resolved === 'object' && ('rect' in resolved || 'options' in resolved)) {
+                            rect = resolved.rect !== undefined ? resolved.rect : null;
+                            extraOptions = resolved.options || {};
+                        } else {
+                            rect = resolved;
+                        }
+                    } catch (_) {}
+                    const result = original.apply(this, args);
+                    if (this && this._trBitmapReplayDepth && this._trBitmapReplayDepth > 0) {
+                        return result;
+                    }
+                    if (rect !== false) {
+                        let resolvedRect = null;
+                        if (rect === 'FULL') {
+                            resolvedRect = null;
+                        } else {
+                            resolvedRect = rect;
+                        }
+                        if (extraOptions && extraOptions.clearRenderOps) {
+                            const state = bitmapStates.get(this);
+                            if (state) {
+                                discardRenderOpsInRect(
+                                    state,
+                                    extraOptions.clearRenderOps === 'all'
+                                        ? null
+                                        : (resolvedRect && isValidRect(resolvedRect) ? resolvedRect : null)
+                                );
+                            }
+                        }
+                        const guard = resolvedRect ? consumeInvalidationGuard(this, resolvedRect, methodName) : null;
+                        if (guard) {
+                            diag(`[bitmap/invalidate-guard] reason=${methodName} uuid=${guard.entry && guard.entry.instanceId ? guard.entry.instanceId : 'unknown'}`);
+                            const state = bitmapStates.get(this);
+                            if (state) {
+                                discardFragmentsInRect(state, resolvedRect, `${methodName}-guard`, guard.entry || null);
+                            }
+                        } else {
+                            handleBitmapInvalidation(this, resolvedRect && isValidRect(resolvedRect) ? resolvedRect : null, methodName, extraOptions);
+                        }
+                        if (extraOptions && extraOptions.recordOp) {
+                            const op = Object.assign({}, extraOptions.recordOp);
+                            if (!op.rect && resolvedRect) {
+                                op.rect = resolvedRect;
+                            }
+                            recordBitmapRenderOp(this, op);
+                        }
+                    }
+                    return result;
+                };
+                wrapped.__trInvalidationWrapped = true;
+                Bitmap.prototype[methodName] = wrapped;
+                diag(`[bitmap/invalidate-hook] Installed for ${methodName}`);
+            };
+
+            const rectOrFalse = (rect) => (rectHasArea(rect) ? rect : false);
+
+            installInvalidationHook('clearRect', function(args) {
+                const [x, y, w, h] = args;
+                return {
+                    rect: rectOrFalse(rectFromDimensions(x, y, w, h)),
+                    options: { clearRenderOps: 'rect' },
+                };
+            });
+
+            installInvalidationHook('clear', function() {
+                return {
+                    rect: 'FULL',
+                    options: { clearRenderOps: 'all' },
+                };
+            });
+
+            installInvalidationHook('fillRect', function(args) {
+                const [x, y, w, h, color] = args;
+                return {
+                    rect: rectOrFalse(rectFromDimensions(x, y, w, h)),
+                    options: {
+                        recordOp: {
+                            methodName: 'fillRect',
+                            args: [x, y, w, h, color],
+                        },
+                    },
+                };
+            });
+
+            installInvalidationHook('gradientFillRect', function(args) {
+                const [x, y, w, h, color1, color2, vertical] = args;
+                return {
+                    rect: rectOrFalse(rectFromDimensions(x, y, w, h)),
+                    options: {
+                        recordOp: {
+                            methodName: 'gradientFillRect',
+                            args: [x, y, w, h, color1, color2, vertical],
+                        },
+                    },
+                };
+            });
+
+            installInvalidationHook('fillAll', function(args) {
+                return {
+                    rect: 'FULL',
+                    options: {
+                        clearRenderOps: 'all',
+                    },
+                };
+            });
+
+            installInvalidationHook('resize', function() {
+                return {
+                    rect: 'FULL',
+                    options: { clearRenderOps: 'all' },
+                };
+            });
+
+            installInvalidationHook('blt', function(args) {
+                const [, , , sw, sh, dx, dy, dw, dh] = args;
+                const width = Number.isFinite(Number(dw)) ? dw : sw;
+                const height = Number.isFinite(Number(dh)) ? dh : sh;
+                return {
+                    rect: rectOrFalse(rectFromDimensions(dx, dy, width, height)),
+                    options: {
+                        skipEntryInvalidation: true,
+                        recordOp: {
+                            methodName: 'blt',
+                            args: Array.isArray(args) ? args.slice() : [],
+                        },
+                    },
+                };
+            });
+
+            const flushAggregatedLines = (bitmap, reason = 'manual', targetRect = null) => {
+                const state = bitmapStates.get(bitmap);
+                if (!state || !Array.isArray(state.fragments) || state.fragments.length === 0) return;
+                let fragments;
+                if (targetRect && isValidRect(targetRect)) {
+                    const remaining = [];
+                    const selected = [];
+                    for (const fragment of state.fragments) {
+                        const fragRect = fragmentRect(fragment);
+                        if (fragRect && rectanglesOverlap(fragRect, targetRect)) {
+                            selected.push(fragment);
+                        } else {
+                            remaining.push(fragment);
+                        }
+                    }
+                    if (!selected.length) return;
+                    fragments = selected;
+                    state.fragments = remaining;
+                    diag(`[bitmap/flush] reason=${reason} fragments=${fragments.length} (targeted)`);
+                } else {
+                    fragments = state.fragments.splice(0, state.fragments.length);
+                    diag(`[bitmap/flush] reason=${reason} fragments=${fragments.length}`);
+                }
+
+                const lines = new Map();
+                for (const fragment of fragments) {
+                    const yKey = `${Math.round(fragment.y)}:${Math.round(fragment.lineHeight)}`;
+                    if (!lines.has(yKey)) lines.set(yKey, []);
+                    lines.get(yKey).push(fragment);
+                }
+
+                const now = Date.now();
+                const entries = [];
+                lines.forEach((lineFragments) => {
+                    lineFragments.sort((a, b) => a.x - b.x);
+                    let currentBlock = [];
+                    let lastFragment = null;
+                    const groupList = [];
+                    for (const frag of lineFragments) {
+                        if (!lastFragment) {
+                            currentBlock = [frag];
+                            groupList.push(currentBlock);
+                            lastFragment = frag;
+                            continue;
+                        }
+                        const gap = frag.x - (lastFragment.x + lastFragment.width);
+                        const gapLimit = Math.max(GAP_MIN, Math.ceil((frag.lineHeight || lastFragment.lineHeight || 24) * GAP_RATIO));
+                        const sameFont = lastFragment.fontSignature === frag.fontSignature;
+                        const sameAlign = lastFragment.align === frag.align;
+                        if (gap > gapLimit || !sameFont || !sameAlign) {
+                            currentBlock = [frag];
+                            groupList.push(currentBlock);
+                        } else {
+                            currentBlock.push(frag);
+                        }
+                        lastFragment = frag;
+                    }
+
+                    for (const block of groupList) {
+                        if (!block.length) continue;
+                        const bounds = block.reduce((acc, frag) => {
+                            const minX = Math.min(acc.x1, frag.x);
+                            const minY = Math.min(acc.y1, frag.y);
+                            const maxX = Math.max(acc.x2, frag.x + frag.width);
+                            const maxY = Math.max(acc.y2, frag.y + frag.lineHeight);
+                            return {
+                                x1: minX,
+                                y1: minY,
+                                x2: maxX,
+                                y2: maxY,
+                            };
+                        }, { x1: Infinity, y1: Infinity, x2: -Infinity, y2: -Infinity });
+                        if (!Number.isFinite(bounds.x1) || !Number.isFinite(bounds.y1)) continue;
+
+                        const combinedRaw = block.map(f => f.rawText).join('');
+                        const combinedVisible = sanitizePerChar(block.map(f => f.visibleText).join(''));
+                        const converted = stripRpgmEscapes(combinedRaw || '');
+                        const trimmed = sanitizePerChar(converted).trim();
+                        if (!trimmed) {
+                            diag('[bitmap/skip] Empty trimmed text after combination.');
+                            continue;
+                        }
+                        const ownerType = block[0].ownerType;
+                        const align = block.length === 1 ? block[0].align : 'left';
+                        const drawX = block.length === 1 ? block[0].x : bounds.x1;
+                        const maxWidth = Math.max(bounds.x2 - bounds.x1, block.reduce((m, f) => Math.max(m, f.maxWidth || 0), 0));
+                        const lineHeight = Math.max(...block.map(f => f.lineHeight || 0), 1);
+                        const preferredFragment = block.reduce((best, frag) => {
+                            if (!frag) return best;
+                            const widthScore = Math.max(1, Number.isFinite(frag.width) ? frag.width : frag.maxWidth || 0);
+                            const textLen = sanitizePerChar(frag.visibleText || frag.rawText || '').length;
+                            if (!best) {
+                                return { frag, score: widthScore, len: textLen };
+                            }
+                            if (widthScore > best.score) {
+                                return { frag, score: widthScore, len: textLen };
+                            }
+                            if (widthScore === best.score && textLen > best.len) {
+                                return { frag, score: widthScore, len: textLen };
+                            }
+                            return best;
+                        }, null);
+                        const dominantFragment = preferredFragment && preferredFragment.frag ? preferredFragment.frag : block[block.length - 1];
+                        const drawState = dominantFragment && dominantFragment.drawState ? dominantFragment.drawState : block[0].drawState;
+                        const methodName = dominantFragment && dominantFragment.methodName
+                            ? dominantFragment.methodName
+                            : (block[0] && block[0].methodName ? block[0].methodName : 'drawText');
+
+                        const entry = {
+                            bitmap,
+                            key: `${state.id}:${Math.round(drawX)}:${Math.round(bounds.y1)}:${Math.round(maxWidth)}:${align}:${ownerType}`,
+                            detectedAt: now,
+                            ownerType,
+                            rawText: combinedRaw,
+                            visibleText: combinedVisible,
+                            convertedText: converted,
+                            trimmedText: trimmed,
+                            drawParams: {
+                                x: drawX,
+                                y: bounds.y1,
+                                maxWidth: Math.max(1, maxWidth),
+                                lineHeight: Math.max(1, lineHeight),
+                                align,
+                            },
+                            bounds,
+                            drawState,
+                            translationStatus: 'pending',
+                            fragments: block,
+                            position: { x: drawX, y: bounds.y1 },
+                            methodName,
+                        };
+                        entries.push(entry);
+                    }
+                });
+
+                for (const entry of entries) {
+                    registerBitmapEntry(entry);
+                }
+            };
+
+            const scheduleFlush = (bitmap) => {
+                const state = bitmapStates.get(bitmap);
+                if (!state) return;
+                if (state.flushTimer) return;
+                state.flushTimer = setTimeout(() => {
+                    state.flushTimer = null;
+                    try { flushAggregatedLines(bitmap, 'timer'); } catch (err) {
+                        logger.warn('[bitmap/flush-error]', err);
+                    }
+                }, FLUSH_DELAY_MS);
+            };
+
+            const registerBitmapEntry = (entry) => {
+                const { bitmap, key } = entry;
+                const state = bitmapStates.get(bitmap);
+                if (!state) return;
+
+                const existing = state.entries.get(key);
+                if (existing && existing.trimmedText === entry.trimmedText) {
+                    existing.detectedAt = Date.now();
+                    existing.rawText = entry.rawText;
+                    existing.visibleText = entry.visibleText;
+                    existing.convertedText = entry.convertedText;
+                    existing.drawParams = entry.drawParams;
+                    existing.bounds = entry.bounds;
+                    existing.drawState = entry.drawState;
+                    existing.fragments = entry.fragments;
+                    existing.position = entry.position;
+                    existing.methodName = entry.methodName;
+                    existing.drawOrder = nextDrawOrder(state);
+                    diag(`[bitmap/entry-skip] Duplicate text at key=${key} text="${preview(entry.trimmedText)}"`);
+                    return;
+                }
+                if (existing) {
+                    markEntryStale(state, existing, 'replace');
+                }
+
+                const normalized = entry.trimmedText;
+                entry.drawOrder = nextDrawOrder(state);
+                entry.isTranslatable = false;
+                entry.translationStatus = 'skipped';
+                state.entries.set(key, entry);
+                if (!normalized || skipLikeCounter(normalized) || translationCache.shouldSkip(normalized)) {
+                    diag(`[bitmap/skip] "${preview(normalized)}" flagged as counter/skip.`);
+                    return;
+                }
+
+                entry.isTranslatable = true;
+                entry.translationStatus = 'pending';
+                entry.placeholderInfo = prepareTextForTranslation(entry.rawText);
+                entry.translationSource = entry.placeholderInfo
+                    ? entry.placeholderInfo.textForTranslation
+                    : entry.rawText;
+                entry.normalizedSource = String(entry.translationSource || '').trim();
+                if (!entry.normalizedSource) {
+                    diag('[bitmap/skip] Empty normalized source after preparation.');
+                    entry.isTranslatable = false;
+                    entry.translationStatus = 'skipped';
+                    return;
+                }
+
+                const now = Date.now();
+                entry.instanceId = nextInstanceId();
+                entry.createdAt = now;
+
+                telemetry.logTextDetected('bitmap', normalized, entry.drawParams.x, entry.drawParams.y, {
+                    ownerType: entry.ownerType,
+                    fragments: entry.fragments.length,
+                });
+                diag(`[bitmap/register] uuid=${entry.instanceId} key=${key} text="${preview(normalized)}" fragments=${entry.fragments.length}`);
+                if (state.instanceMap) {
+                    state.instanceMap.set(entry.instanceId, entry);
+                }
+
+                try {
+                    if (translationCache.completed.has(entry.normalizedSource)) {
+                        const translated = translationCache.completed.get(entry.normalizedSource);
+                        applyBitmapTranslation(entry, translated, 'cache', entry.instanceId);
+                        return;
+                    }
+                } catch (cacheErr) {
+                    logger.warn('[bitmap/cache-error]', cacheErr);
+                }
+
+                entry.translationStatus = 'translating';
+                const targetInstanceId = entry.instanceId;
+                entry.translationPromise = translationCache.requestTranslation(entry.translationSource)
+                    .then(translated => applyBitmapTranslation(entry, translated, 'async', targetInstanceId))
+                    .catch(error => {
+                        entry.translationStatus = 'error';
+                        if (!entry._trStale) {
+                            logger.warn('[bitmap/translation-error]', error);
+                        }
+                    });
+            };
+
+            const applyBitmapTranslation = (entry, translated, source, expectedInstanceId = null) => {
+                if (!entry || entry._trStale) return;
+                if (expectedInstanceId && entry.instanceId !== expectedInstanceId) {
+                    diag(`[bitmap/skip-uuid] uuid=${entry.instanceId} expected=${expectedInstanceId} text="${preview(entry.trimmedText)}"`);
+                    return;
+                }
+                const state = bitmapStates.get(entry.bitmap);
+                if (!state || state.entries.get(entry.key) !== entry) return;
+
+                let restored = translated;
+                try {
+                    if (entry.placeholderInfo) {
+                        restored = restoreControlCodes(translated, entry.placeholderInfo, entry.rawText);
+                    }
+                } catch (restoreError) {
+                    logger.warn('[bitmap/restore-error]', restoreError);
+                }
+                if (typeof restored !== 'string') restored = entry.rawText;
+                const restoredTrimmed = sanitizePerChar(stripRpgmEscapes(restored || '')).trim();
+                if (!restoredTrimmed || restoredTrimmed === entry.trimmedText) {
+                    diag(`[bitmap/skip-same] "${preview(entry.trimmedText)}"`);
+                    return;
+                }
+
+                const bitmap = entry.bitmap;
+                if (!bitmap) return;
+
+                const prevActiveEntry = bitmap._trActiveRedrawEntry || null;
+                bitmap._trActiveRedrawEntry = entry;
+                try {
+                    const outlinePadding = entry.drawState && Number.isFinite(entry.drawState.outlineWidth)
+                        ? Math.max(1, entry.drawState.outlineWidth + 1)
+                        : 2;
+                    const clearRect = calculateClearRect(bitmap, entry, outlinePadding);
+                    const guardRect = clearRect && clearRect.width > 0 && clearRect.height > 0
+                        ? rectFromDimensions(clearRect.x, clearRect.y, clearRect.width, clearRect.height)
+                        : null;
+                    const currentOrder = entry.drawOrder || 0;
+                    const replayBefore = guardRect
+                        ? collectReplayItems(state, guardRect, entry, order => order < currentOrder)
+                        : [];
+                    const replayAfter = guardRect
+                        ? collectReplayItems(state, guardRect, entry, order => order > currentOrder)
+                        : [];
+                    diag(`[bitmap/redraw] key=${entry.key} src=${source} uuid=${entry.instanceId} method=${entry.methodName || 'drawText'} "${preview(entry.trimmedText)}" -> "${preview(restoredTrimmed)}"`);
+                    telemetry.logDraw('bitmap_redraw', restoredTrimmed, entry.drawParams.x, entry.drawParams.y, {
+                        ownerType: entry.ownerType,
+                        source,
+                        method: entry.methodName || 'drawText',
+                    });
+                    withBitmapReplay(bitmap, () => {
+                        if (clearRect && clearRect.width > 0 && clearRect.height > 0) {
+                            try { bitmap.clearRect(clearRect.x, clearRect.y, clearRect.width, clearRect.height); } catch (_) {}
+                        }
+                        replayBitmapItems(bitmap, replayBefore);
+                        drawBitmapTextValue(bitmap, entry, restored);
+                        replayBitmapItems(bitmap, replayAfter);
+                    });
+                } finally {
+                    bitmap._trActiveRedrawEntry = prevActiveEntry;
+                }
+
+                entry.translationStatus = 'completed';
+                entry.translatedText = restored;
+                entry.completedAt = Date.now();
+            };
+
+            Bitmap.prototype._trFlushAggregatedLines = function() {
+                flushAggregatedLines(this, 'bitmap.flush');
+            };
+
+            const processBitmapDrawInvocation = (methodName, originalFn, bitmap, args) => {
+                const [inputText, rawX, rawY, maxWidth, lineHeight, align] = args;
+                const textStr = String(inputText ?? '');
+                const callArgs = [textStr, rawX, rawY, maxWidth, lineHeight, align];
+
+                if (textStr.startsWith(REDRAW_SIGNATURE)) {
+                    const cleanText = textStr.substring(REDRAW_SIGNATURE.length);
+                    diag(`[bitmap/bypass:${methodName}] Signed input "${preview(cleanText)}" at (${rawX},${rawY})`);
+                    callArgs[0] = cleanText;
+                    return originalFn.apply(bitmap, callArgs);
+                }
+
+                if (bitmap && bitmap._trBitmapReplayDepth && bitmap._trBitmapReplayDepth > 0) {
+                    return originalFn.apply(bitmap, callArgs);
+                }
+
+                if (!bitmap || (bitmap._trBitmapSkipDepth && bitmap._trBitmapSkipDepth > 0)) {
+                    return originalFn.apply(bitmap, callArgs);
+                }
+
+                if (bitmap._trPreferWindowPipeline && bitmap._trWindowPipelineDepth > 0) {
+                    return originalFn.apply(bitmap, callArgs);
+                }
+
+                if (bitmap._trMessageContents) {
+                    return originalFn.apply(bitmap, callArgs);
+                }
+
+                const owner = contentsOwners && contentsOwners.get ? contentsOwners.get(bitmap) : null;
+                const ownerType = owner && owner.constructor ? owner.constructor.name : (bitmap.constructor ? bitmap.constructor.name : 'Bitmap');
+                if (hasDedicatedOwnerHook(owner) || bitmap._trHasDedicatedTextHook) {
+                    diag(`[bitmap/bypass-owner] owner=${ownerType} text="${preview(stripRpgmEscapes(textStr))}"`);
+                    return originalFn.apply(bitmap, callArgs);
+                }
+                const state = ensureBitmapState(bitmap);
+                if (!state) {
+                    return originalFn.apply(bitmap, callArgs);
+                }
+
+                const numericX = Number(rawX);
+                const numericY = Number(rawY);
+                const numericLineHeight = Number(lineHeight);
+                const numericMaxWidth = Number(maxWidth);
+                const safeX = Number.isFinite(numericX) ? numericX : 0;
+                const safeY = Number.isFinite(numericY) ? numericY : 0;
+                const safeLineHeight = Number.isFinite(numericLineHeight) && numericLineHeight > 0
+                    ? numericLineHeight
+                    : (bitmap.fontSize || 24);
+                const widthEstimate = estimateWidth(bitmap, textStr, maxWidth);
+                const drawState = captureBitmapDrawState(bitmap);
+                const fragment = {
+                    methodName,
+                    rawText: textStr,
+                    visibleText: stripRpgmEscapes(textStr || ''),
+                    x: safeX,
+                    y: safeY,
+                    maxWidth: Number.isFinite(numericMaxWidth) ? numericMaxWidth : widthEstimate,
+                    lineHeight: safeLineHeight,
+                    align: align || 'left',
+                    width: Math.max(0, widthEstimate),
+                    ownerType,
+                    drawState,
+                    fontSignature: computeFontSignature(drawState, bitmap),
+                    timestamp: Date.now(),
+                };
+
+                diag(`[bitmap/fragment:${methodName}] owner=${ownerType} text="${preview(fragment.visibleText)}" @ (${safeX},${safeY})`);
+
+                const result = originalFn.apply(bitmap, callArgs);
+
+                try {
+                    const stateRef = ensureBitmapState(bitmap);
+                    if (!stateRef) return result;
+                    stateRef.fragments.push(fragment);
+                    if (stateRef.fragments.length > 200) {
+                        flushAggregatedLines(bitmap, 'overflow');
+                    } else {
+                        scheduleFlush(bitmap);
+                    }
+                } catch (fragmentError) {
+                    logger.warn('[bitmap/fragment-error]', fragmentError);
+                }
+
+                return result;
+            };
+
+            const installBitmapDrawWrapper = (methodName) => {
+                try {
+                    const current = Bitmap.prototype[methodName];
+                    if (typeof current !== 'function') {
+                        diag(`[bitmap/hook] Bitmap.${methodName} not available (yet).`);
+                        return false;
+                    }
+                    if (current && current.__trBitmapWrapper === DRAW_WRAPPER_TOKEN) {
+                        return true;
+                    }
+                    const originalFn = current && current.__trOriginal ? current.__trOriginal : current;
+                    const wrapped = function(...args) {
+                        return processBitmapDrawInvocation(methodName, originalFn, this, args);
+                    };
+                    wrapped.__trBitmapWrapper = DRAW_WRAPPER_TOKEN;
+                    wrapped.__trOriginal = originalFn;
+                    try { wrapped.name = `trWrapped_${methodName}`; } catch (_) {}
+                    Bitmap.prototype[methodName] = wrapped;
+                    diag(`[bitmap/hook] Wrapped Bitmap.${methodName}`);
+                    return true;
+                } catch (wrapError) {
+                    logger.error(`[bitmap/hook-error] Failed to wrap ${methodName}`, wrapError);
+                    return false;
+                }
+            };
+
+            const hookRetryTimers = new Map();
+            const scheduleBitmapHookRetry = (methodName) => {
+                if (hookRetryTimers.has(methodName)) return;
+                let attempts = 0;
+                const maxAttempts = 20;
+                const timer = setInterval(() => {
+                    attempts++;
+                    if (installBitmapDrawWrapper(methodName) || attempts >= maxAttempts) {
+                        clearInterval(timer);
+                        hookRetryTimers.delete(methodName);
+                        if (attempts >= maxAttempts) {
+                            diag(`[bitmap/hook] Gave up retrying Bitmap.${methodName}`);
+                        }
+                    }
+                }, 500);
+                hookRetryTimers.set(methodName, timer);
+            };
+
+            installBitmapDrawWrapper('drawText');
+
+            const extraDrawMethods = ['drawTextS', 'drawTextM'];
+            extraDrawMethods.forEach((name) => {
+                if (!installBitmapDrawWrapper(name)) {
+                    scheduleBitmapHookRetry(name);
+                }
+            });
+
+            diag('[bitmap/init] Bitmap draw hooks installed.');
+        } catch (error) {
+            logger.error('[bitmap/init-error]', error);
+        }
+    }
+
+    
+
+    // Hook Window_Help.setText to capture full descriptions (items, skills, etc.)
+    // Very common and whole-string; integrates with cache and signature bypass.
+    function trackHelpWindow() {
+        try {
+            if (typeof Window_Help === 'undefined' || !Window_Help || !Window_Help.prototype) return;
+            const originalSetText = Window_Help.prototype.setText;
+            if (typeof originalSetText !== 'function') return;
+
+            Window_Help.prototype.setText = function(text) {
+                try {
+                    const textStr = String(text);
+
+                    // Bypass if already signed
+                    if (textStr.startsWith(REDRAW_SIGNATURE)) {
+                        const clean = textStr.substring(REDRAW_SIGNATURE.length);
+                        return originalSetText.call(this, clean);
+                    }
+
+                    // Prefer translating after escape conversion for better context
+                    let converted = textStr;
+                    try { converted = this.convertEscapeCharacters(textStr); } catch (_) {}
+
+                    const placeholderInfo = prepareTextForTranslation(converted || '');
+                    const translationSource = placeholderInfo.textForTranslation;
+                    const norm = String(translationSource || '').trim();
+                    if (!norm || translationCache.shouldSkip(norm)) {
+                        return originalSetText.call(this, textStr);
+                    }
+
+                    // Cache hit: apply translated immediately
+                    try {
+                        if (translationCache.completed.has(norm)) {
+                            let translated = translationCache.completed.get(norm);
+                            translated = restoreControlCodes(translated, placeholderInfo, converted || textStr);
+                            // Skip replacement if original and translated text are the same
+                            if (typeof translated !== 'string' || translated.trim() === (converted || '').trim()) {
+                                dbg(`[Help Skip] Original and translated text are identical: "${preview(norm)}"`);
+                                return originalSetText.call(this, textStr);
+                            }
+                            const signed = REDRAW_SIGNATURE + translated;
+                            return originalSetText.call(this, signed);
+                        }
+                    } catch (_) {}
+
+                    // Async path: set original now, then update when ready if unchanged
+                    this._trHelpVersion = (this._trHelpVersion | 0) + 1;
+                    const version = this._trHelpVersion;
+                    const self = this;
+                    const res = originalSetText.call(this, textStr);
+                    translationCache.requestTranslation(translationSource)
+                        .then(translated => {
+                            try {
+                                if (self._trHelpVersion !== version) return; // superseded by newer setText
+                                // Skip replacement if original and translated text are the same
+                                let restored = restoreControlCodes(translated, placeholderInfo, converted || textStr);
+                                if (typeof restored !== 'string' || restored.trim() === (converted || '').trim()) {
+                                    dbg(`[Help Async Skip] Original and translated text are identical: "${preview(norm)}"`);
+                                    return;
+                                }
+                                const signed = REDRAW_SIGNATURE + restored;
+                                originalSetText.call(self, signed);
+                            } catch (_) { /* ignore */ }
+                        })
+                        .catch(() => { /* keep original on failure */ });
+                    return res;
+                } catch (e) {
+                    logger.error('[Window_Help.setText Hook Error]', e);
+                    return originalSetText.call(this, text);
+                }
+            };
+            dbg('[Help] Hooked Window_Help.setText');
+        } catch (e) {
+            logger.error('[Help Hook Error]', e);
+        }
+    }
+
+    // Initialize after game engine loads
+
+        return {
+            trackGameMessage,
+            trackChoiceList,
+            trackPixiText,
+            trackBitmapDrawText,
+            trackHelpWindow,
+            drawMessageFaceIfNeeded,
+            resolveMessageStartCoordinates,
+        };
+    };
+})();
