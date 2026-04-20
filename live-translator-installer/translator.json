@@ -1,0 +1,21 @@
+{
+    "provider": "local",
+    "settings": {
+        "local": {
+            "address": "127.0.0.1",
+            "port": 1234,
+            "model": "auto",
+            "system_prompt": "Translate the user's text into Korean. Preserve every ¤ character exactly in the right place. Return only the translated text.",
+            "separate_multiline_requests": true,
+            "temperature": 1,
+            "top_p": 0.95,
+            "top_k": 64,
+            "min_p": 0.05,
+            "repeat_penalty": 1.1
+        },
+        "deepl": {
+            "language": "KO",
+            "apiKey": "________NONE________"
+        }
+    }
+}
