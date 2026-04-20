@@ -241,7 +241,7 @@
 
         const provider = (cfg.provider || '').toString().trim().toLowerCase();
         if (!provider) {
-            throw new Error('[LiveTranslator][Config] translator.json missing required "provider" string (deepl/local).');
+            throw new Error('[LiveTranslator][Config] translator.json missing required "provider" string (deepl/local/none).');
         }
         if (!cfg.settings || typeof cfg.settings !== 'object') {
             throw new Error('[LiveTranslator][Config] translator.json missing required "settings" object.');
@@ -257,6 +257,8 @@
             } else if (!local.model || typeof local.model !== 'string' || !local.model.trim()) {
                 logger.warn('[LiveTranslator][Config] translator.json missing "settings.local.model"; local LLM requests will fail.');
             }
+        } else if (provider === 'none') {
+            // Cache-only mode intentionally skips external provider validation.
         } else {
             throw new Error(`[LiveTranslator][Config] translator.json contains unsupported provider "${cfg.provider}".`);
         }

@@ -31,6 +31,9 @@
         },
 
         async translateTextStream(text, options = {}) {
+            if (TRANSLATOR_CONFIG.provider === 'none') {
+                return String(text ?? '');
+            }
             if (TRANSLATOR_CONFIG.provider !== 'local') {
                 throw new Error('Streaming translation is only supported for the local provider.');
             }
@@ -47,6 +50,10 @@
         async translateMany(texts, targetLang = null) {
             const items = Array.isArray(texts) ? texts : [texts];
             try {
+                if (TRANSLATOR_CONFIG.provider === 'none') {
+                    return items.map((t) => String(t));
+                }
+
                 // For local LLM, map single-item path directly
                 if (TRANSLATOR_CONFIG.provider === 'local') {
                     return Promise.all(items.map((t) => translateOneLocal(String(t), TRANSLATOR_CONFIG.settings.local)));
@@ -645,11 +652,13 @@
                 throw new Error('translator.json missing required "settings.deepl.apiKey" value for DeepL provider.');
             }
             config.settings.deepl = deeplConfig;
+        } else if (provider === 'none') {
+            // Cache-only mode: serve only entries already present in translation-cache.log.
         } else {
             throw new Error(`translator.json contains unsupported provider "${providerRaw}".`);
         }
 
-        if (provider !== 'deepl' && settings.deepl && typeof settings.deepl === 'object') {
+        if (provider === 'local' && settings.deepl && typeof settings.deepl === 'object') {
             config.settings.deepl = normalizeDeepLConfig(settings.deepl);
         }
 

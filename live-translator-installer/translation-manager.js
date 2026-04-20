@@ -26,6 +26,44 @@
         };
     }
 
+    function normalizeCacheKey(text) {
+        return String(text ?? '').trim();
+    }
+
+    function tokenizeNewlineMarkers(text) {
+        let newlineIndex = 0;
+        return String(text ?? '').replace(/\r?\n/g, () => `⟦NL${newlineIndex++}⟧`);
+    }
+
+    function untokenizeNewlineMarkers(text) {
+        return String(text ?? '').replace(/⟦NL\d+⟧/g, '\n');
+    }
+
+    function deriveCacheKeyAliases(text) {
+        const normalized = normalizeCacheKey(text);
+        if (!normalized) return [];
+
+        const aliases = [];
+        const seen = new Set();
+        const addAlias = (value) => {
+            const key = normalizeCacheKey(value);
+            if (!key || seen.has(key)) return;
+            seen.add(key);
+            aliases.push(key);
+        };
+
+        addAlias(normalized);
+
+        if (/\r?\n/.test(normalized)) {
+            addAlias(tokenizeNewlineMarkers(normalized));
+        }
+        if (/⟦NL\d+⟧/.test(normalized)) {
+            addAlias(untokenizeNewlineMarkers(normalized));
+        }
+
+        return aliases;
+    }
+
     function createRateLimiter(options) {
         const dbg = typeof options?.dbg === 'function' ? options.dbg : noop;
         const state = {
@@ -230,6 +268,7 @@
             translatorBatcher,
             translateTextStream = null,
             isLocalProvider = false,
+            isCacheOnlyProvider = false,
             diag = noop,
             settings = {},
         } = options || {};
@@ -247,6 +286,7 @@
             shouldSkip,
             performTranslation,
             performTranslationStream,
+            storeCompletedTranslation,
         };
 
         function shouldSkip(text) {
@@ -272,13 +312,21 @@
 
         function finalizeTranslationSuccess(normalized, translated) {
             try { cache.ongoing.delete(normalized); } catch (_) {}
-            const limit = getCacheEntryLimit();
-            if (limit > 0) pruneMapToLimit(cache.completed, limit);
-            cache.completed.set(normalized, translated);
+            storeCompletedTranslation(normalized, translated);
             telemetrySafe.logTranslation('completed', normalized, translated);
             if (disk.enabled && typeof disk.appendRecord === 'function') {
                 try { disk.appendRecord(normalized, translated); } catch (_) {}
             }
+        }
+
+        function storeCompletedTranslation(input, translated) {
+            const aliases = deriveCacheKeyAliases(input);
+            if (!aliases.length) return;
+            const limit = getCacheEntryLimit();
+            if (limit > 0) pruneMapToLimit(cache.completed, limit);
+            aliases.forEach((alias) => {
+                cache.completed.set(alias, translated);
+            });
         }
 
         function finalizeTranslationFailure(normalized, error) {
@@ -310,7 +358,7 @@
         }
 
         function requestTranslation(text) {
-            const normalized = String(text || '').trim();
+            const normalized = normalizeCacheKey(text);
             telemetrySafe.logTranslation('request', normalized);
 
             if (cache.completed.has(normalized)) {
@@ -324,12 +372,16 @@
             }
 
             telemetrySafe.logTranslation('cache_miss', normalized);
+            if (isCacheOnlyProvider) {
+                telemetrySafe.logTranslation('skip', normalized, 'cache miss in none mode');
+                return Promise.resolve(normalized);
+            }
             const translationPromise = cache.performTranslation(normalized);
             return trackTranslationPromise(normalized, translationPromise);
         }
 
         function requestTranslationStream(text, options = {}) {
-            const normalized = String(text || '').trim();
+            const normalized = normalizeCacheKey(text);
             telemetrySafe.logTranslation('request', normalized);
 
             if (cache.completed.has(normalized)) {
@@ -343,6 +395,10 @@
             }
 
             telemetrySafe.logTranslation('cache_miss', normalized);
+            if (isCacheOnlyProvider) {
+                telemetrySafe.logTranslation('skip', normalized, 'cache miss in none mode');
+                return Promise.resolve(normalized);
+            }
             const translationPromise = cache.performTranslationStream(normalized, options);
             return trackTranslationPromise(normalized, translationPromise);
         }
@@ -452,6 +508,7 @@
             pruneMapToLimit,
             textProcessor,
             isLocalProvider = false,
+            isCacheOnlyProvider = false,
             dbg,
             diag,
             settings = {},
@@ -478,6 +535,7 @@
                 ? textProcessor.translateTextStream.bind(textProcessor)
                 : null,
             isLocalProvider,
+            isCacheOnlyProvider,
             diag,
             settings,
         });

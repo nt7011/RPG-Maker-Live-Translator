@@ -157,23 +157,28 @@
         return null;
     }
 
-    const USING_LOCAL_PROVIDER = (() => {
+    function getActiveProvider() {
         try {
             if (typeof window !== 'undefined' && window && window.FORCE_LOCAL_ASYNC === true) {
-                return true;
+                return 'local';
             }
         } catch (_) {}
         try {
             if (typeof process !== 'undefined' && process.env && process.env.LIVE_TRANSLATOR_LOCAL === '1') {
-                return true;
+                return 'local';
             }
         } catch (_) {}
         const cfg = getTranslatorConfig();
-        if (cfg && typeof cfg.provider === 'string' && cfg.provider.trim().toLowerCase() === 'local') {
-            return true;
+        if (cfg && typeof cfg.provider === 'string') {
+            const provider = cfg.provider.trim().toLowerCase();
+            if (provider) return provider;
         }
-        return false;
-    })();
+        return null;
+    }
+
+    const ACTIVE_PROVIDER = getActiveProvider();
+    const USING_LOCAL_PROVIDER = ACTIVE_PROVIDER === 'local';
+    const USING_CACHE_ONLY_PROVIDER = ACTIVE_PROVIDER === 'none';
 
     localProviderBypassFlag = USING_LOCAL_PROVIDER === true;
 
@@ -307,6 +312,7 @@
         pruneMapToLimit,
         textProcessor,
         isLocalProvider: USING_LOCAL_PROVIDER,
+        isCacheOnlyProvider: USING_CACHE_ONLY_PROVIDER,
         dbg,
         diag,
         settings: cachedSettings,
@@ -500,7 +506,11 @@
         const records = await diskCache.loadAll();
         for (const rec of records) {
             if (rec && typeof rec.in === 'string' && typeof rec.out === 'string') {
-                translationCache.completed.set(rec.in.trim(), rec.out);
+                if (typeof translationCache.storeCompletedTranslation === 'function') {
+                    translationCache.storeCompletedTranslation(rec.in, rec.out);
+                } else {
+                    translationCache.completed.set(rec.in.trim(), rec.out);
+                }
             }
         }
         dbg(`[DiskCache] Loaded ${records.length} records`);

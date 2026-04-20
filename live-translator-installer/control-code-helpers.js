@@ -115,15 +115,18 @@
 
         if (newlineTokens.length) {
             const missingInserts = [];
+            let accountedLineBreaks = countLineBreaks(output);
             newlineTokens.forEach((token, idx) => {
                 const newlineValue = typeof newlineValues[idx] === 'string' ? newlineValues[idx] : '\n';
                 if (output.includes(token)) {
                     output = output.replace(token, newlineValue);
-                } else {
+                    accountedLineBreaks += 1;
+                } else if (accountedLineBreaks < newlineTokens.length) {
                     missingInserts.push({
                         newlineValue,
                         position: typeof newlinePositions[idx] === 'number' ? newlinePositions[idx] : null,
                     });
+                    accountedLineBreaks += 1;
                 }
             });
             if (missingInserts.length) {
@@ -184,6 +187,11 @@
                 result = result.slice(0, targetIndex) + insertValue + result.slice(targetIndex);
             });
         return result;
+    }
+
+    function countLineBreaks(text) {
+        const matches = String(text || '').match(/\r?\n/g);
+        return matches ? matches.length : 0;
     }
 
     function clampConsecutiveNewlines(text) {
