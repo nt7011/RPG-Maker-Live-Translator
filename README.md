@@ -49,4 +49,6 @@ To translate other languages than Chinese, Japanese, or Korean, set `"disableCjk
 
 1.12 - Game_Message rewrite. Should handle multiline texts correctly and just be more robust in general.
 
+1.13 - LLM `auto` works if there's one and only model loaded in LM Studio
+
 ![License](https://img.shields.io/badge/License-CC%20BY%204.0-blue.svg)
