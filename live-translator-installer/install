@@ -1,0 +1,58 @@
+#!/bin/bash
+
+# Cross-platform installer for Text Replacement Addon
+# Detects OS and runs appropriate installer script
+
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+detect_os() {
+    case "$(uname -s)" in
+        CYGWIN*|MINGW32*|MSYS*|MINGW*)
+            echo "windows"
+            ;;
+        Darwin)
+            echo "macos"
+            ;;
+        Linux)
+            echo "linux"
+            ;;
+        *)
+            echo "unknown"
+            ;;
+    esac
+}
+
+OS=$(detect_os)
+
+case $OS in
+    "windows")
+        echo "Detected Windows - running PowerShell installer..."
+        if command -v powershell >/dev/null 2>&1; then
+            powershell -ExecutionPolicy Bypass -File "$script_dir/installer.ps1"
+        elif command -v pwsh >/dev/null 2>&1; then
+            pwsh -ExecutionPolicy Bypass -File "$script_dir/installer.ps1"
+        else
+            echo "Error: PowerShell not found. Please install PowerShell 7+ or run:"
+            echo "  powershell -ExecutionPolicy Bypass -File installer.ps1"
+            exit 1
+        fi
+        ;;
+    "macos"|"linux")
+        echo "Detected $OS - running bash installer..."
+        if [ -f "$script_dir/installer.sh" ]; then
+            chmod +x "$script_dir/installer.sh"
+            "$script_dir/installer.sh"
+        else
+            echo "Error: installer.sh not found"
+            exit 1
+        fi
+        ;;
+    "unknown")
+        echo "Unknown operating system. Please run the appropriate installer manually:"
+        echo "  Windows: powershell -ExecutionPolicy Bypass -File installer.ps1"
+        echo "  macOS/Linux: ./installer.sh"
+        exit 1
+        ;;
+esac
