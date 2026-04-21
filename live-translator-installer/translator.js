@@ -2,6 +2,7 @@
 (() => {
     'use strict';
 
+    const DEFAULT_LOCAL_MAX_OUTPUT_TOKENS = 512;
     const TRANSLATOR_CONFIG = initializeTranslatorConfig();
     const logger = (() => {
         try {
@@ -104,6 +105,7 @@
             repeat_penalty: valueOrDefault(cfg.repeat_penalty || cfg.repeatPenalty || cfg.repetition_penalty, null),
             min_p: valueOrDefault(cfg.min_p || cfg.MinP, null),
             top_p: valueOrDefault(cfg.top_p || cfg.TopP, 0.95),
+            max_output_tokens: resolveLocalMaxOutputTokens(cfg),
             separate_multiline_requests: Boolean(
                 cfg.separate_multiline_requests
                 || cfg.separateMultilineRequests
@@ -128,9 +130,39 @@
         return out;
     }
 
+    function resolveLocalMaxOutputTokens(cfg) {
+        const settings = getGlobalSettings();
+        const translation = settings && settings.translation && typeof settings.translation === 'object'
+            ? settings.translation
+            : null;
+        const candidates = [
+            translation ? translation.maxOutputTokens : undefined,
+            translation ? translation.max_output_tokens : undefined,
+            cfg ? cfg.max_output_tokens : undefined,
+            cfg ? cfg.maxOutputTokens : undefined,
+            cfg ? cfg.max_tokens : undefined,
+            cfg ? cfg.maxTokens : undefined,
+        ];
+
+        for (const value of candidates) {
+            const numeric = Number(value);
+            if (Number.isInteger(numeric) && numeric > 0) {
+                return numeric;
+            }
+        }
+
+        return DEFAULT_LOCAL_MAX_OUTPUT_TOKENS;
+    }
+
     function valueOrDefault(v, def) {
         const n = Number(v);
         return Number.isFinite(n) ? n : def;
+    }
+
+    function getGlobalSettings() {
+        if (typeof globalThis === 'undefined') return {};
+        const settings = globalThis.LiveTranslatorSettings;
+        return settings && typeof settings === 'object' ? settings : {};
     }
 
     function isAbortErrorLike(error) {
@@ -265,7 +297,7 @@
         if (Number.isFinite(cfg.repeat_penalty)) body.repeat_penalty = cfg.repeat_penalty;
         const maxOut = Number.isFinite(cfg.max_output_tokens)
             ? cfg.max_output_tokens
-            : (Number.isFinite(cfg.max_tokens) ? cfg.max_tokens : 256);
+            : (Number.isFinite(cfg.max_tokens) ? cfg.max_tokens : DEFAULT_LOCAL_MAX_OUTPUT_TOKENS);
         body.max_output_tokens = maxOut;
         return body;
     }

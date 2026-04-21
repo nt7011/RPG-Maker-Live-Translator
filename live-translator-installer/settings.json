@@ -1,14 +1,14 @@
 {
     "logging": {
         "enabled": false,
-        "suppressExact": [
-        ]
+        "suppressExact": []
     },
     "debug": {
         "level": "trace"
     },
     "translation": {
-        "disableCjkFilter": false
+        "disableCjkFilter": false,
+        "maxOutputTokens": 512
     },
     "gameMessage": {
         "textScale": 100

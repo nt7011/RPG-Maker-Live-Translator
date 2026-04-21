@@ -61,4 +61,6 @@ To translate other languages than Chinese, Japanese, or Korean, set `"disableCjk
 
 2.1 - fix text styling update not applying correctly on redrawn texts
 
+2.2 - max token count per request is configurable
+
 ![License](https://img.shields.io/badge/License-CC%20BY%204.0-blue.svg)
