@@ -165,6 +165,51 @@
             }
         }
 
+        function refreshExistingTextEntry(window, entry, text, x, y, type = null, convertedText = null, originalParams = null) {
+            if (!entry) return null;
+
+            const textToTranslate = convertedText || text;
+            const trimmed = String(textToTranslate || '').trim();
+
+            entry.type = type || entry.type;
+            entry.rawText = text;
+            entry.convertedText = trimmed;
+            entry.position = { x, y };
+            entry.originalParams = originalParams || entry.originalParams || {};
+            entry.timestamp = Date.now();
+            entry.drawState = captureBitmapDrawState(window && window.contents);
+
+            if (textToTranslate && typeof textToTranslate === 'string') {
+                try {
+                    const prep = prepareTextForTranslation(textToTranslate);
+                    entry.translationSource = prep.textForTranslation;
+                    entry.placeholderInfo = prep;
+                } catch (_) {}
+            }
+
+            entry.visibleText = stripRpgmEscapes(convertedText || textToTranslate || text);
+
+            try {
+                let refreshedBounds = estimateEntryBounds(
+                    window,
+                    entry.type,
+                    textToTranslate,
+                    x,
+                    y,
+                    convertedText || textToTranslate
+                );
+                const maxWidth = entry.originalParams && Number.isFinite(entry.originalParams.maxWidth)
+                    ? entry.originalParams.maxWidth
+                    : null;
+                if (maxWidth) {
+                    refreshedBounds = expandBoundsForMaxWidth(refreshedBounds, window, x, maxWidth);
+                }
+                entry.bounds = refreshedBounds;
+            } catch (_) {}
+
+            return entry;
+        }
+
         function addTextToWindowData(window, windowData, text, x, y, type = null, convertedText = null, originalParams = null) {
             const textToTranslate = convertedText || text;
             const textKey = generateKey(type, x, y, windowData.windowType, textToTranslate);
@@ -185,7 +230,7 @@
 
             const existing = windowData.texts.get(textKey);
             if (existing && existing.rawText === text && existing.convertedText === trimmed) {
-                return;
+                return refreshExistingTextEntry(window, existing, text, x, y, type, convertedText, originalParams);
             }
 
             telemetry.logTextDetected(type, trimmed, x, y, {
@@ -572,6 +617,7 @@
                     const dupKey = generateKey('drawText', x, y, windowData.windowType, trimmed);
                     const existing = windowData.texts.get(dupKey);
                     if (existing && existing.rawText === textStr && existing.convertedText === trimmed) {
+                        refreshExistingTextEntry(this, existing, textStr, x, y, 'drawText', null, { maxWidth, align });
                         if (existing.translationStatus === 'completed' && existing.translatedText) {
                             try { redrawTranslatedText(existing, windowData); } catch (_) {}
                             return;
