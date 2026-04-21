@@ -574,6 +574,7 @@
                     if (existing && existing.rawText === textStr && existing.convertedText === trimmed) {
                         if (existing.translationStatus === 'completed' && existing.translatedText) {
                             try { redrawTranslatedText(existing, windowData); } catch (_) {}
+                            return;
                         }
                         return invokeOriginal();
                     }
@@ -605,15 +606,15 @@
                             : translated;
                         translated = sanitizeDrawTextOutput(translated, 'drawText');
                         const key = generateKey('drawText', x, y, windowData.windowType, trimmed);
+                        const signed = REDRAW_SIGNATURE + translated;
                         const rr = windowData.recentlyRedrawn && windowData.recentlyRedrawn.get ? windowData.recentlyRedrawn.get(key) : null;
                         if (rr && Date.now() - rr < 200) {
-                            return invokeOriginal(textStr);
+                            return invokeOriginal(signed);
                         }
                         if (typeof translated !== 'string' || translated === trimmed) {
                             diag(`[Inline Skip] drawText identical: "${preview(trimmed)}"`);
                             return invokeOriginal(textStr);
                         }
-                        const signed = REDRAW_SIGNATURE + translated;
                         telemetry.logDraw('redraw', translated, x, y, { windowType: this.constructor.name, method: 'drawText-inline' });
                         return invokeOriginal(signed);
                     }
