@@ -2040,6 +2040,96 @@
                 return removed;
             };
 
+            const deriveWindowEntryRect = (entry) => {
+                if (!entry) return null;
+                if (entry.bounds && isValidRect(entry.bounds)) return entry.bounds;
+                const x = entry.position && Number.isFinite(Number(entry.position.x))
+                    ? Number(entry.position.x)
+                    : 0;
+                const y = entry.position && Number.isFinite(Number(entry.position.y))
+                    ? Number(entry.position.y)
+                    : 0;
+                const params = entry.originalParams || {};
+                const width = Number.isFinite(Number(params.maxWidth)) && Number(params.maxWidth) > 0
+                    ? Number(params.maxWidth)
+                    : Math.max(1, String(entry.visibleText || entry.convertedText || entry.rawText || '').length * 12);
+                const height = Number.isFinite(Number(params.lineHeight)) && Number(params.lineHeight) > 0
+                    ? Number(params.lineHeight)
+                    : 24;
+                return rectFromDimensions(x, y, width, height);
+            };
+
+            const invalidateWindowEntriesInRect = (bitmap, rect, reason, options = {}) => {
+                if (!bitmap || !contentsOwners || !windowRegistry) return 0;
+                if (bitmap._trWindowRedrawClearDepth && bitmap._trWindowRedrawClearDepth > 0) return 0;
+                if (options && options.skipEntryInvalidation) return 0;
+
+                let owner = null;
+                try {
+                    if (contentsOwners && typeof contentsOwners.get === 'function') {
+                        owner = contentsOwners.get(bitmap);
+                    }
+                } catch (_) {}
+                if (!owner) return 0;
+
+                let data = null;
+                try {
+                    data = windowRegistry && typeof windowRegistry.get === 'function'
+                        ? windowRegistry.get(owner)
+                        : null;
+                } catch (_) {}
+                if (!data || !data.texts || typeof data.texts.forEach !== 'function') return 0;
+
+                const targetRect = rect && isValidRect(rect) ? rect : null;
+                const removed = [];
+                try {
+                    data.texts.forEach((entry, key) => {
+                        if (!entry) return;
+                        const entryRect = deriveWindowEntryRect(entry);
+                        if (!targetRect || !entryRect || rectanglesOverlap(targetRect, entryRect)) {
+                            removed.push({ key, entry });
+                        }
+                    });
+                } catch (_) {}
+
+                if (!removed.length) return 0;
+
+                removed.forEach(({ key, entry }) => {
+                    try {
+                        if (entry) {
+                            entry._trStale = true;
+                            if (entry.translationStatus === 'completed') {
+                                entry.translationStatus = 'stale';
+                            }
+                            entry.canceledReason = `${reason}-contents`;
+                            entry.canceledAt = Date.now();
+                        }
+                    } catch (_) {}
+                    try { data.texts.delete(key); } catch (_) {}
+                    try {
+                        if (data.pendingRedraws && typeof data.pendingRedraws.delete === 'function') {
+                            data.pendingRedraws.delete(key);
+                        }
+                    } catch (_) {}
+                });
+
+                try {
+                    data.contentsRevision = (data.contentsRevision || 0) + 1;
+                    if (!targetRect && data.pendingRedraws && typeof data.pendingRedraws.clear === 'function') {
+                        data.pendingRedraws.clear();
+                    }
+                    if (!targetRect && data.recentlyRedrawn && typeof data.recentlyRedrawn.clear === 'function') {
+                        data.recentlyRedrawn.clear();
+                    }
+                } catch (_) {}
+
+                const ownerType = owner && owner.constructor && owner.constructor.name
+                    ? owner.constructor.name
+                    : 'Window';
+                diag(`[window/invalidate] owner=${ownerType} reason=${reason} rect=${targetRect ? formatRect(targetRect) : 'FULL'} removed=${removed.length}`);
+                return removed.length;
+            };
+
             const handleBitmapInvalidation = (bitmap, rect, reason, options = {}) => {
                 if (!bitmap) return;
                 const skipEntry = bitmap._trActiveRedrawEntry || null;
@@ -2143,6 +2233,12 @@
                                 );
                             }
                         }
+                        invalidateWindowEntriesInRect(
+                            this,
+                            resolvedRect && isValidRect(resolvedRect) ? resolvedRect : null,
+                            methodName,
+                            extraOptions
+                        );
                         const guard = resolvedRect ? consumeInvalidationGuard(this, resolvedRect, methodName) : null;
                         if (guard) {
                             diag(`[bitmap/invalidate-guard] ${describeBitmap(this)} reason=${methodName} rect=${formatRect(resolvedRect)} uuid=${guard.entry && guard.entry.instanceId ? guard.entry.instanceId : 'unknown'}${callSite ? ` site=${callSite}` : ''}`);

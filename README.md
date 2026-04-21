@@ -63,4 +63,6 @@ To translate other languages than Chinese, Japanese, or Korean, set `"disableCjk
 
 2.2 - max token count per request is configurable
 
+2.3 - major cosmetic fixes. original texts are replaced cleanly. fixed ghost text problem in selectable lists 
+
 ![License](https://img.shields.io/badge/License-CC%20BY%204.0-blue.svg)

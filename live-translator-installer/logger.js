@@ -364,13 +364,15 @@
                     logger.trace(`[DRAW|${timestamp}] ORIGINAL at (${x},${y}): "${preview(text)}"`);
                     break;
                 case 'redraw':
-                    logger.trace(`[DRAW|${timestamp}] REDRAW at (${x},${y}): "${preview(text)}" [${extraInfo.windowType || 'unknown'}]`);
-                    if (extraInfo.clearArea) {
-                        logger.trace(`  └─ Clear: (${extraInfo.clearArea.x},${extraInfo.clearArea.y}) ${extraInfo.clearArea.w}×${extraInfo.clearArea.h}`);
-                    }
+                    // Stubbed because this redraw telemetry was spamming the log during signature redraws.
+                    // logger.trace(`[DRAW|${timestamp}] REDRAW at (${x},${y}): "${preview(text)}" [${extraInfo.windowType || 'unknown'}]`);
+                    // if (extraInfo.clearArea) {
+                    //     logger.trace(`  └─ Clear: (${extraInfo.clearArea.x},${extraInfo.clearArea.y}) ${extraInfo.clearArea.w}×${extraInfo.clearArea.h}`);
+                    // }
                     break;
                 case 'bypass':
-                    logger.trace(`[DRAW|${timestamp}] BYPASS at (${x},${y}): "${preview(text)}" (signature detected)`);
+                    // Stubbed because this signature bypass telemetry was spamming the log.
+                    // logger.trace(`[DRAW|${timestamp}] BYPASS at (${x},${y}): "${preview(text)}" (signature detected)`);
                     break;
                 case 'queue':
                     logger.trace(`[DRAW|${timestamp}] QUEUED at (${x},${y}): "${preview(text)}" (window not ready)`);

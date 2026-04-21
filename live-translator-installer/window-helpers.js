@@ -65,20 +65,58 @@
             throw new Error('[WindowHelpers] Missing window registry references.');
         }
 
+        function markWindowEntriesStale(windowData, reason) {
+            if (!windowData) return;
+            try {
+                if (windowData.texts && typeof windowData.texts.forEach === 'function') {
+                    windowData.texts.forEach((entry) => {
+                        if (!entry) return;
+                        entry._trStale = true;
+                        if (entry.translationStatus === 'completed') {
+                            entry.translationStatus = 'stale';
+                        }
+                        entry.canceledReason = reason;
+                        entry.canceledAt = Date.now();
+                    });
+                    windowData.texts.clear();
+                }
+            } catch (_) {}
+            try {
+                if (windowData.pendingRedraws && typeof windowData.pendingRedraws.clear === 'function') {
+                    windowData.pendingRedraws.clear();
+                }
+            } catch (_) {}
+            try {
+                if (windowData.recentlyRedrawn && typeof windowData.recentlyRedrawn.clear === 'function') {
+                    windowData.recentlyRedrawn.clear();
+                }
+            } catch (_) {}
+            try { windowData.contentsRevision = (windowData.contentsRevision || 0) + 1; } catch (_) {}
+        }
+
+        function bindContentsOwner(window, windowData) {
+            try {
+                if (!window || !window.contents) return;
+                if (windowData && windowData.contentsBitmap && windowData.contentsBitmap !== window.contents) {
+                    markWindowEntriesStale(windowData, 'contents-replaced');
+                }
+                if (windowData) {
+                    windowData.contentsBitmap = window.contents;
+                }
+                contentsOwners.set(window.contents, window);
+                if (!window.contents._trWindowPipelineDepth) {
+                    window.contents._trWindowPipelineDepth = 0;
+                }
+            } catch (_) {}
+        }
+
         function addWindowToRegistry(window, windowData) {
             windowData.windowType = window.constructor.name;
             windowData.registrationTime = Date.now();
             if (!windowData.recentlyRedrawn) windowData.recentlyRedrawn = new Map();
             windowRegistry.set(window, windowData);
             registeredWindows.add(window);
-            try {
-                if (window && window.contents) {
-                    contentsOwners.set(window.contents, window);
-                    if (!window.contents._trWindowPipelineDepth) {
-                        window.contents._trWindowPipelineDepth = 0;
-                    }
-                }
-            } catch (_) {}
+            bindContentsOwner(window, windowData);
         }
 
         function ensureWindowRegistered(window) {
@@ -91,14 +129,7 @@
                 windowData.pendingRedraws = new Map();
                 if (!windowData.recentlyRedrawn) windowData.recentlyRedrawn = new Map();
             }
-            try {
-                if (window && window.contents) {
-                    contentsOwners.set(window.contents, window);
-                    if (!window.contents._trWindowPipelineDepth) {
-                        window.contents._trWindowPipelineDepth = 0;
-                    }
-                }
-            } catch (_) {}
+            bindContentsOwner(window, windowData);
             return windowData;
         }
 

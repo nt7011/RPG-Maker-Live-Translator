@@ -433,6 +433,31 @@
             return originalWindowClose.call(this);
         };
 
+        if (typeof Window_Base.prototype.createContents === 'function'
+            && !Window_Base.prototype.createContents.__trWindowStateWrapped) {
+            const originalCreateContents = Window_Base.prototype.createContents;
+            Window_Base.prototype.createContents = function(...args) {
+                const result = originalCreateContents.apply(this, args);
+                try {
+                    const existing = windowRegistry.get(this);
+                    const data = existing || {
+                        texts: new Map(),
+                        isOpen: typeof this.isOpen === 'function' ? this.isOpen() : true,
+                        pendingRedraws: new Map(),
+                        recentlyRedrawn: new Map(),
+                    };
+                    if (!data.pendingRedraws) data.pendingRedraws = new Map();
+                    if (!data.recentlyRedrawn) data.recentlyRedrawn = new Map();
+                    addWindowToRegistry(this, data);
+                } catch (error) {
+                    logger.error('[Window_Base.createContents Hook Error]', error);
+                }
+                return result;
+            };
+            Window_Base.prototype.createContents.__trWindowStateWrapped = true;
+            Window_Base.prototype.createContents.__trOriginal = originalCreateContents;
+        }
+
         // Apply pending redraws once window becomes visible/open again
         const originalWindowUpdate = Window_Base.prototype.update;
         Window_Base.prototype.update = function() {
@@ -458,6 +483,9 @@
                                 windowDrawHelpers.redrawTranslatedText(entry, data);
                             }
                         } catch (_) {}
+                        if (data.pendingRedraws && data.pendingRedraws.get(key) === entry) {
+                            data.pendingRedraws.delete(key);
+                        }
                     } else {
                         // Not completed anymore (e.g., superseded); drop
                         data.pendingRedraws.delete(key); dbg(`[Redraw Queue Drop] not completed at ${key}`);

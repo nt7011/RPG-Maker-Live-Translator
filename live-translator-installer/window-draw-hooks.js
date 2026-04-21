@@ -165,6 +165,69 @@
             }
         }
 
+        function getTextEntryKey(windowData, textEntry) {
+            if (!windowData || !textEntry) return null;
+            return generateKey(
+                textEntry.type,
+                textEntry.position && textEntry.position.x,
+                textEntry.position && textEntry.position.y,
+                windowData.windowType,
+                textEntry.convertedText
+            );
+        }
+
+        function dropPendingRedraw(windowData, textEntry, key = null) {
+            if (!windowData || !windowData.pendingRedraws) return;
+            const textKey = key || getTextEntryKey(windowData, textEntry);
+            if (!textKey) return;
+            try { windowData.pendingRedraws.delete(textKey); } catch (_) {}
+            if (textEntry) {
+                try { textEntry._queueLogged = false; } catch (_) {}
+            }
+        }
+
+        function withWindowRedrawClear(contents, fn) {
+            if (!contents || typeof fn !== 'function') return undefined;
+            contents._trWindowRedrawClearDepth = (contents._trWindowRedrawClearDepth || 0) + 1;
+            try {
+                return fn();
+            } finally {
+                contents._trWindowRedrawClearDepth = Math.max(0, (contents._trWindowRedrawClearDepth || 1) - 1);
+            }
+        }
+
+        function shouldRefreshWindowForTranslation(window, windowData) {
+            if (!window || typeof window.refresh !== 'function') return false;
+            if (window._trTranslationRefreshDepth > 0) return false;
+            const windowType = (windowData && windowData.windowType)
+                || (window.constructor && window.constructor.name)
+                || '';
+            if (/Window_(Message|Message_Battle|ChoiceList|NameBox)/.test(windowType)) {
+                return false;
+            }
+            try {
+                if (typeof Window_Selectable !== 'undefined' && window instanceof Window_Selectable) {
+                    return true;
+                }
+            } catch (_) {}
+            return /^Window_(BattleSkill|Skill|Item|Equip|Status|Command|Shop|Menu|ActorCommand|PartyCommand)/.test(windowType);
+        }
+
+        function refreshWindowForTranslation(window, windowData, textEntry) {
+            if (!shouldRefreshWindowForTranslation(window, windowData)) return false;
+            window._trTranslationRefreshDepth = (window._trTranslationRefreshDepth || 0) + 1;
+            try {
+                diag(`[Redraw Refresh] ${windowData.windowType || (window.constructor && window.constructor.name) || 'Window'} "${preview(textEntry.convertedText)}"`);
+                window.refresh();
+                return true;
+            } catch (error) {
+                logger.warn('[Redraw Refresh Error]', error);
+                return false;
+            } finally {
+                window._trTranslationRefreshDepth = Math.max(0, (window._trTranslationRefreshDepth || 1) - 1);
+            }
+        }
+
         function refreshExistingTextEntry(window, entry, text, x, y, type = null, convertedText = null, originalParams = null) {
             if (!entry) return null;
 
@@ -363,6 +426,19 @@
                     return;
                 }
 
+                const textKey = getTextEntryKey(windowData, textEntry);
+                const currentEntry = textKey ? windowData.texts.get(textKey) : null;
+                if (!currentEntry) {
+                    dropPendingRedraw(windowData, textEntry, textKey);
+                    logger.debug('[Redraw Skip] Text was already cleared by game');
+                    return;
+                }
+                if (currentEntry !== textEntry) {
+                    dropPendingRedraw(windowData, textEntry, textKey);
+                    dbg(`[Redraw Skip] Outdated entry at (${textEntry.position.x},${textEntry.position.y})`);
+                    return;
+                }
+
                 const hasContents = !!targetWindow.contents;
                 const isVisible = !!targetWindow.visible;
                 const isOpenFn = (typeof targetWindow.isOpen === 'function') ? targetWindow.isOpen() : true;
@@ -370,13 +446,6 @@
                 const windowReady = isVisible && hasContents && (isOpenFn || fullyOpen);
 
                 if (!windowReady) {
-                    const textKey = generateKey(
-                        textEntry.type,
-                        textEntry.position.x,
-                        textEntry.position.y,
-                        windowData.windowType,
-                        textEntry.convertedText
-                    );
                     const data = windowRegistry.get(targetWindow);
                     if (data) {
                         if (!data.pendingRedraws) data.pendingRedraws = new Map();
@@ -391,22 +460,7 @@
                     return;
                 }
 
-                const textKey = generateKey(
-                    textEntry.type,
-                    textEntry.position.x,
-                    textEntry.position.y,
-                    windowData.windowType,
-                    textEntry.convertedText
-                );
-                const currentEntry = windowData.texts.get(textKey);
-                if (!currentEntry) {
-                    logger.debug('[Redraw Skip] Text was already cleared by game');
-                    return;
-                }
-                if (currentEntry !== textEntry) {
-                    dbg(`[Redraw Skip] Outdated entry at (${textEntry.position.x},${textEntry.position.y})`);
-                    return;
-                }
+                dropPendingRedraw(windowData, textEntry, textKey);
 
                 const { x, y } = textEntry.position;
                 const originalText = textEntry.convertedText;
@@ -425,6 +479,10 @@
                         dbg('[Choice] Skipping low-level redraw for choice list - handled by makeCommandList hook');
                         windowData._choiceSkipLogged = true;
                     }
+                    return;
+                }
+
+                if (refreshWindowForTranslation(targetWindow, windowData, textEntry)) {
                     return;
                 }
 
@@ -495,13 +553,21 @@
                                 contents._trAggregationDepth = (contents._trAggregationDepth || 0) + 1;
                                 aggregationIncremented = true;
                             } catch (_) {}
-                            try { contents.clearRect(clearArea.x, clearArea.y, clearArea.w, clearArea.h); } catch (_) {}
+                            try {
+                                withWindowRedrawClear(contents, () => {
+                                    contents.clearRect(clearArea.x, clearArea.y, clearArea.w, clearArea.h);
+                                });
+                            } catch (_) {}
                         } else {
                             try {
                                 contents._trAggregationDepth = (contents._trAggregationDepth || 0) + 1;
                                 aggregationIncremented = true;
                             } catch (_) {}
-                            try { contents.clear(); } catch (_) {}
+                            try {
+                                withWindowRedrawClear(contents, () => {
+                                    contents.clear();
+                                });
+                            } catch (_) {}
                         }
                     }
                 } catch (error) {
@@ -619,8 +685,13 @@
                     if (existing && existing.rawText === textStr && existing.convertedText === trimmed) {
                         refreshExistingTextEntry(this, existing, textStr, x, y, 'drawText', null, { maxWidth, align });
                         if (existing.translationStatus === 'completed' && existing.translatedText) {
-                            try { redrawTranslatedText(existing, windowData); } catch (_) {}
-                            return;
+                            const safeTranslated = sanitizeDrawTextOutput(existing.translatedText, 'drawText');
+                            if (typeof safeTranslated !== 'string' || safeTranslated === trimmed) {
+                                return invokeOriginal(textStr);
+                            }
+                            const signed = REDRAW_SIGNATURE + safeTranslated;
+                            telemetry.logDraw('redraw', safeTranslated, x, y, { windowType: this.constructor.name, method: 'drawText-existing' });
+                            return invokeOriginal(signed);
                         }
                         return invokeOriginal();
                     }
@@ -758,8 +829,11 @@
                 const existing = windowData.texts.get(dupKey);
                 if (existing && existing.rawText === textStr && existing.convertedText === convertedTrimmed) {
                     if (existing.translationStatus === 'completed' && existing.translatedText) {
-                        if (windowData.windowType !== 'Window_NameBox') {
-                            try { redrawTranslatedText(existing, windowData); } catch (_) {}
+                        const restored = sanitizeDrawTextOutput(existing.translatedText, 'drawTextEx');
+                        if (typeof restored === 'string' && restored !== convertedTrimmed) {
+                            const signed = REDRAW_SIGNATURE + restored;
+                            telemetry.logDraw('redraw', restored, x, y, { windowType: this.constructor.name, method: 'drawTextEx-existing' });
+                            return invokeOriginalDrawTextEx(signed, { bypassCreateTextState: true });
                         }
                     }
                 }
