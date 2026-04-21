@@ -1,0 +1,32 @@
+{
+  "name": "RPG Maker Live Translator",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "runArgs": [
+    "--security-opt=seccomp=unconfined"
+  ],
+  "containerUser": "root",
+  "remoteUser": "root",
+  "containerEnv": {
+    "SHELL": "/bin/bash"
+  },
+  "mounts": [
+    "source=\\\\wsl.localhost\\Debian\\home\\a\\.codex,target=/root/.codex-persist,type=bind"
+  ],
+  "postStartCommand": "/bin/bash .devcontainer/sync-codex-home.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "ms-vscode.powershell",
+        "openai.chatgpt",
+        "timonwong.shellcheck"
+      ],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash"
+      }
+    }
+  }
+}
