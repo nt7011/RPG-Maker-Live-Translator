@@ -10,9 +10,8 @@ const OUTPUT_DIR = __dirname;
 const ACCEPTED_FILE = 'precache.json';
 const REJECTED_FILE = 'precache-rejected.json';
 const DEFAULT_SETTINGS_FILE = path.resolve(OUTPUT_DIR, '..', 'settings.json');
-const MIN_ASCII_LETTERS_WHEN_CJK_FILTER_DISABLED = 3;
-const CJK_TEXT_PATTERN = /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uAC00-\uD7AF\uF900-\uFAFF\uFF66-\uFF9F]/u;
-const ASCII_LETTER_PATTERN = /[A-Za-z]/g;
+const KOREAN_TEXT_PATTERN = /[\uAC00-\uD7AF]/u;
+const JAPANESE_OR_CHINESE_TEXT_PATTERN = /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF]/u;
 const CONTROL_CODE_PLACEHOLDER = '¤';
 const RAW_CONTROL_CODE_PATTERN = /\\(?:[A-Za-z0-9_#]+|[^\s\w])(?:\[[^\]]*\]|<[^>]*>)?/gu;
 
@@ -103,7 +102,6 @@ function resolvePrecacheOptions(options = {}) {
 
     return {
         disableCjkFilter,
-        minAsciiLetters: MIN_ASCII_LETTERS_WHEN_CJK_FILTER_DISABLED,
         settingsFile,
         settingsReadError,
     };
@@ -111,7 +109,6 @@ function resolvePrecacheOptions(options = {}) {
 
 function isDisableCjkFilterEnabled(settings) {
     if (!settings || typeof settings !== 'object') return false;
-    if (settings.disableCjkFilter === true) return true;
     return !!(settings.translation
         && typeof settings.translation === 'object'
         && settings.translation.disableCjkFilter === true);
@@ -135,7 +132,6 @@ function visitStringValues(value, visit) {
 
 function classifyRaw(raw, options = {}) {
     const disableCjkFilter = !!(options && options.disableCjkFilter);
-    const minAsciiLetters = normalizeMinAsciiLetters(options && options.minAsciiLetters);
     const codedRaw = createCodedRaw(raw);
     if (codedRaw.includes('//')) {
         return { accepted: false, reason: 'comment' };
@@ -145,29 +141,17 @@ function classifyRaw(raw, options = {}) {
     if (!visible) {
         return { accepted: false, reason: 'empty' };
     }
-    if (!CJK_TEXT_PATTERN.test(visible)) {
-        if (disableCjkFilter && countAsciiLetters(visible) >= minAsciiLetters) {
-            return { accepted: true, codedRaw };
-        }
-        if (disableCjkFilter) {
-            return { accepted: false, reason: 'too-few-ascii-letters' };
-        }
+    if (disableCjkFilter) {
+        return { accepted: true, codedRaw };
+    }
+    if (KOREAN_TEXT_PATTERN.test(visible)) {
+        return { accepted: false, reason: 'korean' };
+    }
+    if (!JAPANESE_OR_CHINESE_TEXT_PATTERN.test(visible)) {
         return { accepted: false, reason: 'no-cjk' };
     }
 
     return { accepted: true, codedRaw };
-}
-
-function normalizeMinAsciiLetters(value) {
-    const numeric = Number(value);
-    return Number.isInteger(numeric) && numeric > 0
-        ? numeric
-        : MIN_ASCII_LETTERS_WHEN_CJK_FILTER_DISABLED;
-}
-
-function countAsciiLetters(value) {
-    const match = String(value || '').match(ASCII_LETTER_PATTERN);
-    return match ? match.length : 0;
 }
 
 function createCodedRaw(value) {
@@ -251,8 +235,7 @@ function run(argv = process.argv.slice(2), options = {}) {
         const mode = result.options.disableCjkFilter ? 'disabled' : 'enabled';
         console.warn(`[Precacher] Failed to read settings.json; using CJK filter ${mode}: ${formatError(result.options.settingsReadError)}`);
     }
-    console.log(`[Precacher] CJK filter ${result.options.disableCjkFilter ? 'disabled' : 'enabled'}`
-        + (result.options.disableCjkFilter ? `; non-CJK strings require ${result.options.minAsciiLetters}+ A-Za-z characters` : ''));
+    console.log(`[Precacher] CJK filter ${result.options.disableCjkFilter ? 'disabled' : 'enabled'}`);
     console.log(`[Precacher] Scanned ${result.files.length} JSON files from ${dataDir}`);
     console.log(`[Precacher] Wrote ${result.accepted.length} accepted records to ${acceptedPath}`);
     console.log(`[Precacher] Wrote ${result.rejected.length} rejected records to ${rejectedPath}`);
@@ -273,7 +256,6 @@ module.exports = {
     buildPrecache,
     classifyRaw,
     createCodedRaw,
-    countAsciiLetters,
     isDisableCjkFilterEnabled,
     readSettingsFile,
     resolvePrecacheOptions,

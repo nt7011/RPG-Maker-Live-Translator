@@ -36,11 +36,11 @@ Visit https://nt7011.github.io/
 3. Use included `launch.json` configurations to launch nwjs debugging session.
 4. Open up your vibecodingpromasterTM software of your choice because surely you're not manually debugging this 2000 line jank like what, some kind of a caveman.
 
-To translate other languages than Chinese, Japanese, or Korean, set `"disableCjkFilter": true` in `settings.json`
+To translate other languages than Chinese, Japanese, or Korean, set `"translation.disableCjkFilter": true` in `settings.json`.
 
 ## Precacher GUI (Beta)
 After installing the plugin, press `Ctrl+Shift+P` in the game window or run `LiveTranslatorPrecacher.open()` from DevTools.
-Extraction follows `settings.json` `translation.disableCjkFilter`; when enabled, non-CJK strings still need at least 3 A-Za-z characters.
+Extraction follows `settings.json` `translation.disableCjkFilter` and uses the same CJK gate as live translation.
 
 ## Changelog
 1.0 - major refactor - performance and accuracy improvements, etc

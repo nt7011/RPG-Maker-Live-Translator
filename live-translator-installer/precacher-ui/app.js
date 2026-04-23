@@ -318,14 +318,14 @@
 
         if (options.disableCjkFilter) {
             status.className = 'summary-status warn';
-            status.textContent = `CJK filter off (${options.minAsciiLetters}+ A-Z)`;
-            status.title = 'settings.json translation.disableCjkFilter is true. Non-CJK strings need at least 3 A-Za-z characters.';
+            status.textContent = 'CJK filter off';
+            status.title = 'settings.json translation.disableCjkFilter is true. Extraction does not require CJK characters.';
             return options;
         }
 
         status.className = 'summary-status ok';
         status.textContent = 'CJK filter on';
-        status.title = 'Only strings containing CJK characters are extracted.';
+        status.title = 'Extraction matches the live translator filter: Korean is skipped; Japanese or Chinese text is extracted.';
         return options;
     }
 
