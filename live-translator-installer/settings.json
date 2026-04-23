@@ -1,0 +1,21 @@
+{
+    "logging": {
+        "enabled": false,
+        "suppressExact": []
+    },
+    "debug": {
+        "level": "trace"
+    },
+    "translation": {
+        "disableCjkFilter": false,
+        "maxOutputTokens": 512
+    },
+    "gameMessage": {
+        "textScale": 100
+    },
+    "diskCache": {
+        "enabled": true,
+        "maxMegabytes": 2048,
+        "clearOnLaunch": false
+    }
+}
