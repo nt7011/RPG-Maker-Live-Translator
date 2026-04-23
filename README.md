@@ -38,6 +38,9 @@ Visit https://nt7011.github.io/
 
 To translate other languages than Chinese, Japanese, or Korean, set `"disableCjkFilter": true` in `settings.json`
 
+## Precacher GUI (Beta)
+After installing the plugin, press `Ctrl+Shift+P` in the game window or run `LiveTranslatorPrecacher.open()` from DevTools.
+
 ## Changelog
 1.0 - major refactor - performance and accuracy improvements, etc
 

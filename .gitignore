@@ -2,3 +2,6 @@ experimentation*/
 live-translator-installer/settings.json
 reminder_*
 .codex
+
+live-translator-installer/precacher/precache.json
+live-translator-installer/precacher/precache-rejected.json

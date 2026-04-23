@@ -13,7 +13,9 @@
         return;
     }
 
-    const CONTROL_CODE_PATTERN = '\\x1b(?:[A-Za-z{}]|[\\$!><\\^\\|\\{\\}])(?:\\[[^\\]]*\\])?';
+    const CONVERTED_CONTROL_CODE_PATTERN = '\\x1b(?:[A-Za-z0-9_#]+|[^\\s\\w])(?:\\[[^\\]]*\\]|<[^>]*>)?';
+    const RAW_CONTROL_CODE_PATTERN = '\\\\(?:[A-Za-z0-9_#]+|[^\\s\\w])(?:\\[[^\\]]*\\]|<[^>]*>)?';
+    const CONTROL_CODE_PATTERN = `(?:${CONVERTED_CONTROL_CODE_PATTERN}|${RAW_CONTROL_CODE_PATTERN})`;
     const CONTROL_CODE_PLACEHOLDER = '¤';
 
     const createControlCodeRegex = () => new RegExp(CONTROL_CODE_PATTERN, 'g');

@@ -10,8 +10,10 @@
         'window-draw-hooks.js',
         'translation-manager.js',
         'text-replacement-addon.js',
+        'precacher-ui-launcher.js',
     ];
     const SUPPORT_FILES = ['translator.json', 'settings.json'];
+    const OPTIONAL_SUPPORT_FILES = ['precacher/precache.json'];
     const MIN_NW_VERSION = '0.105.0';
     const DIAGNOSTICS_FILE = 'diagnostics.log';
 
@@ -102,41 +104,60 @@
         });
     }
 
+    async function loadSupportFile(supportDir, file, logger, required = true, assets = {}) {
+        const log = (level, ...args) => {
+            const fn = logger && typeof logger[level] === 'function' ? logger[level] : null;
+            if (fn) {
+                fn(...args);
+            }
+        };
+        const url = new URL(file, supportDir).href;
+        try {
+            const response = await fetch(url);
+            if (!response.ok) {
+                const err = new Error(`HTTP ${response.status} ${response.statusText}`);
+                err.code = 'HTTP';
+                throw err;
+            }
+            const text = await response.text();
+            const lower = file.toLowerCase();
+            if (lower.endsWith('.json')) {
+                try {
+                    assets[file] = {
+                        raw: text,
+                        json: JSON.parse(text)
+                    };
+                } catch (parseErr) {
+                    const msg = required
+                        ? `[LiveTranslatorLoader][Fatal] ${file} is present but invalid JSON. Re-copy the plugin files.`
+                        : `[LiveTranslatorLoader] Optional asset ${file} is invalid JSON; skipping it.`;
+                    log(required ? 'error' : 'warn', msg, parseErr);
+                    if (required) throw new Error(msg);
+                    return assets;
+                }
+            } else {
+                assets[file] = { raw: text };
+            }
+            log('debug', `[LiveTranslatorLoader] Loaded asset ${file}`);
+        } catch (err) {
+            if (!required) {
+                log('debug', `[LiveTranslatorLoader] Optional asset ${file} unavailable.`);
+                return assets;
+            }
+            const msg = `[LiveTranslatorLoader][Fatal] Missing or unreadable asset ${file} (expected in live-translator folder next to live-translator-loader.js).`;
+            log('error', msg, err);
+            throw err;
+        }
+        return assets;
+    }
+
     async function loadSupportFiles(supportDir, logger) {
         const assets = {};
         await Promise.all(
-            SUPPORT_FILES.map(async (file) => {
-                const url = new URL(file, supportDir).href;
-                try {
-                    const response = await fetch(url);
-                    if (!response.ok) {
-                        const err = new Error(`HTTP ${response.status} ${response.statusText}`);
-                        err.code = 'HTTP';
-                        throw err;
-                    }
-                    const text = await response.text();
-                    const lower = file.toLowerCase();
-                    if (lower.endsWith('.json')) {
-                        try {
-                            assets[file] = {
-                                raw: text,
-                                json: JSON.parse(text)
-                            };
-                        } catch (parseErr) {
-                            const msg = `[LiveTranslatorLoader][Fatal] ${file} is present but invalid JSON. Re-copy the plugin files.`;
-                            logger.error(msg, parseErr);
-                            throw new Error(msg);
-                        }
-                    } else {
-                        assets[file] = { raw: text };
-                    }
-                    logger.debug(`[LiveTranslatorLoader] Loaded asset ${file}`);
-                } catch (err) {
-                    const msg = `[LiveTranslatorLoader][Fatal] Missing or unreadable asset ${file} (expected in live-translator folder next to live-translator-loader.js).`;
-                    logger.error(msg, err);
-                    throw err;
-                }
-            })
+            SUPPORT_FILES.map((file) => loadSupportFile(supportDir, file, logger, true, assets))
+        );
+        await Promise.all(
+            OPTIONAL_SUPPORT_FILES.map((file) => loadSupportFile(supportDir, file, logger, false, assets))
         );
         return assets;
     }

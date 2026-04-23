@@ -64,6 +64,514 @@
         return aliases;
     }
 
+    const PRECACHE_ASSET_KEY = 'precacher/precache.json';
+    const PRECACHE_LOG_FILE = 'precache.log';
+    const CONTROL_CODE_PLACEHOLDER = '¤';
+    const RAW_CONTROL_CODE_PATTERN = /\\(?:[A-Za-z0-9_#]+|[^\s\w])(?:\[[^\]]*\]|<[^>]*>)?/gu;
+    const LINE_SEGMENT_SEPARATOR_PATTERN = /(\r\n|\r|\n|⟦NL\d+⟧)/g;
+    const TEXT_BOUNDARY_PATTERN = /[A-Za-z0-9.!?,:;~\u2026\u3001\u3002\uFF01\uFF0C\uFF0E\uFF1A\uFF1B\uFF1F\uFF5E\uFF10-\uFF19\uFF21-\uFF3A\uFF41-\uFF5A\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uAC00-\uD7AF\uF900-\uFAFF\uFF66-\uFF9F-]/u;
+
+    function getLoadedPrecacheRecords() {
+        try {
+            const assets = globalScope && globalScope.LiveTranslatorAssets;
+            const asset = assets && (assets[PRECACHE_ASSET_KEY] || assets['precache.json']);
+            if (asset && Array.isArray(asset.json)) return asset.json;
+            if (Array.isArray(globalScope.LiveTranslatorPrecache)) return globalScope.LiveTranslatorPrecache;
+        } catch (_) {}
+        return [];
+    }
+
+    function createPrecacheLogSink(logger = {}) {
+        let fs = null;
+        let path = null;
+        try {
+            const req = (typeof require === 'function')
+                ? require
+                : (typeof globalScope.require === 'function' ? globalScope.require : null);
+            if (req) {
+                fs = req('fs');
+                path = req('path');
+            }
+        } catch (_) {}
+
+        const cwd = (() => {
+            try {
+                return (typeof process !== 'undefined' && process && typeof process.cwd === 'function')
+                    ? process.cwd()
+                    : null;
+            } catch (_) {
+                return null;
+            }
+        })();
+        if (!fs || !path || !cwd) {
+            return { write: () => {} };
+        }
+
+        const file = path.join(cwd, PRECACHE_LOG_FILE);
+        const warn = typeof logger.warn === 'function' ? logger.warn.bind(logger) : () => {};
+        clearPrecacheRuntimeLogs(fs, path, cwd, warn);
+        let chain = Promise.resolve();
+
+        return {
+            write(payload) {
+                try {
+                    const line = `${JSON.stringify(payload)}\n`;
+                    chain = chain
+                        .catch(() => {})
+                        .then(() => fs.promises.appendFile(file, line, 'utf8'))
+                        .catch((err) => {
+                            warn('[Precache] Failed to append precache.log:', err);
+                        });
+                } catch (err) {
+                    warn('[Precache] Failed to queue precache.log entry:', err);
+                }
+            }
+        };
+    }
+
+    function clearPrecacheRuntimeLogs(fs, path, cwd, warn) {
+        clearRuntimeLogFile(fs, path.join(cwd, PRECACHE_LOG_FILE), warn);
+    }
+
+    function clearRuntimeLogFile(fs, file, warn) {
+        try {
+            fs.writeFileSync(file, '', 'utf8');
+        } catch (err) {
+            warn(`[Precache] Failed to clear ${file}:`, err);
+        }
+    }
+
+    function createCodedRaw(value) {
+        return String(value ?? '').replace(RAW_CONTROL_CODE_PATTERN, CONTROL_CODE_PLACEHOLDER).trim();
+    }
+
+    function countControlMarkers(value) {
+        const matches = String(value ?? '').match(new RegExp(CONTROL_CODE_PLACEHOLDER, 'g'));
+        return matches ? matches.length : 0;
+    }
+
+    function addRawCodedAliases(aliases, record) {
+        if (!record || typeof record.raw !== 'string' || !record.raw.trim()) return;
+        aliases.push(...deriveCacheKeyAliases(createCodedRaw(record.raw)));
+    }
+
+    function createBoundaryTextParts(value) {
+        const text = normalizeCacheKey(value);
+        let start = -1;
+        let end = -1;
+
+        for (let index = 0; index < text.length; index += 1) {
+            if (!TEXT_BOUNDARY_PATTERN.test(text.charAt(index))) continue;
+            start = index;
+            break;
+        }
+
+        if (start < 0) return null;
+
+        for (let index = text.length - 1; index >= start; index -= 1) {
+            if (!TEXT_BOUNDARY_PATTERN.test(text.charAt(index))) continue;
+            end = index;
+            break;
+        }
+
+        if (end < start) return null;
+        return {
+            leading: text.slice(0, start),
+            body: normalizeCacheKey(text.slice(start, end + 1)),
+            trailing: text.slice(end + 1),
+            changed: start !== 0 || end !== text.length - 1,
+        };
+    }
+
+    function createBoundaryTextAlias(value) {
+        const parts = createBoundaryTextParts(value);
+        if (!parts || !parts.changed) return '';
+        return parts.body;
+    }
+
+    function createBoundaryTextKey(value) {
+        const parts = createBoundaryTextParts(value);
+        return parts ? parts.body : '';
+    }
+
+    function addUniqueFallbackAlias(table, key, record) {
+        if (!key || !record) return;
+        if (!table.has(key)) {
+            table.set(key, record);
+        }
+    }
+
+    function getBoundaryTextCandidates(value) {
+        const input = normalizeCacheKey(value);
+        const candidates = [];
+        const seen = new Set();
+        const addCandidate = (candidate) => {
+            const key = normalizeCacheKey(candidate);
+            if (!key || seen.has(key)) return;
+            seen.add(key);
+            candidates.push(key);
+        };
+
+        addCandidate(input);
+        addCandidate(createBoundaryTextAlias(input));
+        return candidates;
+    }
+
+    function splitEdgeControlMarkers(value) {
+        const text = String(value ?? '');
+        const marker = CONTROL_CODE_PLACEHOLDER;
+        const legacyEdgeFragment = `${marker}(?:<${marker}>)?`;
+        const leadingMatch = text.match(new RegExp(`^(?:${legacyEdgeFragment})+`));
+        const trailingMatch = text.match(new RegExp(`(?:${legacyEdgeFragment})+$`));
+        const leading = leadingMatch ? leadingMatch[0] : '';
+        const trailing = trailingMatch ? trailingMatch[0] : '';
+        const body = text.slice(leading.length, text.length - trailing.length);
+        return {
+            leading,
+            trailing,
+            body,
+            hasMidMarker: body.includes(CONTROL_CODE_PLACEHOLDER),
+        };
+    }
+
+    function normalizePrecacheRecord(record) {
+        if (!record || typeof record !== 'object') return null;
+        const raw = typeof record.raw === 'string' ? record.raw : '';
+        const codedRaw = normalizeCacheKey(
+            typeof record.codedRaw === 'string' && record.codedRaw.trim()
+                ? record.codedRaw
+                : createCodedRaw(raw || record.humanized || '')
+        );
+        if (!codedRaw) return null;
+
+        const codedTranslation = typeof record.codedTranslation === 'string'
+            ? record.codedTranslation
+            : '';
+        const legacyTranslation = typeof record.translation === 'string'
+            ? record.translation
+            : '';
+
+        return {
+            raw,
+            codedRaw,
+            codedTranslation,
+            legacyTranslation,
+            source: typeof record.source === 'string' ? record.source : '',
+        };
+    }
+
+    function getRecordTranslation(record) {
+        if (!record) return '';
+        if (typeof record.codedTranslation === 'string' && record.codedTranslation.trim()) {
+            return record.codedTranslation;
+        }
+        if (typeof record.legacyTranslation === 'string' && record.legacyTranslation.trim()) {
+            return record.legacyTranslation;
+        }
+        return '';
+    }
+
+    function adaptPrecacheTranslationForInput(input, record) {
+        const translation = getRecordTranslation(record);
+        if (!translation.trim()) return null;
+
+        if (record && record.stripTextBoundaries) {
+            const inputParts = createBoundaryTextParts(input);
+            const translationParts = createBoundaryTextParts(translation);
+            if (inputParts && translationParts
+                && countControlMarkers(translationParts.body) === countControlMarkers(inputParts.body)) {
+                return inputParts.leading + translationParts.body + inputParts.trailing;
+            }
+        }
+
+        if (countControlMarkers(translation) === countControlMarkers(input)) {
+            return translation;
+        }
+
+        const inputEdge = splitEdgeControlMarkers(input);
+        const rawEdge = splitEdgeControlMarkers(record && record.codedRaw);
+        const translationEdge = splitEdgeControlMarkers(translation);
+        if (inputEdge.hasMidMarker || rawEdge.hasMidMarker || translationEdge.hasMidMarker) {
+            return null;
+        }
+
+        return inputEdge.leading + translationEdge.body + inputEdge.trailing;
+    }
+
+    function addPrecacheRecord(tables, record) {
+        const normalized = normalizePrecacheRecord(record);
+        if (!normalized) return false;
+
+        const aliases = deriveCacheKeyAliases(normalized.codedRaw);
+        addRawCodedAliases(aliases, normalized);
+        for (const alias of aliases) {
+            if (!tables.exact.has(alias)) {
+                tables.exact.set(alias, { ...normalized, codedRaw: alias, match: 'codedRaw' });
+            }
+
+            const edge = splitEdgeControlMarkers(alias);
+            if (!edge.hasMidMarker && edge.body && !tables.edge.has(edge.body)) {
+                tables.edge.set(edge.body, { ...normalized, codedRaw: alias, match: 'codedRaw-edge' });
+            }
+
+            const boundaryTextKey = createBoundaryTextKey(alias);
+            if (boundaryTextKey) {
+                addUniqueFallbackAlias(tables.boundaryText, boundaryTextKey, {
+                    ...normalized,
+                    codedRaw: alias,
+                    match: 'codedRaw-boundary-text',
+                    stripTextBoundaries: true,
+                });
+            }
+        }
+
+        return true;
+    }
+
+    function buildPrecacheTables(records) {
+        const tables = {
+            exact: new Map(),
+            edge: new Map(),
+            boundaryText: new Map(),
+            recordCount: 0,
+            translatedRecordCount: 0,
+        };
+
+        for (const record of Array.isArray(records) ? records : []) {
+            if (!addPrecacheRecord(tables, record)) continue;
+            tables.recordCount += 1;
+            const normalized = normalizePrecacheRecord(record);
+            if (getRecordTranslation(normalized).trim()) {
+                tables.translatedRecordCount += 1;
+            }
+        }
+
+        return tables;
+    }
+
+    function createPrecacheStore(options = {}) {
+        const {
+            logger = {},
+        } = options || {};
+        const records = getLoadedPrecacheRecords();
+        const tables = buildPrecacheTables(records);
+        const sink = createPrecacheLogSink(logger);
+        const active = tables.exact.size > 0;
+
+        const writeLog = (payload) => {
+            sink.write({
+                ts: new Date().toISOString(),
+                records: tables.recordCount,
+                translatedRecords: tables.translatedRecordCount,
+                ...payload,
+            });
+        };
+
+        function findSingleSegment(input) {
+            const exact = tables.exact.get(input);
+            if (exact) {
+                const translation = adaptPrecacheTranslationForInput(input, exact);
+                if (translation) {
+                    return { status: 'success', hit: { ...exact, translation } };
+                }
+                return {
+                    status: 'fail',
+                    reason: getRecordTranslation(exact).trim() ? 'marker-count-mismatch' : 'untranslated',
+                    match: exact.match,
+                    raw: exact.raw,
+                    codedRaw: exact.codedRaw,
+                    source: exact.source,
+                };
+            }
+
+            const edgeInput = splitEdgeControlMarkers(input);
+            if (!edgeInput.hasMidMarker && edgeInput.body) {
+                const edge = tables.edge.get(edgeInput.body);
+                if (edge) {
+                    const translation = adaptPrecacheTranslationForInput(input, edge);
+                    if (translation) {
+                        return { status: 'success', hit: { ...edge, translation } };
+                    }
+                    return {
+                        status: 'fail',
+                        reason: getRecordTranslation(edge).trim() ? 'marker-count-mismatch' : 'untranslated',
+                        match: edge.match,
+                        raw: edge.raw,
+                        codedRaw: edge.codedRaw,
+                        source: edge.source,
+                    };
+                }
+            }
+
+            const boundaryInput = getBoundaryTextCandidates(input)
+                .find((candidate) => tables.boundaryText.has(candidate));
+            if (boundaryInput) {
+                const boundary = tables.boundaryText.get(boundaryInput);
+                const translation = adaptPrecacheTranslationForInput(input, boundary);
+                if (translation) {
+                    return { status: 'success', hit: { ...boundary, translation } };
+                }
+                return {
+                    status: 'fail',
+                    reason: getRecordTranslation(boundary).trim() ? 'marker-count-mismatch' : 'untranslated',
+                    match: boundary.match,
+                    raw: boundary.raw,
+                    codedRaw: boundary.codedRaw,
+                    source: boundary.source,
+                };
+            }
+
+            return {
+                status: 'fail',
+                reason: 'miss',
+            };
+        }
+
+        // Success logging is intentionally disabled so precache.log only contains failures.
+        // function logSingleSuccess(input, hit) {
+        //     writeLog({
+        //         status: 'success',
+        //         input,
+        //         match: hit.match,
+        //         raw: hit.raw,
+        //         codedRaw: hit.codedRaw,
+        //         source: hit.source,
+        //         translation: hit.translation,
+        //     });
+        // }
+
+        function logSingleFailure(input, miss) {
+            writeLog({
+                status: 'fail',
+                input,
+                reason: miss.reason,
+                match: miss.match,
+                raw: miss.raw,
+                codedRaw: miss.codedRaw,
+                source: miss.source,
+            });
+        }
+
+        function splitLineSegments(input) {
+            const value = String(input || '');
+            if (!LINE_SEGMENT_SEPARATOR_PATTERN.test(value)) return null;
+            LINE_SEGMENT_SEPARATOR_PATTERN.lastIndex = 0;
+            return value.split(LINE_SEGMENT_SEPARATOR_PATTERN);
+        }
+
+        function lookupLineSegments(input) {
+            const parts = splitLineSegments(input);
+            if (!parts || parts.length < 3) return null;
+
+            const outputParts = [];
+            const segments = [];
+            let segmentIndex = 0;
+
+            for (const part of parts) {
+                if (!part) continue;
+                if (LINE_SEGMENT_SEPARATOR_PATTERN.test(part)) {
+                    LINE_SEGMENT_SEPARATOR_PATTERN.lastIndex = 0;
+                    outputParts.push(part);
+                    continue;
+                }
+                LINE_SEGMENT_SEPARATOR_PATTERN.lastIndex = 0;
+
+                if (!part.trim()) {
+                    outputParts.push(part);
+                    continue;
+                }
+
+                const leading = part.match(/^\s*/u)[0] || '';
+                const trailing = part.match(/\s*$/u)[0] || '';
+                const segmentInput = normalizeCacheKey(part);
+                const result = findSingleSegment(segmentInput);
+                segmentIndex += 1;
+
+                if (result.status !== 'success') {
+                    writeLog({
+                        status: 'fail',
+                        input,
+                        reason: `segment-${result.reason}`,
+                        segmentIndex,
+                        segmentInput,
+                        match: result.match,
+                        raw: result.raw,
+                        codedRaw: result.codedRaw,
+                        source: result.source,
+                        matchedSegments: segments,
+                    });
+                    return { failed: true };
+                }
+
+                const hit = result.hit;
+                segments.push({
+                    input: segmentInput,
+                    match: hit.match,
+                    raw: hit.raw,
+                    codedRaw: hit.codedRaw,
+                    source: hit.source,
+                    translation: hit.translation,
+                });
+                outputParts.push(leading + hit.translation + trailing);
+            }
+
+            if (!segments.length) return null;
+
+            const translation = outputParts.join('');
+            const hit = {
+                translation,
+                raw: segments.map((segment) => segment.raw).filter(Boolean).join('\n'),
+                codedRaw: segments.map((segment) => segment.codedRaw).filter(Boolean).join('\n'),
+                source: segments.map((segment) => segment.source).filter(Boolean).join(','),
+                match: 'codedRaw-line-segments',
+                segments,
+            };
+
+            // Success logging is intentionally disabled so precache.log only contains failures.
+            // writeLog({
+            //     status: 'success',
+            //     input,
+            //     match: hit.match,
+            //     segmentCount: segments.length,
+            //     segments,
+            //     translation,
+            // });
+            return hit;
+        }
+
+        function lookup(text) {
+            const input = normalizeCacheKey(text);
+            if (!active || !input) return null;
+
+            const exact = findSingleSegment(input);
+            if (exact.status === 'success') {
+                // logSingleSuccess(input, exact.hit);
+                return exact.hit;
+            }
+
+            const segmented = lookupLineSegments(input);
+            if (segmented) {
+                if (segmented.failed) return null;
+                return segmented;
+            }
+
+            logSingleFailure(input, exact);
+            return null;
+        }
+
+        return {
+            active,
+            lookup,
+            getStats: () => ({
+                records: tables.recordCount,
+                translatedRecords: tables.translatedRecordCount,
+                exactKeys: tables.exact.size,
+                edgeKeys: tables.edge.size,
+                boundaryTextKeys: Array.from(tables.boundaryText.values()).filter(Boolean).length,
+            }),
+        };
+    }
+
     function createRateLimiter(options) {
         const dbg = typeof options?.dbg === 'function' ? options.dbg : noop;
         const state = {
@@ -269,6 +777,7 @@
             translateTextStream = null,
             isLocalProvider = false,
             isCacheOnlyProvider = false,
+            precacheStore = null,
             diag = noop,
             settings = {},
         } = options || {};
@@ -335,6 +844,16 @@
             try { cache.ongoing.delete(normalized); } catch (_) {}
         }
 
+        function resolvePrecacheShortcut(normalized) {
+            if (!precacheStore || typeof precacheStore.lookup !== 'function') return null;
+            const hit = precacheStore.lookup(normalized);
+            if (!hit || typeof hit.translation !== 'string' || !hit.translation.trim()) return null;
+
+            storeCompletedTranslation(normalized, hit.translation);
+            telemetrySafe.logTranslation('precache_hit', normalized, hit.translation);
+            return hit.translation;
+        }
+
         function trackTranslationPromise(normalized, translationPromise) {
             cache.ongoing.set(normalized, translationPromise);
             translationPromise.then(
@@ -361,6 +880,11 @@
             const normalized = normalizeCacheKey(text);
             telemetrySafe.logTranslation('request', normalized);
 
+            const precached = resolvePrecacheShortcut(normalized);
+            if (precached !== null) {
+                return Promise.resolve(precached);
+            }
+
             if (cache.completed.has(normalized)) {
                 const existing = cache.completed.get(normalized);
                 telemetrySafe.logTranslation('cache_hit', normalized, existing);
@@ -383,6 +907,11 @@
         function requestTranslationStream(text, options = {}) {
             const normalized = normalizeCacheKey(text);
             telemetrySafe.logTranslation('request', normalized);
+
+            const precached = resolvePrecacheShortcut(normalized);
+            if (precached !== null) {
+                return Promise.resolve(precached);
+            }
 
             if (cache.completed.has(normalized)) {
                 const existing = cache.completed.get(normalized);
@@ -522,6 +1051,13 @@
             logger,
             diag,
         });
+        const precacheStore = createPrecacheStore({ logger });
+        try {
+            if (precacheStore && precacheStore.active && typeof logger.info === 'function') {
+                const stats = precacheStore.getStats();
+                logger.info(`[Precache] Loaded ${stats.translatedRecords}/${stats.records} translated records (${stats.exactKeys} coded keys, ${stats.edgeKeys} edge keys).`);
+            }
+        } catch (_) {}
 
         const translationCache = createTranslationCache({
             logger,
@@ -536,6 +1072,7 @@
                 : null,
             isLocalProvider,
             isCacheOnlyProvider,
+            precacheStore,
             diag,
             settings,
         });

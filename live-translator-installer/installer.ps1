@@ -10,6 +10,29 @@ if (-not (Test-Path $gameRoot)) {
 
 $loaderSource = Join-Path -Path $scriptRoot -ChildPath "live-translator-loader.js"
 
+function Copy-SupportItem {
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.IO.FileSystemInfo]$Item,
+        [Parameter(Mandatory = $true)]
+        [string]$DestinationPath
+    )
+
+    if ($Item.PSIsContainer) {
+        if (-not (Test-Path -LiteralPath $DestinationPath)) {
+            New-Item -ItemType Directory -Path $DestinationPath -Force | Out-Null
+        }
+
+        Get-ChildItem -LiteralPath $Item.FullName -Force | ForEach-Object {
+            $childDestination = Join-Path -Path $DestinationPath -ChildPath $_.Name
+            Copy-SupportItem -Item $_ -DestinationPath $childDestination
+        }
+        return
+    }
+
+    Copy-Item -LiteralPath $Item.FullName -Destination $DestinationPath -Force
+}
+
 $exitCode = 0
 Push-Location -LiteralPath $gameRoot
 try {
@@ -92,9 +115,9 @@ try {
         "live-translator-loader.js"
     )
 
-    Get-ChildItem -Path $scriptRoot -File | Where-Object { $excludedNames -notcontains $_.Name } | ForEach-Object {
+    Get-ChildItem -LiteralPath $scriptRoot -Force | Where-Object { $excludedNames -notcontains $_.Name } | ForEach-Object {
         $destination = Join-Path -Path $supportTargetDir -ChildPath $_.Name
-        Copy-Item $_.FullName $destination -Force
+        Copy-SupportItem -Item $_ -DestinationPath $destination
         Write-Host "Copied $($_.Name) into $supportTargetDir" -ForegroundColor Yellow
     }
 

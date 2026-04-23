@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "systemPrompt": null,
+  "concurrency": 1,
+  "inputTokenBudget": 1024
+}
