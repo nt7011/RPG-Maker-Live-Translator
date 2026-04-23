@@ -79,6 +79,7 @@
             outputFile: path.join(precacherDir, 'precache.json'),
             rejectedFile: path.join(precacherDir, 'precache-rejected.json'),
             translatorConfig: path.join(supportDir, 'translator.json'),
+            settingsFile: path.join(supportDir, 'settings.json'),
             uiSettingsFile: path.join(supportDir, 'precacher-ui.json'),
         };
 
@@ -287,6 +288,7 @@
         setStatus('translator-config-status', translatorConfigReady ? 'ok' : 'bad', translatorConfigReady ? 'ready' : 'missing');
 
         const modelReady = await refreshModelStatus();
+        refreshExtractionFilterStatus();
         refreshExtractionSummary();
         refreshPrecacheStats();
         updatePreflightOverview({
@@ -297,6 +299,34 @@
             modelReady,
         });
         updateButtons();
+    }
+
+    function refreshExtractionFilterStatus() {
+        const status = refs['extraction-filter-status'];
+        if (!status) return null;
+
+        const options = precacher.resolvePrecacheOptions({
+            settingsFile: paths.settingsFile,
+        });
+
+        if (options.settingsReadError) {
+            status.className = 'summary-status bad';
+            status.textContent = 'CJK filter: settings error';
+            status.title = `Could not read settings.json: ${formatError(options.settingsReadError)}`;
+            return options;
+        }
+
+        if (options.disableCjkFilter) {
+            status.className = 'summary-status warn';
+            status.textContent = `CJK filter off (${options.minAsciiLetters}+ A-Z)`;
+            status.title = 'settings.json translation.disableCjkFilter is true. Non-CJK strings need at least 3 A-Za-z characters.';
+            return options;
+        }
+
+        status.className = 'summary-status ok';
+        status.textContent = 'CJK filter on';
+        status.title = 'Only strings containing CJK characters are extracted.';
+        return options;
     }
 
     async function refreshModelStatus() {
@@ -618,6 +648,7 @@
 
     function captureConsoleDuring(task) {
         const originalLog = console.log;
+        const originalWarn = console.warn;
         const originalError = console.error;
         const capture = (args) => {
             const line = args.map(formatConsoleValue).join(' ');
@@ -630,6 +661,10 @@
             capture(args);
             originalLog.apply(console, args);
         };
+        console.warn = (...args) => {
+            capture(args);
+            originalWarn.apply(console, args);
+        };
         console.error = (...args) => {
             capture(args);
             originalError.apply(console, args);
@@ -639,6 +674,7 @@
             .then(task)
             .finally(() => {
                 console.log = originalLog;
+                console.warn = originalWarn;
                 console.error = originalError;
             });
     }
@@ -662,7 +698,10 @@
         setBusy('extract');
 
         try {
-            const result = await captureConsoleDuring(() => precacher.run([paths.dataDir]));
+            const result = await captureConsoleDuring(() => precacher.run([paths.dataDir], {
+                settingsFile: paths.settingsFile,
+            }));
+            refreshExtractionFilterStatus();
             setText('strings-extracted', formatNumber(result.accepted.length));
             setText('strings-rejected', formatNumber(result.rejected.length));
             setText('json-files-scanned', formatNumber(result.files.length));

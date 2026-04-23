@@ -40,6 +40,7 @@ To translate other languages than Chinese, Japanese, or Korean, set `"disableCjk
 
 ## Precacher GUI (Beta)
 After installing the plugin, press `Ctrl+Shift+P` in the game window or run `LiveTranslatorPrecacher.open()` from DevTools.
+Extraction follows `settings.json` `translation.disableCjkFilter`; when enabled, non-CJK strings still need at least 3 A-Za-z characters.
 
 ## Changelog
 1.0 - major refactor - performance and accuracy improvements, etc
@@ -67,5 +68,7 @@ After installing the plugin, press `Ctrl+Shift+P` in the game window or run `Liv
 2.2 - max token count per request is configurable
 
 2.3 - major cosmetic fixes. original texts are replaced cleanly. fixed ghost text problem in selectable lists 
+
+3.0 - Add precacher
 
 ![License](https://img.shields.io/badge/License-CC%20BY%204.0-blue.svg)

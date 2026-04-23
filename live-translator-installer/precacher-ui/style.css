@@ -83,6 +83,15 @@ main {
     margin-bottom: 14px;
 }
 
+.title-with-status {
+    display: flex;
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+}
+
 .preflight-summary {
     display: flex;
     align-items: center;

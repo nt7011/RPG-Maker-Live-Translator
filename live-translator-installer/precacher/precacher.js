@@ -9,7 +9,10 @@ const LOCAL_DIR = process.cwd();
 const OUTPUT_DIR = __dirname;
 const ACCEPTED_FILE = 'precache.json';
 const REJECTED_FILE = 'precache-rejected.json';
+const DEFAULT_SETTINGS_FILE = path.resolve(OUTPUT_DIR, '..', 'settings.json');
+const MIN_ASCII_LETTERS_WHEN_CJK_FILTER_DISABLED = 3;
 const CJK_TEXT_PATTERN = /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uAC00-\uD7AF\uF900-\uFAFF\uFF66-\uFF9F]/u;
+const ASCII_LETTER_PATTERN = /[A-Za-z]/g;
 const CONTROL_CODE_PLACEHOLDER = '¤';
 const RAW_CONTROL_CODE_PATTERN = /\\(?:[A-Za-z0-9_#]+|[^\s\w])(?:\[[^\]]*\]|<[^>]*>)?/gu;
 
@@ -65,6 +68,55 @@ function readJsonFile(filePath) {
     }
 }
 
+function readSettingsFile(filePath = DEFAULT_SETTINGS_FILE) {
+    if (!isFile(filePath)) return {};
+    return readJsonFile(filePath);
+}
+
+function isFile(filePath) {
+    try {
+        return fs.statSync(filePath).isFile();
+    } catch (_) {
+        return false;
+    }
+}
+
+function resolvePrecacheOptions(options = {}) {
+    const settingsFile = options.settingsFile || DEFAULT_SETTINGS_FILE;
+    let settings = options.settings && typeof options.settings === 'object'
+        ? options.settings
+        : null;
+    let settingsReadError = null;
+
+    if (!settings && options.readSettings !== false) {
+        try {
+            settings = readSettingsFile(settingsFile);
+        } catch (err) {
+            settingsReadError = err;
+            settings = {};
+        }
+    }
+
+    const disableCjkFilter = typeof options.disableCjkFilter === 'boolean'
+        ? options.disableCjkFilter
+        : isDisableCjkFilterEnabled(settings);
+
+    return {
+        disableCjkFilter,
+        minAsciiLetters: MIN_ASCII_LETTERS_WHEN_CJK_FILTER_DISABLED,
+        settingsFile,
+        settingsReadError,
+    };
+}
+
+function isDisableCjkFilterEnabled(settings) {
+    if (!settings || typeof settings !== 'object') return false;
+    if (settings.disableCjkFilter === true) return true;
+    return !!(settings.translation
+        && typeof settings.translation === 'object'
+        && settings.translation.disableCjkFilter === true);
+}
+
 function visitStringValues(value, visit) {
     if (typeof value === 'string') {
         visit(value);
@@ -81,7 +133,9 @@ function visitStringValues(value, visit) {
     }
 }
 
-function classifyRaw(raw) {
+function classifyRaw(raw, options = {}) {
+    const disableCjkFilter = !!(options && options.disableCjkFilter);
+    const minAsciiLetters = normalizeMinAsciiLetters(options && options.minAsciiLetters);
     const codedRaw = createCodedRaw(raw);
     if (codedRaw.includes('//')) {
         return { accepted: false, reason: 'comment' };
@@ -92,10 +146,28 @@ function classifyRaw(raw) {
         return { accepted: false, reason: 'empty' };
     }
     if (!CJK_TEXT_PATTERN.test(visible)) {
+        if (disableCjkFilter && countAsciiLetters(visible) >= minAsciiLetters) {
+            return { accepted: true, codedRaw };
+        }
+        if (disableCjkFilter) {
+            return { accepted: false, reason: 'too-few-ascii-letters' };
+        }
         return { accepted: false, reason: 'no-cjk' };
     }
 
     return { accepted: true, codedRaw };
+}
+
+function normalizeMinAsciiLetters(value) {
+    const numeric = Number(value);
+    return Number.isInteger(numeric) && numeric > 0
+        ? numeric
+        : MIN_ASCII_LETTERS_WHEN_CJK_FILTER_DISABLED;
+}
+
+function countAsciiLetters(value) {
+    const match = String(value || '').match(ASCII_LETTER_PATTERN);
+    return match ? match.length : 0;
 }
 
 function createCodedRaw(value) {
@@ -106,7 +178,8 @@ function stripControlPlaceholders(value) {
     return String(value ?? '').replace(new RegExp(CONTROL_CODE_PLACEHOLDER, 'g'), '');
 }
 
-function buildPrecache(dataDir) {
+function buildPrecache(dataDir, options = {}) {
+    const precacheOptions = resolvePrecacheOptions(options);
     const files = listJsonFiles(dataDir);
     const seenRaw = new Set();
     const accepted = [];
@@ -120,7 +193,7 @@ function buildPrecache(dataDir) {
             if (seenRaw.has(raw)) return;
             seenRaw.add(raw);
 
-            const result = classifyRaw(raw);
+            const result = classifyRaw(raw, precacheOptions);
             if (result.accepted) {
                 accepted.push({
                     raw,
@@ -138,7 +211,7 @@ function buildPrecache(dataDir) {
         });
     }
 
-    return { files, accepted, rejected };
+    return { files, accepted, rejected, options: precacheOptions };
 }
 
 function sourcePathFor(filePath, dataDir) {
@@ -159,16 +232,27 @@ function writeJsonFile(fileName, value) {
     return filePath;
 }
 
-function run(argv = process.argv.slice(2)) {
+function formatError(err) {
+    if (!err) return 'unknown error';
+    return err.message ? err.message : String(err);
+}
+
+function run(argv = process.argv.slice(2), options = {}) {
     const dataDir = resolveDataDir(argv);
     if (!isDirectory(dataDir)) {
         throw new Error(`Data directory not found: ${dataDir}`);
     }
 
-    const result = buildPrecache(dataDir);
+    const result = buildPrecache(dataDir, options);
     const acceptedPath = writeJsonFile(ACCEPTED_FILE, result.accepted);
     const rejectedPath = writeJsonFile(REJECTED_FILE, result.rejected);
 
+    if (result.options.settingsReadError) {
+        const mode = result.options.disableCjkFilter ? 'disabled' : 'enabled';
+        console.warn(`[Precacher] Failed to read settings.json; using CJK filter ${mode}: ${formatError(result.options.settingsReadError)}`);
+    }
+    console.log(`[Precacher] CJK filter ${result.options.disableCjkFilter ? 'disabled' : 'enabled'}`
+        + (result.options.disableCjkFilter ? `; non-CJK strings require ${result.options.minAsciiLetters}+ A-Za-z characters` : ''));
     console.log(`[Precacher] Scanned ${result.files.length} JSON files from ${dataDir}`);
     console.log(`[Precacher] Wrote ${result.accepted.length} accepted records to ${acceptedPath}`);
     console.log(`[Precacher] Wrote ${result.rejected.length} rejected records to ${rejectedPath}`);
@@ -189,6 +273,10 @@ module.exports = {
     buildPrecache,
     classifyRaw,
     createCodedRaw,
+    countAsciiLetters,
+    isDisableCjkFilterEnabled,
+    readSettingsFile,
+    resolvePrecacheOptions,
     resolveDataDir,
     run,
 };
