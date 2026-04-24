@@ -70,5 +70,3 @@ Extraction follows `settings.json` `translation.disableCjkFilter` and uses the s
 2.3 - major cosmetic fixes. original texts are replaced cleanly. fixed ghost text problem in selectable lists 
 
 3.0 - Add precacher
-
-![License](https://img.shields.io/badge/License-CC%20BY%204.0-blue.svg)
