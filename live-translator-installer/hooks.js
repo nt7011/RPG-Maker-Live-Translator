@@ -53,14 +53,67 @@
             throw new Error('[TextHooks] control code helpers are required (strip/prepare/restore).');
         }
 
+    function getGameMessageForWindow(windowInstance) {
+        try {
+            if (windowInstance
+                && windowInstance._gameMessage
+                && typeof windowInstance._gameMessage.allText === 'function') {
+                return windowInstance._gameMessage;
+            }
+        } catch (_) {}
+        try {
+            if (typeof $gameMessage !== 'undefined'
+                && $gameMessage
+                && typeof $gameMessage.allText === 'function') {
+                return $gameMessage;
+            }
+        } catch (_) {}
+        return null;
+    }
+
+    function isMessageWindowLike(windowInstance) {
+        if (!windowInstance) return false;
+        if (windowInstance._trHasDedicatedTextHook) return true;
+        const ctor = windowInstance.constructor;
+        if (ctor && ctor._trHasDedicatedTextHook) return true;
+        try {
+            if (typeof Window_Message !== 'undefined'
+                && Window_Message
+                && Window_Message.prototype
+                && Window_Message.prototype.isPrototypeOf(windowInstance)) {
+                return true;
+            }
+        } catch (_) {}
+        const name = ctor && ctor.name ? String(ctor.name) : '';
+        return /^Window_Message(?:$|_)/.test(name);
+    }
+
+    function markDedicatedMessageWindow(windowInstance) {
+        if (!windowInstance) return;
+        try { windowInstance._trHasDedicatedTextHook = true; } catch (_) {}
+        try {
+            const ctor = windowInstance.constructor;
+            if (ctor) ctor._trHasDedicatedTextHook = true;
+        } catch (_) {}
+        try {
+            if (windowInstance.contents) {
+                windowInstance.contents._trHasDedicatedTextHook = true;
+                windowInstance.contents._trMessageContents = true;
+                if (contentsOwners && typeof contentsOwners.set === 'function') {
+                    contentsOwners.set(windowInstance.contents, windowInstance);
+                }
+            }
+        } catch (_) {}
+    }
+
     function drawMessageFaceIfNeeded(windowInstance) {
         try {
             if (!windowInstance) return;
+            const gameMessage = getGameMessageForWindow(windowInstance);
             if (typeof windowInstance.drawMessageFace === 'function'
-                && typeof $gameMessage !== 'undefined'
-                && $gameMessage
-                && typeof $gameMessage.faceName === 'function'
-                && $gameMessage.faceName()) {
+                && gameMessage
+                && typeof gameMessage.faceName === 'function'
+                && gameMessage.faceName()) {
                 windowInstance.drawMessageFace();
             }
         } catch (_) {}
@@ -722,6 +775,7 @@
 
     function redrawGameMessageText(windowInstance, text, overrides = {}) {
         if (!windowInstance || !windowInstance.contents) return false;
+        markDedicatedMessageWindow(windowInstance);
         if (!canUseNativeGameMessageRender(windowInstance)) {
             disposeGameMessageTextScaleScope(windowInstance);
             return redrawGameMessageTextFallback(windowInstance, text, overrides);
@@ -817,50 +871,271 @@
     }
 
     function trackGameMessage() {
-        if (Window_Message.prototype.startMessage && Window_Message.prototype.startMessage.__trWrapped) {
-            diag('[GameMessage] Hooks already installed; skipping duplicate wrap.');
+        if (typeof Window_Message === 'undefined' || !Window_Message || !Window_Message.prototype) {
+            diag('[GameMessage] Window_Message unavailable; skipping message hooks.');
             return;
         }
+
+        const trackedMessageWindows = new Set();
+        const fallbackMessageState = {
+            currentText: '',
+            isActive: false,
+            lastUpdate: 0,
+            session: 0,
+            source: null,
+        };
+
+        const createMessageState = () => ({
+            currentText: '',
+            isActive: false,
+            lastUpdate: 0,
+            session: 0,
+            source: null,
+        });
+
+        const getMessageState = (windowInstance) => {
+            if (!windowInstance) return fallbackMessageState;
+            let state = windowInstance._trGameMessageState;
+            if (!state) {
+                state = createMessageState();
+                try { windowInstance._trGameMessageState = state; } catch (_) {}
+            }
+            const source = getGameMessageForWindow(windowInstance);
+            state.source = source;
+            try { windowInstance._trGameMessageSource = source; } catch (_) {}
+            trackedMessageWindows.add(windowInstance);
+            markDedicatedMessageWindow(windowInstance);
+            return state;
+        };
+
+        const resetStreamState = (windowInstance, abortActive = true) => {
+            if (!windowInstance) return;
+            if (abortActive) {
+                try {
+                    if (windowInstance._trStreamAbort && typeof windowInstance._trStreamAbort.abort === 'function') {
+                        windowInstance._trStreamAbort.abort();
+                    }
+                } catch (_) {}
+            }
+            windowInstance._trStreamAbort = null;
+            windowInstance._trStreamText = '';
+            windowInstance._trStreamSessionId = null;
+            windowInstance._trStreamLoopActive = false;
+            windowInstance._trStreamDeferredLogged = false;
+        };
+
+        const beginWindowMessageSession = (windowInstance, options = {}) => {
+            const state = getMessageState(windowInstance);
+            state.session++;
+            state.isActive = true;
+            state.lastUpdate = Date.now();
+            windowInstance._trMessageSession = state.session;
+            windowInstance._trStartedThisSession = !!options.started;
+            windowInstance._trSentTranslateThisSession = false;
+            windowInstance._trMsgStartSession = windowInstance._trMessageSession;
+            windowInstance._trCurrentMessagePayload = null;
+            windowInstance._trPendingRedraw = null;
+            windowInstance._trWrappedMessageText = null;
+            resetStreamState(windowInstance, true);
+            return state;
+        };
+
+        const resetWindowMessageState = (windowInstance) => {
+            if (!windowInstance) return null;
+            const state = getMessageState(windowInstance);
+            state.currentText = '';
+            state.isActive = false;
+            state.lastUpdate = Date.now();
+            state.session++;
+            disposeGameMessageTextScaleScope(windowInstance);
+            windowInstance._trStartedThisSession = false;
+            windowInstance._trSentTranslateThisSession = false;
+            windowInstance._trMsgStartSession = null;
+            windowInstance._trCurrentMessagePayload = null;
+            windowInstance._trMsgStartX = undefined;
+            windowInstance._trMsgStartY = undefined;
+            windowInstance._trSessionId = null;
+            windowInstance._trPendingRedraw = null;
+            windowInstance._trWrappedMessageText = null;
+            resetStreamState(windowInstance, true);
+            return state;
+        };
+
+        const isSessionCurrent = (windowInstance, sessionId) => {
+            const state = getMessageState(windowInstance);
+            return windowInstance
+                && windowInstance._trSessionId === sessionId
+                && state.isActive
+                && state.session === sessionId;
+        };
+
+        const captureTextStateStart = (windowInstance) => {
+            try {
+                if (windowInstance && windowInstance._textState) {
+                    if (typeof windowInstance._textState.startX === 'number') {
+                        windowInstance._trMsgStartX = windowInstance._textState.startX;
+                    } else if (typeof windowInstance._textState.x === 'number') {
+                        windowInstance._trMsgStartX = windowInstance._textState.x;
+                    }
+                    if (typeof windowInstance._textState.y === 'number') {
+                        windowInstance._trMsgStartY = windowInstance._textState.y;
+                    }
+                }
+            } catch (_) {}
+        };
+
+        const getResolvedTextForWindow = (windowInstance) => {
+            const gameMessage = getGameMessageForWindow(windowInstance);
+            const rawAll = gameMessage && typeof gameMessage.allText === 'function'
+                ? gameMessage.allText()
+                : '';
+            return typeof windowInstance.convertEscapeCharacters === 'function'
+                ? windowInstance.convertEscapeCharacters(String(rawAll))
+                : String(rawAll);
+        };
+
+        const collectSceneMessageWindows = (addWindow) => {
+            try {
+                const scene = typeof SceneManager !== 'undefined' && SceneManager ? SceneManager._scene : null;
+                if (!scene) return;
+                const visit = (value) => {
+                    if (!value) return;
+                    if (isMessageWindowLike(value)) {
+                        addWindow(value);
+                        return;
+                    }
+                    if (Array.isArray(value)) {
+                        value.forEach((item) => {
+                            if (isMessageWindowLike(item)) addWindow(item);
+                        });
+                    }
+                };
+                Object.keys(scene).forEach((key) => visit(scene[key]));
+            } catch (_) {}
+        };
+
+        const collectWindowsForGameMessage = (gameMessage) => {
+            const matches = [];
+            const seen = new Set();
+            const addIfMatch = (windowInstance) => {
+                if (!windowInstance || seen.has(windowInstance) || !isMessageWindowLike(windowInstance)) return;
+                const state = windowInstance._trGameMessageState || null;
+                const source = (state && state.source)
+                    || windowInstance._trGameMessageSource
+                    || getGameMessageForWindow(windowInstance);
+                if (source !== gameMessage) return;
+                seen.add(windowInstance);
+                matches.push(windowInstance);
+            };
+
+            trackedMessageWindows.forEach(addIfMatch);
+            try {
+                if (registeredWindows && typeof registeredWindows.forEach === 'function') {
+                    registeredWindows.forEach(addIfMatch);
+                }
+            } catch (_) {}
+            collectSceneMessageWindows(addIfMatch);
+            return matches;
+        };
 
         // Ensure Window_Message contents are marked for bitmap-level bypass
         const wrapMessageContents = (Ctor) => {
             if (!Ctor || !Ctor.prototype || typeof Ctor.prototype.createContents !== 'function') return;
+            try {
+                Ctor.prototype._trHasDedicatedTextHook = true;
+                Ctor._trHasDedicatedTextHook = true;
+            } catch (_) {}
             if (Ctor.prototype.createContents.__trWrapped) return;
             const originalCreateContents = Ctor.prototype.createContents;
             Ctor.prototype.createContents = function(...args) {
                 const res = originalCreateContents.apply(this, args);
-                try {
-                    this._trHasDedicatedTextHook = true;
-                    if (this.contents) {
-                        this.contents._trHasDedicatedTextHook = true;
-                        this.contents._trMessageContents = true;
-                        if (contentsOwners && typeof contentsOwners.set === 'function') {
-                            contentsOwners.set(this.contents, this);
-                        }
-                    }
-                } catch (_) {}
+                markDedicatedMessageWindow(this);
                 return res;
             };
             Ctor.prototype.createContents.__trWrapped = true;
             Ctor.prototype.createContents.__trOriginal = originalCreateContents;
         };
 
-        try {
-            wrapMessageContents(Window_Message);
-            wrapMessageContents(typeof Window_Message_Battle !== 'undefined' ? Window_Message_Battle : null);
-        } catch (_) {}
+        const installStartMessageHook = (Ctor, force = false) => {
+            if (!Ctor || !Ctor.prototype || typeof Ctor.prototype.startMessage !== 'function') return false;
+            const ownsStart = Object.prototype.hasOwnProperty.call(Ctor.prototype, 'startMessage');
+            if (!force && !ownsStart) return false;
+            const currentStartMessage = Ctor.prototype.startMessage;
+            if (currentStartMessage.__trWrapped) return true;
+            const originalStartMessage = currentStartMessage.__trOriginal || currentStartMessage;
+            const wrappedStartMessage = function(...args) {
+                markDedicatedMessageWindow(this);
+                disposeGameMessageTextScaleScope(this);
+                const res = originalStartMessage.apply(this, args);
+                try {
+                    const state = beginWindowMessageSession(this, { started: true });
+                    captureTextStateStart(this);
 
-        // Custom $gameMessage state tracker - independent of window lifecycle
-        const gameMessageState = {
-            currentText: '',
-            isActive: false,
-            lastUpdate: 0,
-            session: 0 // increments to invalidate pending translations
+                    const resolved = getResolvedTextForWindow(this);
+                    const payload = createEscapeAwarePayload(resolved, 'start');
+                    const finalText = payload ? payload.visible : stripRpgmEscapes(resolved).trim();
+                    if (finalText && finalText !== state.currentText) {
+                        state.currentText = finalText;
+                        diag(`[GameMessage] Final rendered text: "${preview(finalText)}"`);
+                        if (!this._trSentTranslateThisSession) {
+                            this._trSentTranslateThisSession = true;
+                            this.processCompleteMessage(payload || resolved, state.session);
+                        }
+                    }
+                } catch (e) { logger.warn('[GameMessage startMessage hook error]', e); }
+                return res;
+            };
+            wrappedStartMessage.__trOriginal = originalStartMessage;
+            wrappedStartMessage.__trWrapped = true;
+            Ctor.prototype.startMessage = wrappedStartMessage;
+            return true;
         };
+
+        const installMessageWindowCtorHooks = (Ctor, force = false) => {
+            if (!Ctor || !Ctor.prototype) return;
+            try {
+                wrapMessageContents(Ctor);
+                installStartMessageHook(Ctor, force);
+                Ctor.prototype._trHasDedicatedTextHook = true;
+                Ctor._trHasDedicatedTextHook = true;
+            } catch (_) {}
+        };
+
+        const discoverAndHookMessageWindowCtors = () => {
+            installMessageWindowCtorHooks(Window_Message, true);
+            try {
+                if (typeof Window_Message_Battle !== 'undefined') {
+                    installMessageWindowCtorHooks(Window_Message_Battle, true);
+                }
+            } catch (_) {}
+            try {
+                Object.keys(globalScope).forEach((key) => {
+                    const Ctor = globalScope[key];
+                    if (!Ctor || typeof Ctor !== 'function' || !Ctor.prototype) return;
+                    if (Ctor === Window_Message) return;
+                    try {
+                        if (Window_Message.prototype.isPrototypeOf(Ctor.prototype)) {
+                            installMessageWindowCtorHooks(Ctor, false);
+                        }
+                    } catch (_) {}
+                });
+            } catch (_) {}
+            collectSceneMessageWindows((windowInstance) => {
+                try {
+                    if (windowInstance && windowInstance.constructor) {
+                        installMessageWindowCtorHooks(windowInstance.constructor, false);
+                    }
+                    markDedicatedMessageWindow(windowInstance);
+                } catch (_) {}
+            });
+        };
+
+        discoverAndHookMessageWindowCtors();
 
         const redrawMessageText = (windowInstance, text, sessionId, overrides = {}) => {
             if (!windowInstance) return false;
-            const ready = windowInstance.contents && windowInstance.visible && windowInstance.isOpen();
+            const isOpen = typeof windowInstance.isOpen === 'function' ? windowInstance.isOpen() : true;
+            const ready = windowInstance.contents && windowInstance.visible && isOpen;
             const coords = resolveMessageStartCoordinates(windowInstance, overrides);
             if (!ready) {
                 windowInstance._trPendingRedraw = { text, sessionId, x: coords.x, y: coords.y };
@@ -869,106 +1144,60 @@
             return redrawGameMessageText(windowInstance, text, overrides);
         };
 
-        // Prefer hooking startMessage to get full resolved text once
-        const originalStartMessage = Window_Message.prototype.startMessage.__trOriginal || Window_Message.prototype.startMessage;
-        const wrappedStartMessage = function() {
-            disposeGameMessageTextScaleScope(this);
-            const res = originalStartMessage.call(this);
-            try {
-                gameMessageState.session++;
-                gameMessageState.isActive = true;
-                gameMessageState.lastUpdate = Date.now();
-                this._trMessageSession = gameMessageState.session;
-                this._trStartedThisSession = true;
-                this._trSentTranslateThisSession = false;
-                this._trMsgStartSession = this._trMessageSession;
-                try {
-                    if (this._trStreamAbort && typeof this._trStreamAbort.abort === 'function') {
-                        this._trStreamAbort.abort();
-                    }
-                } catch (_) {}
-                this._trStreamAbort = null;
-                this._trStreamText = '';
-                this._trStreamSessionId = null;
-                this._trStreamLoopActive = false;
-                this._trStreamDeferredLogged = false;
-                this._trPendingRedraw = null;
-                this._trWrappedMessageText = null;
-
-                try {
-                    if (this && this._textState) {
-                        if (typeof this._textState.startX === 'number') this._trMsgStartX = this._textState.startX;
-                        else if (typeof this._textState.x === 'number') this._trMsgStartX = this._textState.x;
-                        if (typeof this._textState.y === 'number') this._trMsgStartY = this._textState.y;
-                    }
-                } catch (_) {}
-
-                const rawAll = $gameMessage && $gameMessage.allText ? $gameMessage.allText() : '';
-                const resolved = typeof this.convertEscapeCharacters === 'function' ? this.convertEscapeCharacters(String(rawAll)) : String(rawAll);
-                const payload = createEscapeAwarePayload(resolved, 'start');
-                const finalText = payload ? payload.visible : stripRpgmEscapes(resolved).trim();
-                if (finalText && finalText !== gameMessageState.currentText) {
-                    gameMessageState.currentText = finalText;
-                    diag(`[GameMessage] Final rendered text: "${preview(finalText)}"`);
-                    if (!this._trSentTranslateThisSession) {
-                        this._trSentTranslateThisSession = true;
-                        this.processCompleteMessage(payload || resolved, gameMessageState.session);
-                    }
-                }
-            } catch (e) { logger.warn('[GameMessage startMessage hook error]', e); }
-            return res;
-        };
-        wrappedStartMessage.__trOriginal = originalStartMessage;
-        wrappedStartMessage.__trWrapped = true;
-        Window_Message.prototype.startMessage = wrappedStartMessage;
-
         // Hook Window_Message.prototype.processCharacter only as a fallback
-        const originalProcessCharacter = Window_Message.prototype.processCharacter.__trOriginal || Window_Message.prototype.processCharacter;
-        const wrappedProcessCharacter = function(textState) {
-            // If we're drawing our own translated text, bypass translation logic
-            if (this._trBypassProcessCharacter && this._trBypassProcessCharacter > 0) {
-                return originalProcessCharacter.call(this, textState);
-            }
-
-            // If startMessage already handled this session, skip accumulation to avoid truncation issues
-            if (gameMessageState.isActive
-                && this._trStartedThisSession
-                && this._trSentTranslateThisSession
-                && this._trMessageSession === gameMessageState.session) {
-                return originalProcessCharacter.call(this, textState);
-            }
-
-            const sourceText = textState && textState.text ? String(textState.text) : '';
-            if (!this._trCurrentMessagePayload) {
-                this._trCurrentMessagePayload = createEscapeAwarePayload(sourceText, 'processCharacter');
-                this._trMessageSession = ++gameMessageState.session;
-                gameMessageState.isActive = true;
-                gameMessageState.lastUpdate = Date.now();
-            }
-
-            const result = originalProcessCharacter.call(this, textState);
-
-            if (textState && textState.index >= textState.text.length - 1) {
-                const payload = this._trCurrentMessagePayload || createEscapeAwarePayload(sourceText, 'processCharacter-final');
-                this._trCurrentMessagePayload = null;
-                const finalText = payload ? payload.visible : stripRpgmEscapes(sourceText).trim();
-                if (finalText && finalText !== gameMessageState.currentText) {
-                    gameMessageState.currentText = finalText;
-                    diag(`[GameMessage] Final rendered text: "${preview(finalText)}"`);
-                    this.processCompleteMessage(payload || sourceText, this._trMessageSession);
-                } else if (payload) {
-                    this.processCompleteMessage(payload, this._trMessageSession);
+        const currentProcessCharacter = Window_Message.prototype.processCharacter;
+        if (currentProcessCharacter && !currentProcessCharacter.__trWrapped) {
+            const originalProcessCharacter = currentProcessCharacter.__trOriginal || currentProcessCharacter;
+            const wrappedProcessCharacter = function(textState) {
+                markDedicatedMessageWindow(this);
+                // If we're drawing our own translated text, bypass translation logic
+                if (this._trBypassProcessCharacter && this._trBypassProcessCharacter > 0) {
+                    return originalProcessCharacter.call(this, textState);
                 }
-            }
 
-            return result;
-        };
-        wrappedProcessCharacter.__trOriginal = originalProcessCharacter;
-        wrappedProcessCharacter.__trWrapped = true;
-        Window_Message.prototype.processCharacter = wrappedProcessCharacter;
+                const state = getMessageState(this);
+                // If startMessage already handled this session, skip accumulation to avoid truncation issues
+                if (state.isActive
+                    && this._trStartedThisSession
+                    && this._trSentTranslateThisSession
+                    && this._trMessageSession === state.session) {
+                    return originalProcessCharacter.call(this, textState);
+                }
+
+                const sourceText = textState && textState.text ? String(textState.text) : '';
+                if (!this._trCurrentMessagePayload) {
+                    beginWindowMessageSession(this, { started: false });
+                    this._trCurrentMessagePayload = createEscapeAwarePayload(sourceText, 'processCharacter');
+                }
+
+                const result = originalProcessCharacter.call(this, textState);
+
+                if (textState
+                    && typeof textState.text === 'string'
+                    && textState.index >= textState.text.length) {
+                    const payload = this._trCurrentMessagePayload || createEscapeAwarePayload(sourceText, 'processCharacter-final');
+                    this._trCurrentMessagePayload = null;
+                    const activeState = getMessageState(this);
+                    const finalText = payload ? payload.visible : stripRpgmEscapes(sourceText).trim();
+                    if (finalText && finalText !== activeState.currentText) {
+                        activeState.currentText = finalText;
+                        diag(`[GameMessage] Final rendered text: "${preview(finalText)}"`);
+                        this.processCompleteMessage(payload || sourceText, this._trMessageSession);
+                    } else if (payload) {
+                        this.processCompleteMessage(payload, this._trMessageSession);
+                    }
+                }
+
+                return result;
+            };
+            wrappedProcessCharacter.__trOriginal = originalProcessCharacter;
+            wrappedProcessCharacter.__trWrapped = true;
+            Window_Message.prototype.processCharacter = wrappedProcessCharacter;
+        }
 
         // Process complete message text for translation
         Window_Message.prototype.processCompleteMessage = function(message, sessionId) {
+            markDedicatedMessageWindow(this);
             const payload = (message && typeof message === 'object' && ('resolved' in message || 'visible' in message))
                 ? message
                 : createEscapeAwarePayload(message, 'processComplete');
@@ -1009,13 +1238,13 @@
             };
 
             const restoreOriginalAfterStreamPreview = () => {
-                if (this._trSessionId !== sessionId || !gameMessageState.isActive) return;
+                if (!isSessionCurrent(this, sessionId)) return;
                 if (typeof this._trStreamText !== 'string' || !this._trStreamText) return;
                 redrawMessageText(this, payload.resolved, sessionId);
             };
 
             const applyStreamDelta = (partial) => {
-                if (this._trSessionId !== sessionId || !gameMessageState.isActive) return;
+                if (!isSessionCurrent(this, sessionId)) return;
                 if (typeof partial !== 'string' || !partial) return;
                 const restored = restoreMessageTextStreaming(partial, payload);
                 if (!restored || restored === this._trStreamText) return;
@@ -1048,7 +1277,7 @@
             translationPromise
                 .then(translated => {
                     // Check if session is still valid
-                    if (this._trSessionId !== sessionId || !gameMessageState.isActive) {
+                    if (!isSessionCurrent(this, sessionId)) {
                         stopStreamLoop(true);
                         diag(`[GameMessage] Session expired for: "${preview(payload.visible)}"`);
                         return;
@@ -1086,64 +1315,44 @@
                 });
         };
 
-        try {
-            if (typeof Window_Message !== 'undefined' && Window_Message && Window_Message.prototype) {
-                Window_Message.prototype._trHasDedicatedTextHook = true;
-                Window_Message._trHasDedicatedTextHook = true;
-            }
-            if (typeof Window_Message_Battle !== 'undefined' && Window_Message_Battle && Window_Message_Battle.prototype) {
-                Window_Message_Battle.prototype._trHasDedicatedTextHook = true;
-                Window_Message_Battle._trHasDedicatedTextHook = true;
-            }
-        } catch (_) {}
-
         // Hook $gameMessage.clear() - when message is cleared/becomes invisible
-        const originalClear = Game_Message.prototype.clear;
-        Game_Message.prototype.clear = function() {
-            const result = originalClear.call(this);
-            
-            // Update our state tracker
-            gameMessageState.currentText = '';
-            gameMessageState.isActive = false;
-            gameMessageState.lastUpdate = Date.now();
-            gameMessageState.session++; // invalidate pending translations
-            try {
-                const wm = SceneManager && SceneManager._scene && SceneManager._scene._messageWindow;
-                if (wm) {
-                    disposeGameMessageTextScaleScope(wm);
-                    wm._trStartedThisSession = false;
-                    wm._trSentTranslateThisSession = false;
-                    wm._trMsgStartSession = null;
-                    wm._trCurrentMessagePayload = null;
-                    wm._trMsgStartX = undefined;
-                    wm._trMsgStartY = undefined;
-                    try {
-                        if (wm._trStreamAbort && typeof wm._trStreamAbort.abort === 'function') {
-                            wm._trStreamAbort.abort();
-                        }
-                    } catch (_) {}
-                    wm._trStreamAbort = null;
-                    wm._trStreamText = '';
-                    wm._trStreamSessionId = null;
-                    wm._trStreamLoopActive = false;
-                    wm._trStreamDeferredLogged = false;
-                    wm._trPendingRedraw = null;
-                    wm._trWrappedMessageText = null;
+        if (typeof Game_Message !== 'undefined'
+            && Game_Message
+            && Game_Message.prototype
+            && typeof Game_Message.prototype.clear === 'function'
+            && !Game_Message.prototype.clear.__trWrapped) {
+            const originalClear = Game_Message.prototype.clear.__trOriginal || Game_Message.prototype.clear;
+            const wrappedClear = function(...args) {
+                const result = originalClear.apply(this, args);
+                const windows = collectWindowsForGameMessage(this);
+                let diagnosticState = null;
+                windows.forEach((windowInstance) => {
+                    diagnosticState = resetWindowMessageState(windowInstance) || diagnosticState;
+                });
+                if (!diagnosticState) {
+                    fallbackMessageState.currentText = '';
+                    fallbackMessageState.isActive = false;
+                    fallbackMessageState.lastUpdate = Date.now();
+                    fallbackMessageState.session++;
+                    diagnosticState = fallbackMessageState;
                 }
-            } catch (_) {}
-            
-            diag('$gameMessage.clear() - Message cleared');
-            showGameMessageDiagnostics();
-            
-            return result;
-        };
 
-        function showGameMessageDiagnostics() {
+                diag('Game_Message.clear() - Message cleared');
+                showGameMessageDiagnostics(diagnosticState);
+
+                return result;
+            };
+            wrappedClear.__trOriginal = originalClear;
+            wrappedClear.__trWrapped = true;
+            Game_Message.prototype.clear = wrappedClear;
+        }
+
+        function showGameMessageDiagnostics(state = fallbackMessageState) {
             if (!logger.shouldLog('trace')) return;
-            const status = gameMessageState.isActive ? 'active' : 'cleared';
-            const timestamp = new Date(gameMessageState.lastUpdate).toLocaleTimeString();
-            const textPreview = gameMessageState.currentText
-                ? preview(gameMessageState.currentText)
+            const status = state.isActive ? 'active' : 'cleared';
+            const timestamp = new Date(state.lastUpdate).toLocaleTimeString();
+            const textPreview = state.currentText
+                ? preview(state.currentText)
                 : '(empty)';
             logger.trace(`[GameMessage] state=${status} updated=${timestamp} text="${textPreview}"`);
         }
@@ -1384,6 +1593,24 @@
             const GAP_MIN = 6;
             const GAP_RATIO = 0.65;
             const perCharRegex = PER_CHAR_MARK ? new RegExp(PER_CHAR_MARK, 'g') : null;
+            const VALID_CANVAS_TEXT_ALIGN = new Set(['left', 'right', 'center', 'start', 'end']);
+
+            const normalizeCanvasTextAlign = (align) => {
+                const value = String(align || '').toLowerCase();
+                return VALID_CANVAS_TEXT_ALIGN.has(value) ? value : 'left';
+            };
+
+            const isSmallTextScratchBitmap = (bitmap) => {
+                try {
+                    return !!(bitmap
+                        && typeof Bitmap !== 'undefined'
+                        && Bitmap
+                        && Bitmap.drawSmallTextBitmap
+                        && bitmap === Bitmap.drawSmallTextBitmap);
+                } catch (_) {
+                    return false;
+                }
+            };
 
             const hasDedicatedOwnerHook = (owner) => {
                 if (!owner) return false;
@@ -2203,6 +2430,9 @@
                         }
                     } catch (_) {}
                     const result = original.apply(this, args);
+                    if (isSmallTextScratchBitmap(this)) {
+                        return result;
+                    }
                     if (this && this._trBitmapReplayDepth && this._trBitmapReplayDepth > 0) {
                         if (shouldTraceBitmapDiagnostics() && rect !== false) {
                             const replayRect = rect && rect !== 'FULL' && isValidRect(rect) ? rect : null;
@@ -2324,17 +2554,20 @@
             });
 
             installInvalidationHook('blt', function(args) {
-                const [, , , sw, sh, dx, dy, dw, dh] = args;
+                const [source, , , sw, sh, dx, dy, dw, dh] = args;
                 const width = Number.isFinite(Number(dw)) ? dw : sw;
                 const height = Number.isFinite(Number(dh)) ? dh : sh;
+                const recordOp = isSmallTextScratchBitmap(source)
+                    ? null
+                    : {
+                        methodName: 'blt',
+                        args: Array.isArray(args) ? args.slice() : [],
+                    };
                 return {
                     rect: rectOrFalse(rectFromDimensions(dx, dy, width, height)),
                     options: {
                         skipEntryInvalidation: true,
-                        recordOp: {
-                            methodName: 'blt',
-                            args: Array.isArray(args) ? args.slice() : [],
-                        },
+                        recordOp,
                     },
                 };
             });
@@ -2694,7 +2927,8 @@
             const processBitmapDrawInvocation = (methodName, originalFn, bitmap, args) => {
                 const [inputText, rawX, rawY, maxWidth, lineHeight, align] = args;
                 const textStr = String(inputText ?? '');
-                const callArgs = [textStr, rawX, rawY, maxWidth, lineHeight, align];
+                const safeAlign = normalizeCanvasTextAlign(align);
+                const callArgs = [textStr, rawX, rawY, maxWidth, lineHeight, safeAlign];
 
                 if (textStr.startsWith(REDRAW_SIGNATURE)) {
                     const cleanText = textStr.substring(REDRAW_SIGNATURE.length);
@@ -2722,6 +2956,10 @@
                 const owner = contentsOwners && contentsOwners.get ? contentsOwners.get(bitmap) : null;
                 const ownerType = owner && owner.constructor ? owner.constructor.name : (bitmap.constructor ? bitmap.constructor.name : 'Bitmap');
                 const debugCallSite = captureBitmapCallSite(!owner || ownerType === 'Bitmap');
+                if (isSmallTextScratchBitmap(bitmap) || /\bBitmap\.drawSmallText\b/.test(debugCallSite)) {
+                    diag(`[bitmap/bypass-small-text] ${describeBitmap(bitmap, owner)} text="${preview(stripRpgmEscapes(textStr))}"${debugCallSite ? ` site=${debugCallSite}` : ''}`);
+                    return originalFn.apply(bitmap, callArgs);
+                }
                 if (!owner
                     && ownerType === 'Bitmap'
                     && /\bprocessNormalCharacter\b/.test(debugCallSite)) {
@@ -2756,7 +2994,7 @@
                     y: safeY,
                     maxWidth: Number.isFinite(numericMaxWidth) ? numericMaxWidth : widthEstimate,
                     lineHeight: safeLineHeight,
-                    align: align || 'left',
+                    align: safeAlign,
                     width: Math.max(0, widthEstimate),
                     ownerType,
                     drawState,

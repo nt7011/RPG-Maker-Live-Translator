@@ -168,10 +168,22 @@ function buildPrecache(dataDir, options = {}) {
     const seenRaw = new Set();
     const accepted = [];
     const rejected = [];
+    const skipped = [];
 
     for (const filePath of files) {
-        const parsed = readJsonFile(filePath);
         const source = sourcePathFor(filePath, dataDir);
+        let parsed;
+
+        try {
+            parsed = readJsonFile(filePath);
+        } catch (err) {
+            skipped.push({
+                source,
+                reason: 'invalid-json',
+                error: formatError(err),
+            });
+            continue;
+        }
 
         visitStringValues(parsed, (raw) => {
             if (seenRaw.has(raw)) return;
@@ -195,7 +207,7 @@ function buildPrecache(dataDir, options = {}) {
         });
     }
 
-    return { files, accepted, rejected, options: precacheOptions };
+    return { files, accepted, rejected, skipped, options: precacheOptions };
 }
 
 function sourcePathFor(filePath, dataDir) {
@@ -237,6 +249,12 @@ function run(argv = process.argv.slice(2), options = {}) {
     }
     console.log(`[Precacher] CJK filter ${result.options.disableCjkFilter ? 'disabled' : 'enabled'}`);
     console.log(`[Precacher] Scanned ${result.files.length} JSON files from ${dataDir}`);
+    if (result.skipped.length > 0) {
+        console.warn(`[Precacher] Skipped ${result.skipped.length} invalid JSON file${result.skipped.length === 1 ? '' : 's'}`);
+        for (const item of result.skipped) {
+            console.warn(`[Precacher] Skipped ${item.source}: ${item.error}`);
+        }
+    }
     console.log(`[Precacher] Wrote ${result.accepted.length} accepted records to ${acceptedPath}`);
     console.log(`[Precacher] Wrote ${result.rejected.length} rejected records to ${rejectedPath}`);
     return result;

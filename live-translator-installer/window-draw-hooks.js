@@ -55,6 +55,23 @@
             return type === 'drawText' ? stripRpgmEscapes(text) : text;
         }
 
+        function isDedicatedMessageWindow(windowInstance) {
+            if (!windowInstance) return false;
+            if (windowInstance._trHasDedicatedTextHook) return true;
+            const ctor = windowInstance.constructor;
+            if (ctor && ctor._trHasDedicatedTextHook) return true;
+            try {
+                if (typeof Window_Message !== 'undefined'
+                    && Window_Message
+                    && Window_Message.prototype
+                    && Window_Message.prototype.isPrototypeOf(windowInstance)) {
+                    return true;
+                }
+            } catch (_) {}
+            const name = ctor && ctor.name ? String(ctor.name) : '';
+            return /^Window_Message(?:$|_)/.test(name);
+        }
+
         function addBitmapSuppressionRect(bitmap, x1, y1, x2, y2, durationMs = 200, content = null) {
             try {
                 if (!bitmap) return;
@@ -196,13 +213,84 @@
             }
         }
 
-        function shouldRefreshWindowForTranslation(window, windowData) {
+        function getWindowTypeName(window, windowData) {
+            return (windowData && windowData.windowType)
+                || (window && window.constructor && window.constructor.name)
+                || '';
+        }
+
+        function isUsableBitmap(bitmap) {
+            return !!(bitmap
+                && Number.isFinite(Number(bitmap.width))
+                && Number(bitmap.width) > 0
+                && Number.isFinite(Number(bitmap.height))
+                && Number(bitmap.height) > 0);
+        }
+
+        function getRedrawContents(window, textEntry = null) {
+            if (textEntry && isUsableBitmap(textEntry.contentsBitmap)) {
+                return textEntry.contentsBitmap;
+            }
+            return window && isUsableBitmap(window.contents) ? window.contents : null;
+        }
+
+        function withWindowContents(window, contents, fn) {
+            if (!window || !contents || typeof fn !== 'function') return undefined;
+            if (window.contents === contents) return fn();
+            const previousContents = window.contents;
+            try {
+                window.contents = contents;
+                return fn();
+            } finally {
+                window.contents = previousContents;
+            }
+        }
+
+        function wasDrawnToDetachedContents(window, textEntry) {
+            return !!(window
+                && textEntry
+                && isUsableBitmap(textEntry.contentsBitmap)
+                && isUsableBitmap(window.contents)
+                && textEntry.contentsBitmap !== window.contents);
+        }
+
+        function isTransientRefreshWindow(window, windowType) {
+            const type = String(windowType || '');
+            if (/Window_(?:BattleLog|ScrollText|MapName|NameBox)/.test(type)) {
+                return true;
+            }
+            if (/Log/u.test(type)) {
+                return true;
+            }
+            try {
+                const hasLogBuffers = Array.isArray(window && window._lines)
+                    || Array.isArray(window && window._logs);
+                const hasLogMethods = typeof (window && window.drawLineText) === 'function'
+                    || typeof (window && window.addText) === 'function'
+                    || typeof (window && window.push) === 'function';
+                if (hasLogBuffers && hasLogMethods) return true;
+                if (Array.isArray(window && window._methods)
+                    && typeof (window && window.callNextMethod) === 'function') {
+                    return true;
+                }
+            } catch (_) {}
+            return false;
+        }
+
+        function shouldRefreshWindowForTranslation(window, windowData, textEntry = null) {
             if (!window || typeof window.refresh !== 'function') return false;
             if (window._trTranslationRefreshDepth > 0) return false;
-            const windowType = (windowData && windowData.windowType)
-                || (window.constructor && window.constructor.name)
-                || '';
+            const windowType = getWindowTypeName(window, windowData);
+            if (isDedicatedMessageWindow(window)) {
+                return false;
+            }
             if (/Window_(Message|Message_Battle|ChoiceList|NameBox)/.test(windowType)) {
+                return false;
+            }
+            if (wasDrawnToDetachedContents(window, textEntry)) {
+                return false;
+            }
+            if (isTransientRefreshWindow(window, windowType)) {
                 return false;
             }
             try {
@@ -214,7 +302,7 @@
         }
 
         function refreshWindowForTranslation(window, windowData, textEntry) {
-            if (!shouldRefreshWindowForTranslation(window, windowData)) return false;
+            if (!shouldRefreshWindowForTranslation(window, windowData, textEntry)) return false;
             window._trTranslationRefreshDepth = (window._trTranslationRefreshDepth || 0) + 1;
             try {
                 diag(`[Redraw Refresh] ${windowData.windowType || (window.constructor && window.constructor.name) || 'Window'} "${preview(textEntry.convertedText)}"`);
@@ -241,6 +329,7 @@
             entry.originalParams = originalParams || entry.originalParams || {};
             entry.timestamp = Date.now();
             entry.drawState = captureBitmapDrawState(window && window.contents);
+            entry.contentsBitmap = window && window.contents ? window.contents : (entry.contentsBitmap || null);
 
             if (textToTranslate && typeof textToTranslate === 'string') {
                 try {
@@ -322,6 +411,7 @@
                 timestamp: Date.now(),
                 translationSource,
                 placeholderInfo,
+                contentsBitmap: window && window.contents ? window.contents : null,
                 bounds: null,
             };
 
@@ -439,7 +529,8 @@
                     return;
                 }
 
-                const hasContents = !!targetWindow.contents;
+                const contents = getRedrawContents(targetWindow, textEntry);
+                const hasContents = !!contents;
                 const isVisible = !!targetWindow.visible;
                 const isOpenFn = (typeof targetWindow.isOpen === 'function') ? targetWindow.isOpen() : true;
                 const fullyOpen = typeof targetWindow.openness === 'number' ? targetWindow.openness >= 255 : true;
@@ -487,7 +578,6 @@
                 }
 
                 const signedText = REDRAW_SIGNATURE + translatedText;
-                const contents = targetWindow.contents || null;
                 const prevDrawState = contents ? captureBitmapDrawState(contents) : null;
                 const storedDrawState = contents ? textEntry.drawState : null;
                 let clearArea = null;
@@ -507,14 +597,14 @@
                         );
                         let bounds = textEntry.bounds || { x1: x, y1: y, x2: x, y2: y };
                         try {
-                            const translatedBounds = estimateEntryBounds(
+                            const translatedBounds = withWindowContents(targetWindow, contents, () => estimateEntryBounds(
                                 targetWindow,
                                 textEntry.type,
                                 translatedText,
                                 x,
                                 y,
                                 translatedText
-                            );
+                            ));
                             bounds = mergeBounds(bounds, translatedBounds) || bounds;
                         } catch (_) {}
                         const maxWidth = textEntry.originalParams
@@ -530,8 +620,10 @@
                         let clearH = Math.abs(bounds.y2 - bounds.y1);
                         try {
                             if (targetWindow && typeof targetWindow.calcTextHeight === 'function' && typeof targetWindow.createTextState === 'function') {
-                                const textState = targetWindow.createTextState(String(translatedText || originalText), x, y, textEntry.originalParams.maxWidth || Infinity);
-                                const calcHeight = targetWindow.calcTextHeight(textState, true);
+                                const calcHeight = withWindowContents(targetWindow, contents, () => {
+                                    const textState = targetWindow.createTextState(String(translatedText || originalText), x, y, textEntry.originalParams.maxWidth || Infinity);
+                                    return targetWindow.calcTextHeight(textState, true);
+                                });
                                 if (Number.isFinite(calcHeight) && calcHeight > 0) {
                                     clearH = Math.max(clearH, calcHeight);
                                 }
@@ -575,32 +667,34 @@
                 }
 
                 try {
-                    targetWindow.contents._trPreferWindowPipeline = true;
-                    targetWindow.contents._trWindowPipelineDepth = (targetWindow.contents._trWindowPipelineDepth || 0) + 1;
+                    contents._trPreferWindowPipeline = true;
+                    contents._trWindowPipelineDepth = (contents._trWindowPipelineDepth || 0) + 1;
                     telemetry.logDraw('redraw', translatedText, x, y, {
                         windowType: targetWindow.constructor.name,
                         clearArea
                     });
-                    if (textEntry.type === 'drawTextEx' && typeof targetWindow.drawTextEx === 'function') {
-                        targetWindow.drawTextEx(signedText, x, y);
-                    } else {
-                        targetWindow.drawText(
-                            signedText,
-                            x,
-                            y,
-                            textEntry.originalParams.maxWidth,
-                            textEntry.originalParams.align
-                        );
-                    }
-                    if (targetWindow.contents && prevDrawState) {
-                        applyBitmapDrawState(targetWindow.contents, prevDrawState);
+                    withWindowContents(targetWindow, contents, () => {
+                        if (textEntry.type === 'drawTextEx' && typeof targetWindow.drawTextEx === 'function') {
+                            targetWindow.drawTextEx(signedText, x, y);
+                        } else {
+                            targetWindow.drawText(
+                                signedText,
+                                x,
+                                y,
+                                textEntry.originalParams.maxWidth,
+                                textEntry.originalParams.align
+                            );
+                        }
+                    });
+                    if (contents && prevDrawState) {
+                        applyBitmapDrawState(contents, prevDrawState);
                     }
                     const rrKey = generateKey(textEntry.type, x, y, windowData.windowType, textEntry.convertedText);
                     if (!windowData.recentlyRedrawn) windowData.recentlyRedrawn = new Map();
                     windowData.recentlyRedrawn.set(rrKey, Date.now());
-                    if (clearArea && targetWindow.contents) {
+                    if (clearArea && contents) {
                         addBitmapSuppressionRect(
-                            targetWindow.contents,
+                            contents,
                             clearArea.x,
                             clearArea.y,
                             clearArea.x + clearArea.w,
@@ -612,13 +706,13 @@
                 } catch (error) {
                     logger.error('[Redraw Error]', error);
                 } finally {
-                    if (targetWindow.contents) {
-                        targetWindow.contents._trWindowPipelineDepth = Math.max(0, (targetWindow.contents._trWindowPipelineDepth || 1) - 1);
+                    if (contents) {
+                        contents._trWindowPipelineDepth = Math.max(0, (contents._trWindowPipelineDepth || 1) - 1);
                         if (aggregationIncremented) {
-                            targetWindow.contents._trAggregationDepth = Math.max(0, (targetWindow.contents._trAggregationDepth || 1) - 1);
-                            if (targetWindow.contents._trAggregationDepth === 0
-                                && typeof targetWindow.contents._trFlushAggregatedLines === 'function') {
-                                try { targetWindow.contents._trFlushAggregatedLines(); } catch (_) {}
+                            contents._trAggregationDepth = Math.max(0, (contents._trAggregationDepth || 1) - 1);
+                            if (contents._trAggregationDepth === 0
+                                && typeof contents._trFlushAggregatedLines === 'function') {
+                                try { contents._trFlushAggregatedLines(); } catch (_) {}
                             }
                         }
                     }
@@ -664,6 +758,10 @@
                     const cleanText = textStr.substring(REDRAW_SIGNATURE.length);
                     telemetry.logDraw('bypass', cleanText, x, y, { windowType: this.constructor.name });
                     return invokeOriginal(cleanText);
+                }
+
+                if (isDedicatedMessageWindow(this)) {
+                    return invokeOriginal();
                 }
 
                 const trimmed = textStr.trim();
@@ -786,9 +884,7 @@
                 const windowData = windowRegistry.get(this);
 
                 try {
-                    if (this && this.constructor
-                        && (this.constructor.name === 'Window_Message'
-                            || this.constructor.name === 'Window_Message_Battle')) {
+                    if (isDedicatedMessageWindow(this)) {
                         const sess = this._trMessageSession || this._trSessionId || 0;
                         if (sess && this._trMsgStartSession !== sess) {
                             this._trMsgStartX = x;
@@ -799,9 +895,7 @@
                 } catch (_) {}
 
                 try {
-                    if (this && this.constructor
-                        && (this.constructor.name === 'Window_Message'
-                            || this.constructor.name === 'Window_Message_Battle')) {
+                    if (isDedicatedMessageWindow(this)) {
                         return invokeOriginalDrawTextEx();
                     }
                 } catch (_) {}
