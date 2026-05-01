@@ -310,8 +310,34 @@
             throw new Error('[Logger] telemetry channel requires an active logger');
         }
 
+        const repeatedTraceLast = new Map();
+        const REPEATED_TRACE_LIMIT = 500;
+        const REPEATED_TRACE_INTERVAL_MS = 1000;
+
+        function shouldEmitRepeatedTrace(key, intervalMs = REPEATED_TRACE_INTERVAL_MS) {
+            if (!key || intervalMs <= 0) return true;
+            const now = Date.now();
+            const last = repeatedTraceLast.get(key);
+            if (Number.isFinite(last) && now - last < intervalMs) {
+                return false;
+            }
+            repeatedTraceLast.set(key, now);
+            if (repeatedTraceLast.size > REPEATED_TRACE_LIMIT) {
+                const cutoff = now - Math.max(1000, intervalMs * 5);
+                for (const [storedKey, storedAt] of repeatedTraceLast) {
+                    if (storedAt < cutoff || repeatedTraceLast.size > REPEATED_TRACE_LIMIT) {
+                        repeatedTraceLast.delete(storedKey);
+                    }
+                    if (repeatedTraceLast.size <= REPEATED_TRACE_LIMIT) break;
+                }
+            }
+            return true;
+        }
+
         function logTextDetected(source, text, x, y, extraInfo = {}) {
             if (!logger.shouldLog || !logger.shouldLog('trace')) return;
+            const key = `detect|${source}|${x}|${y}|${extraInfo.windowType || ''}|${text}|${extraInfo.converted || ''}`;
+            if (!shouldEmitRepeatedTrace(key)) return;
             const timestamp = getFastTimestamp();
             logger.trace(`[DETECT|${timestamp}] ${source} at (${x},${y}): "${preview(text)}"${extraInfo.windowType ? ` [${extraInfo.windowType}]` : ''}`);
             if (extraInfo.converted && extraInfo.converted !== text) {

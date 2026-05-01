@@ -1582,6 +1582,9 @@
             }
 
             const DRAW_WRAPPER_TOKEN = Symbol('bitmapDrawWrapper');
+            const SMALL_TEXT_WRAPPER_TOKEN = Symbol('bitmapSmallTextWrapper');
+            const NORMAL_CHAR_WRAPPER_TOKEN = Symbol('bitmapNormalCharWrapper');
+            const SPRITE_CHILD_OBSERVER_TOKEN = Symbol('spriteChildObserver');
 
             if (Bitmap.prototype.drawText && Bitmap.prototype.drawText.__trBitmapWrapper === DRAW_WRAPPER_TOKEN) {
                 diag('[bitmap/init] Bitmap draw hooks already installed.');
@@ -1592,8 +1595,17 @@
             const FLUSH_DELAY_MS = 0;
             const GAP_MIN = 6;
             const GAP_RATIO = 0.65;
+            const SPRITE_GLYPH_BASE_DELAY_MS = 180;
+            const SPRITE_GLYPH_MAX_DELAY_MS = 650;
+            const SPRITE_GLYPH_SINGLE_HOLD_MS = 900;
+            const SPRITE_GLYPH_MAX_PENDING_MS = 5000;
             const perCharRegex = PER_CHAR_MARK ? new RegExp(PER_CHAR_MARK, 'g') : null;
             const VALID_CANVAS_TEXT_ALIGN = new Set(['left', 'right', 'center', 'start', 'end']);
+            const hotDiagnosticLast = new Map();
+            const HOT_DIAGNOSTIC_LIMIT = 500;
+            const spriteTextParents = typeof WeakMap !== 'undefined' ? new WeakMap() : null;
+            let smallTextGlobalDepth = 0;
+            let normalCharGlobalDepth = 0;
 
             const normalizeCanvasTextAlign = (align) => {
                 const value = String(align || '').toLowerCase();
@@ -1630,6 +1642,45 @@
             })();
 
             const shouldTraceBitmapDiagnostics = () => !!(logger && typeof logger.shouldLog === 'function' && logger.shouldLog('trace'));
+            const shouldCaptureBitmapCallSites = () => !!(
+                shouldTraceBitmapDiagnostics()
+                && settings
+                && settings.debug
+                && settings.debug.bitmapCallSites === true
+            );
+
+            const getHotDiagnosticIntervalMs = () => {
+                const raw = settings && settings.debug ? Number(settings.debug.diagnosticRepeatMs) : NaN;
+                return Number.isFinite(raw) && raw >= 0 ? raw : 1000;
+            };
+
+            const shouldLogHotDiagnostic = (key, intervalMs = getHotDiagnosticIntervalMs()) => {
+                if (!shouldTraceBitmapDiagnostics()) return false;
+                if (!key || intervalMs <= 0) return true;
+                const now = Date.now();
+                const last = hotDiagnosticLast.get(key);
+                if (Number.isFinite(last) && now - last < intervalMs) {
+                    return false;
+                }
+                hotDiagnosticLast.set(key, now);
+                if (hotDiagnosticLast.size > HOT_DIAGNOSTIC_LIMIT) {
+                    const cutoff = now - Math.max(1000, intervalMs * 5);
+                    for (const [storedKey, storedAt] of hotDiagnosticLast) {
+                        if (storedAt < cutoff || hotDiagnosticLast.size > HOT_DIAGNOSTIC_LIMIT) {
+                            hotDiagnosticLast.delete(storedKey);
+                        }
+                        if (hotDiagnosticLast.size <= HOT_DIAGNOSTIC_LIMIT) break;
+                    }
+                }
+                return true;
+            };
+
+            const diagHot = (key, messageFactory, intervalMs) => {
+                if (!shouldLogHotDiagnostic(key, intervalMs)) return;
+                try {
+                    diag(typeof messageFactory === 'function' ? messageFactory() : messageFactory);
+                } catch (_) {}
+            };
 
             const captureBitmapCallSite = (force = false) => {
                 if (!force && !shouldTraceBitmapDiagnostics()) return '';
@@ -1652,6 +1703,90 @@
                     return relevant.join(' <- ');
                 } catch (_) {
                     return '';
+                }
+            };
+
+            const isSmallTextDrawActive = (bitmap) => {
+                try {
+                    return !!((bitmap && bitmap._trSmallTextDepth > 0) || smallTextGlobalDepth > 0);
+                } catch (_) {
+                    return smallTextGlobalDepth > 0;
+                }
+            };
+
+            const isNormalCharacterDrawActive = (bitmap) => {
+                try {
+                    return !!((bitmap && bitmap._trNormalCharDepth > 0) || normalCharGlobalDepth > 0);
+                } catch (_) {
+                    return normalCharGlobalDepth > 0;
+                }
+            };
+
+            const installSmallTextMarker = (target, methodName) => {
+                try {
+                    if (!target || typeof target[methodName] !== 'function') return false;
+                    const current = target[methodName];
+                    if (current.__trSmallTextWrapper === SMALL_TEXT_WRAPPER_TOKEN) return true;
+                    const original = current;
+                    const wrapped = function(...args) {
+                        const targetBitmap = this && typeof Bitmap !== 'undefined' && this instanceof Bitmap
+                            ? this
+                            : (args && args[0] && typeof Bitmap !== 'undefined' && args[0] instanceof Bitmap ? args[0] : null);
+                        if (targetBitmap) {
+                            targetBitmap._trSmallTextDepth = (targetBitmap._trSmallTextDepth || 0) + 1;
+                        } else {
+                            smallTextGlobalDepth++;
+                        }
+                        try {
+                            return original.apply(this, args);
+                        } finally {
+                            if (targetBitmap) {
+                                targetBitmap._trSmallTextDepth = Math.max(0, (targetBitmap._trSmallTextDepth || 1) - 1);
+                            } else {
+                                smallTextGlobalDepth = Math.max(0, smallTextGlobalDepth - 1);
+                            }
+                        }
+                    };
+                    wrapped.__trSmallTextWrapper = SMALL_TEXT_WRAPPER_TOKEN;
+                    wrapped.__trOriginal = original;
+                    target[methodName] = wrapped;
+                    return true;
+                } catch (_) {
+                    return false;
+                }
+            };
+
+            const installNormalCharacterMarker = () => {
+                try {
+                    if (typeof Window_Base === 'undefined' || !Window_Base || !Window_Base.prototype) return false;
+                    const methodName = 'processNormalCharacter';
+                    const current = Window_Base.prototype[methodName];
+                    if (typeof current !== 'function') return false;
+                    if (current.__trNormalCharWrapper === NORMAL_CHAR_WRAPPER_TOKEN) return true;
+                    const original = current;
+                    const wrapped = function(...args) {
+                        const bitmap = this && this.contents ? this.contents : null;
+                        if (bitmap) {
+                            bitmap._trNormalCharDepth = (bitmap._trNormalCharDepth || 0) + 1;
+                        } else {
+                            normalCharGlobalDepth++;
+                        }
+                        try {
+                            return original.apply(this, args);
+                        } finally {
+                            if (bitmap) {
+                                bitmap._trNormalCharDepth = Math.max(0, (bitmap._trNormalCharDepth || 1) - 1);
+                            } else {
+                                normalCharGlobalDepth = Math.max(0, normalCharGlobalDepth - 1);
+                            }
+                        }
+                    };
+                    wrapped.__trNormalCharWrapper = NORMAL_CHAR_WRAPPER_TOKEN;
+                    wrapped.__trOriginal = original;
+                    Window_Base.prototype[methodName] = wrapped;
+                    return true;
+                } catch (_) {
+                    return false;
                 }
             };
 
@@ -1762,6 +1897,53 @@
                 const onlyNumPunct = /^[0-9()\[\]\-+/*.,:;!?％%]+$/u.test(nonSpace);
                 const comboMatch = /\d+\s*[\u3040-\u30FF\u4E00-\u9FFF]\s*\(\d+\)/u.test(trimmed);
                 return (hasDigit && cjkCount <= 1 && nonSpace.length <= 10) || onlyNumPunct || comboMatch;
+            };
+
+            const textUnitCount = (text) => {
+                try {
+                    return Array.from(String(text || '')).length;
+                } catch (_) {
+                    return String(text || '').length;
+                }
+            };
+
+            const firstPositiveNumber = (...values) => {
+                for (const value of values) {
+                    const numeric = Number(value);
+                    if (Number.isFinite(numeric) && numeric > 0) return numeric;
+                }
+                return 0;
+            };
+
+            const fragmentVisibleText = (fragment) => sanitizePerChar(stripRpgmEscapes(
+                fragment && (fragment.visibleText || fragment.rawText) ? (fragment.visibleText || fragment.rawText) : ''
+            )).trim();
+
+            const isStandaloneSpriteGlyphCandidate = (bitmap, fragment, owner) => {
+                if (!bitmap || !fragment) return false;
+                if (owner || hasDedicatedOwnerHook(owner) || bitmap._trHasDedicatedTextHook || bitmap._trMessageContents) {
+                    return false;
+                }
+                const visible = fragmentVisibleText(fragment);
+                if (!visible || /\s/u.test(visible) || textUnitCount(visible) !== 1) return false;
+
+                const lineHeight = firstPositiveNumber(fragment.lineHeight, fragment.drawState && fragment.drawState.fontSize, bitmap.fontSize, 24);
+                const bitmapWidth = Number(bitmap.width);
+                const bitmapHeight = Number(bitmap.height);
+                if (!Number.isFinite(bitmapWidth) || !Number.isFinite(bitmapHeight) || bitmapWidth <= 0 || bitmapHeight <= 0) {
+                    return false;
+                }
+
+                const maxWidth = Math.max(96, lineHeight * 4);
+                const maxHeight = Math.max(96, lineHeight * 3);
+                if (bitmapWidth > maxWidth || bitmapHeight > maxHeight) return false;
+
+                const textX = Number(fragment.x);
+                const textY = Number(fragment.y);
+                const offsetLimit = Math.max(8, lineHeight);
+                if (Number.isFinite(textX) && Math.abs(textX) > offsetLimit) return false;
+                if (Number.isFinite(textY) && Math.abs(textY) > offsetLimit) return false;
+                return true;
             };
 
             const ensureBitmapState = (bitmap) => {
@@ -2353,7 +2535,11 @@
                 const ownerType = owner && owner.constructor && owner.constructor.name
                     ? owner.constructor.name
                     : 'Window';
-                diag(`[window/invalidate] owner=${ownerType} reason=${reason} rect=${targetRect ? formatRect(targetRect) : 'FULL'} removed=${removed.length}`);
+                const rectLabel = targetRect ? formatRect(targetRect) : 'FULL';
+                diagHot(
+                    `window/invalidate|${ownerType}|${reason}|${rectLabel}|${removed.length}`,
+                    () => `[window/invalidate] owner=${ownerType} reason=${reason} rect=${rectLabel} removed=${removed.length}`
+                );
                 return removed.length;
             };
 
@@ -2417,7 +2603,7 @@
                 const wrapped = function(...args) {
                     let rect = null;
                     let extraOptions = {};
-                    const callSite = shouldTraceBitmapDiagnostics() && (methodName === 'clearRect' || methodName === 'clear' || methodName === 'resize')
+                    const callSite = shouldCaptureBitmapCallSites() && (methodName === 'clearRect' || methodName === 'clear' || methodName === 'resize')
                         ? captureBitmapCallSite()
                         : '';
                     try {
@@ -2702,6 +2888,7 @@
                             fragments: block,
                             position: { x: drawX, y: bounds.y1 },
                             methodName,
+                            spriteGlyphCandidate: block.length === 1 && !!block[0].standaloneSpriteGlyphCandidate,
                             debugCallSite: dominantFragment && dominantFragment.debugCallSite
                                 ? dominantFragment.debugCallSite
                                 : (block[0] && block[0].debugCallSite ? block[0].debugCallSite : ''),
@@ -2729,6 +2916,528 @@
                         logger.warn('[bitmap/flush-error]', err);
                     }
                 }, FLUSH_DELAY_MS);
+            };
+
+            const nextSpriteRunId = (() => {
+                let counter = 0;
+                return () => `spr-${Date.now().toString(36)}-${(++counter).toString(36)}`;
+            })();
+
+            const describeSprite = (sprite) => {
+                if (!sprite) return 'sprite=n/a';
+                const ctor = sprite.constructor && sprite.constructor.name ? sprite.constructor.name : 'Sprite';
+                const childCount = sprite.children && Number.isFinite(sprite.children.length) ? sprite.children.length : 0;
+                return `${ctor} children=${childCount}`;
+            };
+
+            const ensureSpriteTextParentState = (parent) => {
+                if (!parent || !spriteTextParents) return null;
+                let state = spriteTextParents.get(parent);
+                if (!state) {
+                    state = {
+                        glyphs: [],
+                        flushTimer: null,
+                        lastGlyphAt: 0,
+                        maxInterGlyphMs: 0,
+                    };
+                    spriteTextParents.set(parent, state);
+                }
+                if (!Array.isArray(state.glyphs)) state.glyphs = [];
+                return state;
+            };
+
+            const clearSpriteTextTimer = (state) => {
+                if (!state || !state.flushTimer) return;
+                try { clearTimeout(state.flushTimer); } catch (_) {}
+                state.flushTimer = null;
+            };
+
+            const resolveSpriteTextDelay = (state) => {
+                const interGlyphDelay = state && Number.isFinite(state.maxInterGlyphMs)
+                    ? Math.ceil(state.maxInterGlyphMs * 2 + 40)
+                    : 0;
+                return Math.min(
+                    SPRITE_GLYPH_MAX_DELAY_MS,
+                    Math.max(SPRITE_GLYPH_BASE_DELAY_MS, interGlyphDelay)
+                );
+            };
+
+            const removePendingBitmapFragment = (bitmap, fragment) => {
+                const state = bitmapStates.get(bitmap);
+                if (!state || !Array.isArray(state.fragments) || !fragment) return false;
+                const before = state.fragments.length;
+                state.fragments = state.fragments.filter((item) => item !== fragment);
+                return state.fragments.length !== before;
+            };
+
+            const glyphLayout = (glyph) => {
+                if (!glyph || !glyph.sprite || !glyph.fragment) return null;
+                const sprite = glyph.sprite;
+                const fragment = glyph.fragment;
+                const bitmap = glyph.bitmap || sprite.bitmap || fragment.bitmap || null;
+                const bitmapWidth = bitmap && Number.isFinite(Number(bitmap.width)) ? Number(bitmap.width) : 0;
+                const bitmapHeight = bitmap && Number.isFinite(Number(bitmap.height)) ? Number(bitmap.height) : 0;
+                const anchorX = sprite.anchor && Number.isFinite(Number(sprite.anchor.x)) ? Number(sprite.anchor.x) : 0;
+                const anchorY = sprite.anchor && Number.isFinite(Number(sprite.anchor.y)) ? Number(sprite.anchor.y) : 0;
+                const width = firstPositiveNumber(sprite.dw, fragment.width, fragment.maxWidth, bitmapWidth, fragment.lineHeight, 1);
+                const height = firstPositiveNumber(bitmapHeight, fragment.lineHeight, fragment.drawState && fragment.drawState.fontSize, 24);
+                const x = (Number.isFinite(Number(sprite.x)) ? Number(sprite.x) : 0) - anchorX * bitmapWidth;
+                const y = (Number.isFinite(Number(sprite.y)) ? Number(sprite.y) : 0) - anchorY * bitmapHeight;
+                return {
+                    x,
+                    y,
+                    width,
+                    height,
+                    lineHeight: firstPositiveNumber(fragment.lineHeight, height),
+                    fontSignature: fragment.fontSignature || computeFontSignature(fragment.drawState, bitmap),
+                    visibleText: fragmentVisibleText(fragment),
+                };
+            };
+
+            const isGlyphStillAttached = (glyph) => {
+                if (!glyph || !glyph.sprite || !glyph.parent) return false;
+                if (glyph.sprite._destroyed || glyph.parent._destroyed) return false;
+                if (glyph.sprite.parent && glyph.sprite.parent !== glyph.parent) return false;
+                if (!glyph.sprite.parent) return false;
+                try {
+                    return glyph.sprite.bitmap === glyph.bitmap;
+                } catch (_) {
+                    return true;
+                }
+            };
+
+            const markSpriteTextRunStale = (run, reason) => {
+                if (!run || run._trStale) return;
+                run._trStale = true;
+                run.canceledReason = reason;
+                run.canceledAt = Date.now();
+                diag(`[sprite-text/cancel] parent=${describeSprite(run.parent)} reason=${reason} id=${run.id || 'unknown'} text="${preview(run.trimmedText || '')}"`);
+            };
+
+            const isSpriteTextRunAlive = (run) => {
+                if (!run || run._trStale || !run.parent || !Array.isArray(run.glyphs) || !run.glyphs.length) return false;
+                const carrier = run.glyphs[0] && run.glyphs[0].sprite;
+                if (!carrier || carrier._destroyed || carrier.parent !== run.parent) return false;
+                return carrier._trSpriteTextRun === run;
+            };
+
+            const measureSpriteRunTextWidth = (drawState, text, height) => {
+                if (typeof Bitmap === 'undefined' || !Bitmap) return 0;
+                let measureBitmap = null;
+                try {
+                    measureBitmap = new Bitmap(1, Math.max(1, Math.ceil(height || 24)));
+                    applyBitmapDrawState(measureBitmap, drawState);
+                    if (typeof measureBitmap.measureTextWidth === 'function') {
+                        const width = measureBitmap.measureTextWidth(text);
+                        return Number.isFinite(width) ? Math.ceil(width) : 0;
+                    }
+                } catch (_) {
+                    return 0;
+                }
+                return 0;
+            };
+
+            const drawSpriteRunBitmap = (drawState, text, width, height) => {
+                const bitmap = new Bitmap(Math.max(1, Math.ceil(width)), Math.max(1, Math.ceil(height)));
+                try { applyBitmapDrawState(bitmap, drawState); } catch (_) {}
+                bitmap._trBitmapSkipDepth = (bitmap._trBitmapSkipDepth || 0) + 1;
+                try {
+                    bitmap.drawText(text, 0, 0, bitmap.width, bitmap.height, 'center');
+                } finally {
+                    bitmap._trBitmapSkipDepth = Math.max(0, (bitmap._trBitmapSkipDepth || 1) - 1);
+                }
+                return bitmap;
+            };
+
+            const applySpriteTextRunTranslation = (run, translated, source, expectedRunId = null) => {
+                if (!run || (expectedRunId && run.id !== expectedRunId) || !isSpriteTextRunAlive(run)) return;
+
+                let restored = translated;
+                try {
+                    if (run.placeholderInfo) {
+                        restored = restoreControlCodes(translated, run.placeholderInfo, run.rawText);
+                    }
+                } catch (restoreError) {
+                    logger.warn('[sprite-text/restore-error]', restoreError);
+                }
+                restored = sanitizeBitmapDrawText(restored, 'drawText');
+                if (typeof restored !== 'string') restored = run.rawText;
+                const restoredTrimmed = sanitizePerChar(stripRpgmEscapes(restored || '')).trim();
+                if (!restoredTrimmed || restoredTrimmed === run.trimmedText) {
+                    diag(`[sprite-text/skip-same] parent=${describeSprite(run.parent)} id=${run.id} text="${preview(run.trimmedText)}"`);
+                    return;
+                }
+
+                const carrier = run.glyphs[0] && run.glyphs[0].sprite;
+                if (!carrier) return;
+                const outlinePadding = run.drawState && Number.isFinite(run.drawState.outlineWidth)
+                    ? Math.max(2, run.drawState.outlineWidth + 2)
+                    : 3;
+                const measuredWidth = measureSpriteRunTextWidth(run.drawState, restoredTrimmed, run.height);
+                const targetWidth = Math.max(
+                    1,
+                    Math.ceil(run.width || 0),
+                    measuredWidth + outlinePadding * 2
+                );
+                const targetHeight = Math.max(1, Math.ceil(run.height || run.lineHeight || 24));
+                const translatedBitmap = drawSpriteRunBitmap(run.drawState, restored, targetWidth, targetHeight);
+
+                try {
+                    carrier.bitmap = translatedBitmap;
+                    carrier.x = Math.floor((run.bounds ? run.bounds.x1 : 0) - Math.max(0, targetWidth - (run.width || targetWidth)) / 2);
+                    carrier.y = Math.floor(run.bounds ? run.bounds.y1 : 0);
+                    if (Number.isFinite(Number(carrier.ry))) {
+                        carrier.ry = carrier.y;
+                    }
+                    if (carrier.anchor) {
+                        carrier.anchor.x = 0;
+                        carrier.anchor.y = 0;
+                    }
+                    carrier.visible = true;
+                    for (let i = 1; i < run.glyphs.length; i++) {
+                        const glyphSprite = run.glyphs[i] && run.glyphs[i].sprite;
+                        if (glyphSprite && glyphSprite.parent === run.parent) {
+                            glyphSprite.visible = false;
+                            glyphSprite._trSpriteTextHiddenByRun = run.id;
+                        }
+                    }
+                } catch (applyError) {
+                    logger.warn('[sprite-text/apply-error]', applyError);
+                    return;
+                }
+
+                run.translationStatus = 'completed';
+                run.translatedText = restored;
+                run.completedAt = Date.now();
+                telemetry.logDraw('sprite_text_redraw', restoredTrimmed, run.bounds ? run.bounds.x1 : 0, run.bounds ? run.bounds.y1 : 0, {
+                    source,
+                    glyphs: run.glyphs.length,
+                });
+                diag(`[sprite-text/redraw] parent=${describeSprite(run.parent)} src=${source} id=${run.id} text="${preview(run.trimmedText)}" -> "${preview(restoredTrimmed)}" glyphs=${run.glyphs.length}`);
+            };
+
+            const activateSpriteTextRunTranslation = (run) => {
+                if (!run || run._trStale || run.translationStatus === 'completed' || run.translationStatus === 'translating') return;
+                if (!run.normalizedSource || translationCache.shouldSkip(run.normalizedSource) || skipLikeCounter(run.normalizedSource)) {
+                    run.translationStatus = 'skipped';
+                    diagHot(
+                        `sprite-text/skip|${preview(run.normalizedSource)}|${run.glyphs ? run.glyphs.length : 0}`,
+                        () => `[sprite-text/skip] parent=${describeSprite(run.parent)} reason=cacheSkip id=${run.id || 'unknown'} text="${preview(run.normalizedSource || '')}"`
+                    );
+                    return;
+                }
+
+                telemetry.logTextDetected('sprite_text', run.trimmedText, run.bounds ? run.bounds.x1 : 0, run.bounds ? run.bounds.y1 : 0, {
+                    glyphs: run.glyphs.length,
+                });
+                diag(`[sprite-text/register] parent=${describeSprite(run.parent)} id=${run.id} text="${preview(run.trimmedText)}" glyphs=${run.glyphs.length} rect=${formatRect(run.bounds)}`);
+
+                try {
+                    if (translationCache.completed.has(run.normalizedSource)) {
+                        applySpriteTextRunTranslation(run, translationCache.completed.get(run.normalizedSource), 'cache', run.id);
+                        return;
+                    }
+                } catch (cacheError) {
+                    logger.warn('[sprite-text/cache-error]', cacheError);
+                }
+
+                run.translationStatus = 'translating';
+                const targetRunId = run.id;
+                run.translationPromise = translationCache.requestTranslation(run.translationSource)
+                    .then((translated) => applySpriteTextRunTranslation(run, translated, 'async', targetRunId))
+                    .catch((error) => {
+                        run.translationStatus = 'error';
+                        if (!run._trStale) logger.warn('[sprite-text/translation-error]', error);
+                    });
+            };
+
+            const createSpriteTextRun = (parent, group) => {
+                if (!parent || !Array.isArray(group) || group.length < 2) return null;
+                const layouts = group.map(glyphLayout);
+                if (layouts.some(layout => !layout || !layout.visibleText)) return null;
+                const rawText = group.map(glyph => glyph.fragment && glyph.fragment.rawText ? glyph.fragment.rawText : '').join('');
+                const convertedText = stripRpgmEscapes(rawText || '');
+                const trimmedText = sanitizePerChar(convertedText).trim();
+                if (!trimmedText) return null;
+
+                const bounds = layouts.reduce((acc, layout) => ({
+                    x1: Math.min(acc.x1, layout.x),
+                    y1: Math.min(acc.y1, layout.y),
+                    x2: Math.max(acc.x2, layout.x + layout.width),
+                    y2: Math.max(acc.y2, layout.y + layout.height),
+                }), { x1: Infinity, y1: Infinity, x2: -Infinity, y2: -Infinity });
+                if (!isValidRect(bounds)) return null;
+
+                const dominant = group.reduce((best, glyph, index) => {
+                    const layout = layouts[index];
+                    if (!best || layout.width > best.width) return { glyph, layout, width: layout.width };
+                    return best;
+                }, null);
+                const drawState = dominant && dominant.glyph && dominant.glyph.fragment
+                    ? dominant.glyph.fragment.drawState
+                    : (group[0].fragment ? group[0].fragment.drawState : null);
+                const lineHeight = Math.max(...layouts.map(layout => layout.lineHeight || 0), 1);
+                const run = {
+                    id: nextSpriteRunId(),
+                    parent,
+                    glyphs: group,
+                    rawText,
+                    convertedText,
+                    trimmedText,
+                    bounds,
+                    width: Math.max(1, bounds.x2 - bounds.x1),
+                    height: Math.max(1, bounds.y2 - bounds.y1, lineHeight),
+                    lineHeight,
+                    drawState,
+                    translationStatus: 'pending',
+                    createdAt: Date.now(),
+                    debugCallSite: group.map(glyph => glyph.fragment && glyph.fragment.debugCallSite).filter(Boolean)[0] || '',
+                };
+                run.placeholderInfo = prepareTextForTranslation(run.rawText);
+                run.translationSource = run.placeholderInfo
+                    ? run.placeholderInfo.textForTranslation
+                    : run.rawText;
+                run.normalizedSource = String(run.translationSource || '').trim();
+                group.forEach((glyph) => {
+                    try {
+                        if (glyph && glyph.sprite) glyph.sprite._trSpriteTextRun = run;
+                    } catch (_) {}
+                });
+                return run;
+            };
+
+            const flushSpriteTextParent = (parent, reason = 'timer') => {
+                const state = spriteTextParents ? spriteTextParents.get(parent) : null;
+                if (!state || !Array.isArray(state.glyphs) || state.glyphs.length === 0) return;
+
+                const now = Date.now();
+                const attached = [];
+                const keepSingles = [];
+                for (const glyph of state.glyphs) {
+                    if (!isGlyphStillAttached(glyph)) continue;
+                    if (now - (glyph.seenAt || now) > SPRITE_GLYPH_MAX_PENDING_MS) continue;
+                    attached.push(glyph);
+                }
+
+                const lines = new Map();
+                for (const glyph of attached) {
+                    const layout = glyphLayout(glyph);
+                    if (!layout || !layout.visibleText) continue;
+                    glyph._trSpriteLayout = layout;
+                    const yKey = `${Math.round(layout.y)}:${Math.round(layout.height)}:${layout.fontSignature || ''}`;
+                    if (!lines.has(yKey)) lines.set(yKey, []);
+                    lines.get(yKey).push(glyph);
+                }
+
+                const runs = [];
+                lines.forEach((lineGlyphs) => {
+                    lineGlyphs.sort((a, b) => {
+                        const ax = a._trSpriteLayout ? a._trSpriteLayout.x : 0;
+                        const bx = b._trSpriteLayout ? b._trSpriteLayout.x : 0;
+                        if (ax !== bx) return ax - bx;
+                        return (a.order || 0) - (b.order || 0);
+                    });
+
+                    let currentBlock = [];
+                    let lastGlyph = null;
+                    const groups = [];
+                    for (const glyph of lineGlyphs) {
+                        const layout = glyph._trSpriteLayout;
+                        const lastLayout = lastGlyph && lastGlyph._trSpriteLayout;
+                        if (!lastGlyph || !lastLayout) {
+                            currentBlock = [glyph];
+                            groups.push(currentBlock);
+                            lastGlyph = glyph;
+                            continue;
+                        }
+                        const gap = layout.x - (lastLayout.x + lastLayout.width);
+                        const gapLimit = Math.max(GAP_MIN, Math.ceil((layout.lineHeight || lastLayout.lineHeight || 24) * GAP_RATIO));
+                        const sameFont = layout.fontSignature === lastLayout.fontSignature;
+                        if (gap > gapLimit || !sameFont) {
+                            currentBlock = [glyph];
+                            groups.push(currentBlock);
+                        } else {
+                            currentBlock.push(glyph);
+                        }
+                        lastGlyph = glyph;
+                    }
+
+                    for (const group of groups) {
+                        if (group.length < 2) {
+                            const glyph = group[0];
+                            if (glyph && now - (glyph.seenAt || now) < SPRITE_GLYPH_SINGLE_HOLD_MS) {
+                                keepSingles.push(glyph);
+                            } else if (glyph) {
+                                const text = glyph.fragment ? fragmentVisibleText(glyph.fragment) : '';
+                                diagHot(
+                                    `sprite-text/skip-single|${text}`,
+                                    () => `[sprite-text/skip] parent=${describeSprite(parent)} reason=singleGlyph text="${preview(text)}"`
+                                );
+                            }
+                            continue;
+                        }
+                        const run = createSpriteTextRun(parent, group);
+                        if (run) runs.push(run);
+                    }
+                });
+
+                state.glyphs = keepSingles;
+                if (state.glyphs.length === 0) {
+                    state.lastGlyphAt = 0;
+                    state.maxInterGlyphMs = 0;
+                }
+                if (runs.length || state.glyphs.length === 0) {
+                    diag(`[sprite-text/flush] parent=${describeSprite(parent)} reason=${reason} runs=${runs.length} held=${state.glyphs.length}`);
+                } else {
+                    diagHot(
+                        `sprite-text/hold|${describeSprite(parent)}`,
+                        () => `[sprite-text/hold] parent=${describeSprite(parent)} reason=${reason} held=${state.glyphs.length}`,
+                        SPRITE_GLYPH_SINGLE_HOLD_MS
+                    );
+                }
+
+                for (const run of runs) {
+                    activateSpriteTextRunTranslation(run);
+                }
+                if (state.glyphs.length > 0) {
+                    scheduleSpriteTextFlush(parent);
+                }
+            };
+
+            const scheduleSpriteTextFlush = (parent) => {
+                const state = ensureSpriteTextParentState(parent);
+                if (!state) return;
+                clearSpriteTextTimer(state);
+                state.flushTimer = setTimeout(() => {
+                    state.flushTimer = null;
+                    try {
+                        flushSpriteTextParent(parent, 'timer');
+                    } catch (error) {
+                        logger.warn('[sprite-text/flush-error]', error);
+                    }
+                }, resolveSpriteTextDelay(state));
+            };
+
+            const enqueueSpriteGlyph = (parent, sprite, bitmap, fragment) => {
+                if (!parent || !sprite || !bitmap || !fragment || fragment._trSpriteGlyphClaimed) return false;
+                const state = ensureSpriteTextParentState(parent);
+                if (!state) return false;
+
+                fragment._trSpriteGlyphClaimed = true;
+                removePendingBitmapFragment(bitmap, fragment);
+                const now = Date.now();
+                if (state.lastGlyphAt > 0) {
+                    const interval = now - state.lastGlyphAt;
+                    if (Number.isFinite(interval) && interval >= 0) {
+                        state.maxInterGlyphMs = Math.min(
+                            SPRITE_GLYPH_MAX_DELAY_MS,
+                            Math.max(state.maxInterGlyphMs || 0, interval)
+                        );
+                    }
+                }
+                state.lastGlyphAt = now;
+                const glyph = {
+                    parent,
+                    sprite,
+                    bitmap,
+                    fragment,
+                    seenAt: now,
+                    order: state.glyphs.length ? Math.max(...state.glyphs.map(item => item.order || 0)) + 1 : 1,
+                };
+                state.glyphs.push(glyph);
+                try { sprite._trSpriteGlyphFragment = fragment; } catch (_) {}
+                scheduleSpriteTextFlush(parent);
+                return true;
+            };
+
+            const observeSpriteChildText = (parent, child) => {
+                if (!parent || !child || child._trSpriteTextObserverBypass) return;
+                let bitmap = null;
+                try { bitmap = child.bitmap; } catch (_) { bitmap = null; }
+                if (!bitmap) return;
+                const fragment = bitmap._trStandaloneSpriteGlyphFragment;
+                if (!fragment || !fragment.standaloneSpriteGlyphCandidate) return;
+                const age = Date.now() - (fragment.timestamp || Date.now());
+                if (age < 0 || age > SPRITE_GLYPH_MAX_PENDING_MS) return;
+                enqueueSpriteGlyph(parent, child, bitmap, fragment);
+            };
+
+            const observeSpriteTextRemoval = (child) => {
+                if (!child) return;
+                const run = child._trSpriteTextRun;
+                if (run && child === (run.glyphs[0] && run.glyphs[0].sprite)) {
+                    markSpriteTextRunStale(run, 'carrier-removed');
+                }
+            };
+
+            const installSpriteChildObserverOn = (target, label) => {
+                try {
+                    if (!target) return false;
+                    let installed = false;
+                    if (typeof target.addChild === 'function' && target.addChild.__trSpriteChildObserver !== SPRITE_CHILD_OBSERVER_TOKEN) {
+                        const originalAddChild = target.addChild.__trOriginal || target.addChild;
+                        const wrappedAddChild = function(...children) {
+                            const result = originalAddChild.apply(this, children);
+                            try {
+                                children.forEach(child => observeSpriteChildText(this, child));
+                            } catch (error) {
+                                logger.warn('[sprite-text/addChild-observer-error]', error);
+                            }
+                            return result;
+                        };
+                        wrappedAddChild.__trSpriteChildObserver = SPRITE_CHILD_OBSERVER_TOKEN;
+                        wrappedAddChild.__trOriginal = originalAddChild;
+                        target.addChild = wrappedAddChild;
+                        installed = true;
+                    }
+                    if (typeof target.removeChild === 'function' && target.removeChild.__trSpriteChildObserver !== SPRITE_CHILD_OBSERVER_TOKEN) {
+                        const originalRemoveChild = target.removeChild.__trOriginal || target.removeChild;
+                        const wrappedRemoveChild = function(...children) {
+                            const result = originalRemoveChild.apply(this, children);
+                            try {
+                                children.forEach(observeSpriteTextRemoval);
+                            } catch (_) {}
+                            return result;
+                        };
+                        wrappedRemoveChild.__trSpriteChildObserver = SPRITE_CHILD_OBSERVER_TOKEN;
+                        wrappedRemoveChild.__trOriginal = originalRemoveChild;
+                        target.removeChild = wrappedRemoveChild;
+                        installed = true;
+                    }
+                    if (installed) diag(`[sprite-text/hook] Installed child observer on ${label}`);
+                    return installed;
+                } catch (error) {
+                    logger.warn(`[sprite-text/hook-error] Failed to observe ${label}`, error);
+                    return false;
+                }
+            };
+
+            const installSpriteChildObserver = () => {
+                const targets = [];
+                try {
+                    if (typeof PIXI !== 'undefined' && PIXI && PIXI.Container && PIXI.Container.prototype) {
+                        targets.push({ target: PIXI.Container.prototype, label: 'PIXI.Container' });
+                    }
+                } catch (_) {}
+                try {
+                    if (typeof PIXI !== 'undefined' && PIXI && PIXI.DisplayObjectContainer && PIXI.DisplayObjectContainer.prototype) {
+                        targets.push({ target: PIXI.DisplayObjectContainer.prototype, label: 'PIXI.DisplayObjectContainer' });
+                    }
+                } catch (_) {}
+                try {
+                    if (typeof Sprite !== 'undefined' && Sprite && Sprite.prototype && Object.prototype.hasOwnProperty.call(Sprite.prototype, 'addChild')) {
+                        targets.push({ target: Sprite.prototype, label: 'Sprite' });
+                    }
+                } catch (_) {}
+
+                const seen = [];
+                let installedAny = false;
+                for (const item of targets) {
+                    if (!item || !item.target || seen.indexOf(item.target) >= 0) continue;
+                    seen.push(item.target);
+                    installedAny = installSpriteChildObserverOn(item.target, item.label) || installedAny;
+                }
+                return installedAny;
             };
 
             const activateBitmapEntryTranslation = (entry) => {
@@ -2766,9 +3475,10 @@
 
                 const normalized = entry.trimmedText;
                 const looksLikeCounter = skipLikeCounter(normalized);
+                const standaloneSpriteGlyph = entry.spriteGlyphCandidate && textUnitCount(normalized) <= 1;
                 const shouldSkipText = !!normalized && !looksLikeCounter && translationCache.shouldSkip(normalized);
-                if (!normalized || looksLikeCounter || shouldSkipText) {
-                    const reason = !normalized ? 'empty' : (looksLikeCounter ? 'counterLike' : 'cacheSkip');
+                if (!normalized || standaloneSpriteGlyph || looksLikeCounter || shouldSkipText) {
+                    const reason = !normalized ? 'empty' : (standaloneSpriteGlyph ? 'spriteGlyph' : (looksLikeCounter ? 'counterLike' : 'cacheSkip'));
                     const existing = state.entries.get(key);
                     if (existing) {
                         markEntryStale(state, existing, 'native-replace', { rect: deriveEntryRect(existing) });
@@ -2955,19 +3665,36 @@
 
                 const owner = contentsOwners && contentsOwners.get ? contentsOwners.get(bitmap) : null;
                 const ownerType = owner && owner.constructor ? owner.constructor.name : (bitmap.constructor ? bitmap.constructor.name : 'Bitmap');
-                const debugCallSite = captureBitmapCallSite(!owner || ownerType === 'Bitmap');
-                if (isSmallTextScratchBitmap(bitmap) || /\bBitmap\.drawSmallText\b/.test(debugCallSite)) {
-                    diag(`[bitmap/bypass-small-text] ${describeBitmap(bitmap, owner)} text="${preview(stripRpgmEscapes(textStr))}"${debugCallSite ? ` site=${debugCallSite}` : ''}`);
+                const debugCallSite = shouldCaptureBitmapCallSites()
+                    ? captureBitmapCallSite(true)
+                    : '';
+                const smallTextBypass = isSmallTextScratchBitmap(bitmap)
+                    || isSmallTextDrawActive(bitmap)
+                    || (debugCallSite && /\bBitmap\.drawSmallText\b/.test(debugCallSite));
+                if (smallTextBypass) {
+                    const visiblePreview = preview(stripRpgmEscapes(textStr));
+                    diagHot(
+                        `bitmap/bypass-small-text|${ownerType}|${bitmap.width || 0}x${bitmap.height || 0}|${visiblePreview}|${debugCallSite}`,
+                        () => `[bitmap/bypass-small-text] ${describeBitmap(bitmap, owner)} text="${visiblePreview}"${debugCallSite ? ` site=${debugCallSite}` : ''}`
+                    );
                     return originalFn.apply(bitmap, callArgs);
                 }
                 if (!owner
                     && ownerType === 'Bitmap'
-                    && /\bprocessNormalCharacter\b/.test(debugCallSite)) {
-                    diag(`[bitmap/bypass-normal-char] ${describeBitmap(bitmap, owner)} text="${preview(stripRpgmEscapes(textStr))}"${debugCallSite ? ` site=${debugCallSite}` : ''}`);
+                    && (isNormalCharacterDrawActive(bitmap) || (debugCallSite && /\bprocessNormalCharacter\b/.test(debugCallSite)))) {
+                    const visiblePreview = preview(stripRpgmEscapes(textStr));
+                    diagHot(
+                        `bitmap/bypass-normal-char|${ownerType}|${bitmap.width || 0}x${bitmap.height || 0}|${visiblePreview}|${debugCallSite}`,
+                        () => `[bitmap/bypass-normal-char] ${describeBitmap(bitmap, owner)} text="${visiblePreview}"${debugCallSite ? ` site=${debugCallSite}` : ''}`
+                    );
                     return originalFn.apply(bitmap, callArgs);
                 }
                 if (hasDedicatedOwnerHook(owner) || bitmap._trHasDedicatedTextHook) {
-                    diag(`[bitmap/bypass-owner] ${describeBitmap(bitmap, owner)} text="${preview(stripRpgmEscapes(textStr))}"`);
+                    const visiblePreview = preview(stripRpgmEscapes(textStr));
+                    diagHot(
+                        `bitmap/bypass-owner|${ownerType}|${bitmap.width || 0}x${bitmap.height || 0}|${visiblePreview}`,
+                        () => `[bitmap/bypass-owner] ${describeBitmap(bitmap, owner)} text="${visiblePreview}"`
+                    );
                     return originalFn.apply(bitmap, callArgs);
                 }
                 const state = ensureBitmapState(bitmap);
@@ -2987,6 +3714,7 @@
                 const widthEstimate = estimateWidth(bitmap, textStr, maxWidth);
                 const drawState = captureBitmapDrawState(bitmap);
                 const fragment = {
+                    bitmap,
                     methodName,
                     rawText: textStr,
                     visibleText: stripRpgmEscapes(textStr || ''),
@@ -3002,6 +3730,10 @@
                     timestamp: Date.now(),
                     debugCallSite,
                 };
+                fragment.standaloneSpriteGlyphCandidate = isStandaloneSpriteGlyphCandidate(bitmap, fragment, owner);
+                if (fragment.standaloneSpriteGlyphCandidate) {
+                    try { bitmap._trStandaloneSpriteGlyphFragment = fragment; } catch (_) {}
+                }
 
                 diag(`[bitmap/fragment:${methodName}] ${describeBitmap(bitmap, owner)} text="${preview(fragment.visibleText)}" @ (${safeX},${safeY}) width=${Math.round(fragment.width)} max=${Math.round(Number.isFinite(fragment.maxWidth) ? fragment.maxWidth : fragment.width)} line=${Math.round(fragment.lineHeight)}${debugCallSite ? ` site=${debugCallSite}` : ''}`);
 
@@ -3066,6 +3798,34 @@
                 }, 500);
                 hookRetryTimers.set(methodName, timer);
             };
+
+            const markerRetryTimers = new Map();
+            const scheduleMarkerRetry = (key, installer) => {
+                if (markerRetryTimers.has(key)) return;
+                let attempts = 0;
+                const maxAttempts = 20;
+                const timer = setInterval(() => {
+                    attempts++;
+                    if (installer() || attempts >= maxAttempts) {
+                        clearInterval(timer);
+                        markerRetryTimers.delete(key);
+                    }
+                }, 500);
+                markerRetryTimers.set(key, timer);
+            };
+
+            if (!installSmallTextMarker(Bitmap.prototype, 'drawSmallText')) {
+                scheduleMarkerRetry('Bitmap.prototype.drawSmallText', () => installSmallTextMarker(Bitmap.prototype, 'drawSmallText'));
+            }
+            if (!installSmallTextMarker(Bitmap, 'drawSmallText')) {
+                scheduleMarkerRetry('Bitmap.drawSmallText', () => installSmallTextMarker(Bitmap, 'drawSmallText'));
+            }
+            if (!installNormalCharacterMarker()) {
+                scheduleMarkerRetry('Window_Base.processNormalCharacter', installNormalCharacterMarker);
+            }
+            if (!installSpriteChildObserver()) {
+                scheduleMarkerRetry('PIXI.Container.addChild', installSpriteChildObserver);
+            }
 
             installBitmapDrawWrapper('drawText');
 
