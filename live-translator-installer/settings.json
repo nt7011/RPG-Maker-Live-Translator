@@ -6,6 +6,19 @@
     "debug": {
         "level": "trace"
     },
+    "performanceProfiler": {
+        "enabled": false,
+        "rollingFrames": 300,
+        "slowFrameMs": 16.67,
+        "targetFrameMs": 0,
+        "droppedFrameMultiplier": 2,
+        "autoDumpSlowFrames": false,
+        "autoDumpIncludeFrames": true,
+        "autoDumpToFile": false,
+        "autoDumpDirectory": "",
+        "autoDumpIntervalMs": 5000,
+        "topLimit": 12
+    },
     "translation": {
         "disableCjkFilter": false,
         "maxOutputTokens": 512

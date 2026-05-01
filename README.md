@@ -73,4 +73,6 @@ Extraction follows `settings.json` `translation.disableCjkFilter` and uses the s
 
 3.0.3 - harden GameMessage and invalid battlelog bitmaps detection/handling 
 
+3.1 - bitmap text handling major breaking change
+
 ![License](https://img.shields.io/badge/License-CC%20BY%204.0-blue.svg)

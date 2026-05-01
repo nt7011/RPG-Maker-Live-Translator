@@ -9,6 +9,521 @@
         globalScope.LiveTranslatorModules = {};
     }
 
+    function createLiveTranslatorPerf(options = {}) {
+        const {
+            settings,
+            logger,
+        } = options;
+
+        const existing = globalScope.LiveTranslatorPerf;
+        if (existing && existing.__trProfilerApi && typeof existing.configure === 'function') {
+            existing.configure(settings && settings.performanceProfiler);
+            return existing;
+        }
+
+        const defaultOptions = {
+            enabled: false,
+            rollingFrames: 300,
+            slowFrameMs: 1000 / 60,
+            targetFrameMs: 0,
+            droppedFrameMultiplier: 2,
+            autoDumpSlowFrames: false,
+            autoDumpIncludeFrames: true,
+            autoDumpToFile: false,
+            autoDumpDirectory: '',
+            autoDumpIntervalMs: 5000,
+            topLimit: 12,
+        };
+
+        const now = () => {
+            try {
+                if (typeof performance !== 'undefined' && performance && typeof performance.now === 'function') {
+                    return performance.now();
+                }
+            } catch (_) {}
+            return Date.now();
+        };
+
+        const requestFrame = (callback) => {
+            try {
+                const fn = globalScope && typeof globalScope.requestAnimationFrame === 'function'
+                    ? globalScope.requestAnimationFrame
+                    : (typeof requestAnimationFrame === 'function' ? requestAnimationFrame : null);
+                if (fn) return fn.call(globalScope, callback);
+            } catch (_) {}
+            return setTimeout(() => callback(now()), 16);
+        };
+
+        const cancelFrame = (handle) => {
+            try {
+                const fn = globalScope && typeof globalScope.cancelAnimationFrame === 'function'
+                    ? globalScope.cancelAnimationFrame
+                    : (typeof cancelAnimationFrame === 'function' ? cancelAnimationFrame : null);
+                if (fn) {
+                    fn.call(globalScope, handle);
+                    return;
+                }
+            } catch (_) {}
+            try { clearTimeout(handle); } catch (_) {}
+        };
+
+        const resolveOptions = (raw = {}) => {
+            const src = raw && typeof raw === 'object' ? raw : {};
+            const next = Object.assign({}, defaultOptions, src);
+            next.enabled = next.enabled === true;
+            next.rollingFrames = Math.max(20, Math.min(5000, Number(next.rollingFrames) || defaultOptions.rollingFrames));
+            next.slowFrameMs = Math.max(1, Number(next.slowFrameMs) || defaultOptions.slowFrameMs);
+            next.targetFrameMs = Math.max(0, Number(next.targetFrameMs) || 0);
+            next.droppedFrameMultiplier = Math.max(1.1, Number(next.droppedFrameMultiplier) || defaultOptions.droppedFrameMultiplier);
+            next.autoDumpSlowFrames = next.autoDumpSlowFrames === true;
+            next.autoDumpIncludeFrames = next.autoDumpIncludeFrames !== false;
+            next.autoDumpToFile = next.autoDumpToFile === true;
+            next.autoDumpDirectory = typeof next.autoDumpDirectory === 'string' ? next.autoDumpDirectory.trim() : '';
+            next.autoDumpIntervalMs = Math.max(250, Number(next.autoDumpIntervalMs) || defaultOptions.autoDumpIntervalMs);
+            next.topLimit = Math.max(1, Math.min(100, Number(next.topLimit) || defaultOptions.topLimit));
+            return next;
+        };
+
+        let config = resolveOptions(settings && settings.performanceProfiler);
+        let enabled = config.enabled;
+        let startedAt = now();
+        let frameSeq = 0;
+        let currentFrame = null;
+        let rafHandle = null;
+        let lastRafAt = 0;
+        let lastAutoDumpAt = -Infinity;
+        const frames = [];
+        const totals = new Map();
+        const timings = new Map();
+        const topGroups = new Map();
+        const dumpHistory = [];
+        const DUMP_HISTORY_LIMIT = 20;
+        let lastDumpSnapshot = null;
+
+        const toPlainCounterObject = (map) => {
+            const rows = {};
+            try {
+                Array.from(map.entries())
+                    .sort((a, b) => b[1] - a[1])
+                    .forEach(([key, value]) => {
+                        rows[key] = value;
+                    });
+            } catch (_) {}
+            return rows;
+        };
+
+        const timingRows = (map) => {
+            try {
+                return Array.from(map.entries())
+                    .sort((a, b) => b[1].totalMs - a[1].totalMs)
+                    .map(([name, value]) => ({
+                        name,
+                        count: value.count || 0,
+                        totalMs: Math.round((value.totalMs || 0) * 100) / 100,
+                        avgMs: value.count ? Math.round((value.totalMs / value.count) * 1000) / 1000 : 0,
+                        maxMs: Math.round((value.maxMs || 0) * 100) / 100,
+                    }));
+            } catch (_) {
+                return [];
+            }
+        };
+
+        const topRows = (limit = config.topLimit) => {
+            const result = {};
+            try {
+                topGroups.forEach((groupMap, group) => {
+                    result[group] = Array.from(groupMap.entries())
+                        .sort((a, b) => b[1] - a[1])
+                        .slice(0, limit)
+                        .map(([label, count]) => ({ label, count }));
+                });
+            } catch (_) {}
+            return result;
+        };
+
+        const exposeDumpSnapshot = (snapshot, metadata = {}) => {
+            if (!snapshot || typeof snapshot !== 'object') return snapshot;
+            const exposed = Object.assign({}, snapshot, {
+                dumpedAt: new Date().toISOString(),
+                dumpMetadata: Object.assign({}, metadata),
+            });
+            lastDumpSnapshot = exposed;
+            dumpHistory.push(exposed);
+            while (dumpHistory.length > DUMP_HISTORY_LIMIT) dumpHistory.shift();
+            try { globalScope.LiveTranslatorPerfLastDump = exposed; } catch (_) {}
+            try { globalScope.LiveTranslatorPerfDumpHistory = dumpHistory; } catch (_) {}
+            return exposed;
+        };
+
+        const safeFileTimestamp = () => {
+            try {
+                return new Date().toISOString().replace(/[:.]/g, '-');
+            } catch (_) {
+                return String(Date.now());
+            }
+        };
+
+        const resolveNodeFileApi = () => {
+            try {
+                const req = typeof require === 'function'
+                    ? require
+                    : (globalScope && typeof globalScope.require === 'function' ? globalScope.require : null);
+                if (!req) return null;
+                const fs = req('fs');
+                const path = req('path');
+                return { fs, path };
+            } catch (_) {
+                return null;
+            }
+        };
+
+        const defaultDumpPath = (prefix = 'live-translator-perf') => {
+            const nodeApi = resolveNodeFileApi();
+            if (!nodeApi || !nodeApi.path) return null;
+            let base = '.';
+            try {
+                if (typeof process !== 'undefined' && process && typeof process.cwd === 'function') {
+                    base = process.cwd();
+                }
+            } catch (_) {}
+            return nodeApi.path.join(base, `${prefix}-${safeFileTimestamp()}.json`);
+        };
+
+        const autoDumpPath = () => {
+            const nodeApi = resolveNodeFileApi();
+            if (!nodeApi || !nodeApi.path) return null;
+            const directory = config && config.autoDumpDirectory ? config.autoDumpDirectory : '';
+            if (directory) {
+                return nodeApi.path.join(directory, `live-translator-perf-auto-${safeFileTimestamp()}.json`);
+            }
+            return defaultDumpPath('live-translator-perf-auto');
+        };
+
+        const writeProfilerSnapshotToFile = (snapshot, filePath = null) => {
+            const nodeApi = resolveNodeFileApi();
+            if (!nodeApi || !nodeApi.fs) {
+                throw new Error('Node fs API is unavailable in this runtime.');
+            }
+            const target = filePath || defaultDumpPath();
+            if (!target) {
+                throw new Error('Unable to resolve a profiler dump path.');
+            }
+            const payload = JSON.stringify(snapshot, null, 2);
+            try {
+                if (nodeApi.path && typeof nodeApi.path.dirname === 'function') {
+                    const dir = nodeApi.path.dirname(target);
+                    if (dir && dir !== '.' && dir !== target && !nodeApi.fs.existsSync(dir)) {
+                        nodeApi.fs.mkdirSync(dir, { recursive: true });
+                    }
+                }
+            } catch (_) {}
+            nodeApi.fs.writeFileSync(target, payload, 'utf8');
+            return target;
+        };
+
+        const hasFrameData = (frame) => {
+            if (!frame) return false;
+            if (frame.slow) return true;
+            if (frame.counters && Object.keys(frame.counters).length) return true;
+            if (frame.timings && Object.keys(frame.timings).length) return true;
+            return false;
+        };
+
+        const ensureFrame = () => {
+            if (!currentFrame) {
+                currentFrame = {
+                    id: frameSeq,
+                    startedAt: now(),
+                    durationMs: 0,
+                    slow: false,
+                    dropped: false,
+                    counters: Object.create(null),
+                    timings: Object.create(null),
+                };
+            }
+            return currentFrame;
+        };
+
+        const commitFrame = (timestamp, durationMs = 0) => {
+            if (currentFrame) {
+                currentFrame.durationMs = Number.isFinite(durationMs) && durationMs > 0
+                    ? durationMs
+                    : Math.max(0, timestamp - currentFrame.startedAt);
+                currentFrame.slow = currentFrame.durationMs >= config.slowFrameMs;
+                currentFrame.dropped = config.targetFrameMs > 0
+                    && currentFrame.durationMs >= config.targetFrameMs * config.droppedFrameMultiplier;
+                if (currentFrame.dropped) {
+                    currentFrame.slow = true;
+                    currentFrame.frameBudgetMs = config.targetFrameMs;
+                }
+                if (hasFrameData(currentFrame)) {
+                    frames.push(currentFrame);
+                    while (frames.length > config.rollingFrames) frames.shift();
+                }
+                if (currentFrame.slow && config.autoDumpSlowFrames) {
+                    const elapsed = timestamp - lastAutoDumpAt;
+                    if (elapsed >= config.autoDumpIntervalMs) {
+                        lastAutoDumpAt = timestamp;
+                        try {
+                            const reason = currentFrame.dropped ? 'dropped frame' : 'slow frame';
+                            const snapshot = api.dump({
+                                includeFrames: config.autoDumpIncludeFrames,
+                                topLimit: config.topLimit,
+                                metadata: {
+                                    type: 'auto',
+                                    reason,
+                                    frameDurationMs: Math.round(currentFrame.durationMs * 100) / 100,
+                                    frameId: currentFrame.id,
+                                },
+                            });
+                            if (config.autoDumpToFile) {
+                                try {
+                                    const targetPath = autoDumpPath();
+                                    if (snapshot.dumpMetadata && targetPath) snapshot.dumpMetadata.filePath = targetPath;
+                                    const filePath = writeProfilerSnapshotToFile(snapshot, targetPath);
+                                    if (snapshot.dumpMetadata) snapshot.dumpMetadata.filePath = filePath;
+                                    snapshot.autoDumpFilePath = filePath;
+                                } catch (writeError) {
+                                    const message = writeError && writeError.message ? writeError.message : String(writeError || 'unknown error');
+                                    if (snapshot.dumpMetadata) snapshot.dumpMetadata.writeError = message;
+                                    if (typeof console !== 'undefined' && console && typeof console.warn === 'function') {
+                                        console.warn(`[LiveTranslatorPerf] Auto dump file write failed: ${message}`, writeError);
+                                    }
+                                }
+                            }
+                            if (typeof console !== 'undefined' && console && typeof console.warn === 'function') {
+                                const fileSuffix = snapshot && snapshot.autoDumpFilePath ? ` -> ${snapshot.autoDumpFilePath}` : '';
+                                console.warn(`[LiveTranslatorPerf] Auto dump: ${reason} ${Math.round(currentFrame.durationMs * 100) / 100}ms${fileSuffix}`, snapshot);
+                            }
+                        } catch (_) {}
+                    }
+                }
+            }
+            frameSeq++;
+            currentFrame = {
+                id: frameSeq,
+                startedAt: timestamp,
+                durationMs: 0,
+                slow: false,
+                dropped: false,
+                counters: Object.create(null),
+                timings: Object.create(null),
+            };
+        };
+
+        const scheduleFrameLoop = () => {
+            if (!enabled || rafHandle) return;
+            const tick = (timestamp) => {
+                rafHandle = null;
+                if (!enabled) return;
+                const ts = Number.isFinite(Number(timestamp)) ? Number(timestamp) : now();
+                if (!lastRafAt) {
+                    lastRafAt = ts;
+                    ensureFrame().startedAt = ts;
+                } else {
+                    const delta = Math.max(0, ts - lastRafAt);
+                    lastRafAt = ts;
+                    commitFrame(ts, delta);
+                }
+                scheduleFrameLoop();
+            };
+            rafHandle = requestFrame(tick);
+        };
+
+        const cancelFrameLoop = () => {
+            if (rafHandle) cancelFrame(rafHandle);
+            rafHandle = null;
+            lastRafAt = 0;
+        };
+
+        const addTiming = (target, name, ms) => {
+            if (!target || !name || !Number.isFinite(ms) || ms < 0) return;
+            const existingValue = target[name] || { count: 0, totalMs: 0, maxMs: 0 };
+            existingValue.count += 1;
+            existingValue.totalMs += ms;
+            existingValue.maxMs = Math.max(existingValue.maxMs || 0, ms);
+            target[name] = existingValue;
+        };
+
+        const api = {
+            __trProfilerApi: true,
+            isEnabled: () => enabled,
+            now,
+            configure(rawOptions = {}) {
+                config = resolveOptions(rawOptions);
+                if (config.enabled) {
+                    api.enable(config);
+                } else if (enabled) {
+                    api.disable();
+                }
+                return api;
+            },
+            enable(rawOptions = {}) {
+                const merged = Object.assign({}, config, rawOptions || {}, { enabled: true });
+                config = resolveOptions(merged);
+                enabled = true;
+                startedAt = now();
+                lastAutoDumpAt = -Infinity;
+                ensureFrame();
+                scheduleFrameLoop();
+                return api;
+            },
+            startSlowFrameCapture(rawOptions = {}) {
+                api.disable();
+                api.reset();
+                return api.enable(Object.assign({
+                    rollingFrames: 1200,
+                    slowFrameMs: 1000 / 60,
+                    targetFrameMs: 1000 / 60,
+                    droppedFrameMultiplier: 2,
+                    autoDumpSlowFrames: true,
+                    autoDumpIncludeFrames: true,
+                    autoDumpToFile: true,
+                    autoDumpIntervalMs: 5000,
+                    topLimit: 25,
+                }, rawOptions || {}));
+            },
+            disable() {
+                enabled = false;
+                cancelFrameLoop();
+                return api;
+            },
+            reset() {
+                frames.length = 0;
+                totals.clear();
+                timings.clear();
+                topGroups.clear();
+                dumpHistory.length = 0;
+                lastDumpSnapshot = null;
+                try { globalScope.LiveTranslatorPerfLastDump = null; } catch (_) {}
+                try { globalScope.LiveTranslatorPerfDumpHistory = dumpHistory; } catch (_) {}
+                currentFrame = null;
+                frameSeq = 0;
+                startedAt = now();
+                lastAutoDumpAt = -Infinity;
+                if (enabled) {
+                    ensureFrame();
+                    scheduleFrameLoop();
+                }
+                return api;
+            },
+            count(name, amount = 1) {
+                if (!enabled || !name) return;
+                const value = Number.isFinite(Number(amount)) ? Number(amount) : 1;
+                const frame = ensureFrame();
+                frame.counters[name] = (frame.counters[name] || 0) + value;
+                totals.set(name, (totals.get(name) || 0) + value);
+            },
+            time(name, ms) {
+                if (!enabled || !name || !Number.isFinite(ms) || ms < 0) return;
+                const frame = ensureFrame();
+                addTiming(frame.timings, name, ms);
+                const existingValue = timings.get(name) || { count: 0, totalMs: 0, maxMs: 0 };
+                existingValue.count += 1;
+                existingValue.totalMs += ms;
+                existingValue.maxMs = Math.max(existingValue.maxMs || 0, ms);
+                timings.set(name, existingValue);
+            },
+            top(group, label, amount = 1) {
+                if (!enabled || !group || label === null || label === undefined) return;
+                const text = String(label || 'unknown');
+                const value = Number.isFinite(Number(amount)) ? Number(amount) : 1;
+                let groupMap = topGroups.get(group);
+                if (!groupMap) {
+                    groupMap = new Map();
+                    topGroups.set(group, groupMap);
+                }
+                groupMap.set(text, (groupMap.get(text) || 0) + value);
+            },
+            measure(name, fn) {
+                if (typeof fn !== 'function') return undefined;
+                if (!enabled) return fn();
+                const start = now();
+                try {
+                    return fn();
+                } finally {
+                    api.time(name, now() - start);
+                }
+            },
+            snapshot(optionsArg = {}) {
+                const opts = optionsArg && typeof optionsArg === 'object' ? optionsArg : {};
+                const includeFrames = opts.includeFrames !== false;
+                const topLimit = Number.isFinite(Number(opts.topLimit)) ? Number(opts.topLimit) : config.topLimit;
+                const elapsedMs = Math.max(0, now() - startedAt);
+                const recentFrames = includeFrames
+                    ? frames.slice(-Math.min(frames.length, config.rollingFrames)).map((frame) => ({
+                        id: frame.id,
+                        durationMs: Math.round((frame.durationMs || 0) * 100) / 100,
+                        slow: !!frame.slow,
+                        dropped: !!frame.dropped,
+                        frameBudgetMs: frame.frameBudgetMs,
+                        counters: Object.assign({}, frame.counters),
+                        timings: timingRows(new Map(Object.entries(frame.timings || {}))),
+                    }))
+                    : undefined;
+                return {
+                    enabled,
+                    options: Object.assign({}, config),
+                    elapsedMs: Math.round(elapsedMs),
+                    frames: frames.length,
+                    slowFrames: frames.filter(frame => frame && frame.slow).length,
+                    droppedFrames: frames.filter(frame => frame && frame.dropped).length,
+                    totals: toPlainCounterObject(totals),
+                    timings: timingRows(timings),
+                    top: topRows(topLimit),
+                    recentFrames,
+                };
+            },
+            dump(optionsArg = {}) {
+                const opts = optionsArg && typeof optionsArg === 'object' ? optionsArg : {};
+                const snapshot = exposeDumpSnapshot(api.snapshot(opts), opts.metadata || { type: 'manual' });
+                try {
+                    if (typeof console !== 'undefined' && console) {
+                        const group = console.groupCollapsed || console.group;
+                        if (typeof group === 'function') group.call(console, '[LiveTranslatorPerf]');
+                        if (typeof console.log === 'function') {
+                            console.log('snapshot', snapshot);
+                        }
+                        if (typeof console.table === 'function') {
+                            console.table(snapshot.timings);
+                            console.table(Object.keys(snapshot.totals).map(name => ({ name, count: snapshot.totals[name] })));
+                            Object.keys(snapshot.top || {}).forEach((groupName) => {
+                                console.table(snapshot.top[groupName].map(row => Object.assign({ group: groupName }, row)));
+                            });
+                        } else if (typeof console.log === 'function') {
+                            console.log(snapshot);
+                        }
+                        if (typeof console.groupEnd === 'function') console.groupEnd();
+                    }
+                } catch (_) {}
+                return snapshot;
+            },
+            lastDump() {
+                return lastDumpSnapshot;
+            },
+            dumpHistory() {
+                return dumpHistory.slice();
+            },
+            toJson(snapshot = lastDumpSnapshot) {
+                return JSON.stringify(snapshot || api.snapshot(), null, 2);
+            },
+            writeLastToFile(filePath = null) {
+                const snapshot = lastDumpSnapshot || exposeDumpSnapshot(api.snapshot(), { type: 'writeLastToFile' });
+                return writeProfilerSnapshotToFile(snapshot, filePath);
+            },
+            writeSnapshotToFile(snapshot, filePath = null) {
+                return writeProfilerSnapshotToFile(snapshot || api.snapshot(), filePath);
+            },
+        };
+
+        globalScope.LiveTranslatorPerf = api;
+        try { globalScope.LiveTranslatorPerfDumpHistory = dumpHistory; } catch (_) {}
+        if (enabled) {
+            api.enable(config);
+        }
+        return api;
+    }
+
     globalScope.LiveTranslatorModules.createTextHookInstallers = function createTextHookInstallers(options = {}) {
         const {
             logger,
@@ -52,6 +567,11 @@
             || typeof restoreControlCodes !== 'function') {
             throw new Error('[TextHooks] control code helpers are required (strip/prepare/restore).');
         }
+
+        const perf = createLiveTranslatorPerf({
+            settings,
+            logger,
+        });
 
     function getGameMessageForWindow(windowInstance) {
         try {
@@ -1599,13 +2119,17 @@
             const SPRITE_GLYPH_MAX_DELAY_MS = 650;
             const SPRITE_GLYPH_SINGLE_HOLD_MS = 900;
             const SPRITE_GLYPH_MAX_PENDING_MS = 5000;
+            const SPRITE_RUN_STABILITY_MS = 50;
+            const SPRITE_RUN_MAX_DEFER_MS = 500;
             const perCharRegex = PER_CHAR_MARK ? new RegExp(PER_CHAR_MARK, 'g') : null;
             const VALID_CANVAS_TEXT_ALIGN = new Set(['left', 'right', 'center', 'start', 'end']);
             const hotDiagnosticLast = new Map();
             const HOT_DIAGNOSTIC_LIMIT = 500;
             const spriteTextParents = typeof WeakMap !== 'undefined' ? new WeakMap() : null;
+            const spriteBitmapParents = typeof WeakMap !== 'undefined' ? new WeakMap() : null;
             let smallTextGlobalDepth = 0;
             let normalCharGlobalDepth = 0;
+            perf.count('bitmap.hook.init');
 
             const normalizeCanvasTextAlign = (align) => {
                 const value = String(align || '').toLowerCase();
@@ -1919,31 +2443,74 @@
                 fragment && (fragment.visibleText || fragment.rawText) ? (fragment.visibleText || fragment.rawText) : ''
             )).trim();
 
-            const isStandaloneSpriteGlyphCandidate = (bitmap, fragment, owner) => {
-                if (!bitmap || !fragment) return false;
+            const createStandaloneSpriteGlyphFragment = (
+                bitmap,
+                methodName,
+                text,
+                rawX,
+                rawY,
+                maxWidth,
+                lineHeight,
+                align,
+                owner,
+                ownerType,
+                debugCallSite
+            ) => {
+                if (!bitmap) return null;
                 if (owner || hasDedicatedOwnerHook(owner) || bitmap._trHasDedicatedTextHook || bitmap._trMessageContents) {
-                    return false;
+                    return null;
                 }
-                const visible = fragmentVisibleText(fragment);
-                if (!visible || /\s/u.test(visible) || textUnitCount(visible) !== 1) return false;
+                const visible = sanitizePerChar(stripRpgmEscapes(text || '')).trim();
+                if (!visible || /\s/u.test(visible) || textUnitCount(visible) !== 1) return null;
 
-                const lineHeight = firstPositiveNumber(fragment.lineHeight, fragment.drawState && fragment.drawState.fontSize, bitmap.fontSize, 24);
+                const numericX = Number(rawX);
+                const numericY = Number(rawY);
+                const numericLineHeight = Number(lineHeight);
+                const numericMaxWidth = Number(maxWidth);
+                const safeX = Number.isFinite(numericX) ? numericX : 0;
+                const safeY = Number.isFinite(numericY) ? numericY : 0;
+                const resolvedLineHeight = firstPositiveNumber(
+                    numericLineHeight,
+                    bitmap.fontSize,
+                    24
+                );
                 const bitmapWidth = Number(bitmap.width);
                 const bitmapHeight = Number(bitmap.height);
                 if (!Number.isFinite(bitmapWidth) || !Number.isFinite(bitmapHeight) || bitmapWidth <= 0 || bitmapHeight <= 0) {
-                    return false;
+                    return null;
                 }
 
-                const maxWidth = Math.max(96, lineHeight * 4);
-                const maxHeight = Math.max(96, lineHeight * 3);
-                if (bitmapWidth > maxWidth || bitmapHeight > maxHeight) return false;
+                const maxBitmapWidth = Math.max(96, resolvedLineHeight * 4);
+                const maxBitmapHeight = Math.max(96, resolvedLineHeight * 3);
+                if (bitmapWidth > maxBitmapWidth || bitmapHeight > maxBitmapHeight) return null;
 
-                const textX = Number(fragment.x);
-                const textY = Number(fragment.y);
-                const offsetLimit = Math.max(8, lineHeight);
-                if (Number.isFinite(textX) && Math.abs(textX) > offsetLimit) return false;
-                if (Number.isFinite(textY) && Math.abs(textY) > offsetLimit) return false;
-                return true;
+                const offsetLimit = Math.max(8, resolvedLineHeight);
+                if (Number.isFinite(numericX) && Math.abs(numericX) > offsetLimit) return null;
+                if (Number.isFinite(numericY) && Math.abs(numericY) > offsetLimit) return null;
+
+                const drawState = captureBitmapDrawState(bitmap);
+                const resolvedMaxWidth = Number.isFinite(numericMaxWidth) && numericMaxWidth > 0
+                    ? numericMaxWidth
+                    : bitmapWidth;
+                const width = firstPositiveNumber(bitmapWidth, resolvedMaxWidth, resolvedLineHeight, 1);
+                return {
+                    bitmap,
+                    methodName,
+                    rawText: String(text ?? ''),
+                    visibleText: stripRpgmEscapes(String(text ?? '')),
+                    x: safeX,
+                    y: safeY,
+                    maxWidth: resolvedMaxWidth,
+                    lineHeight: resolvedLineHeight,
+                    align,
+                    width,
+                    ownerType,
+                    drawState,
+                    fontSignature: computeFontSignature(drawState, bitmap),
+                    timestamp: Date.now(),
+                    debugCallSite,
+                    standaloneSpriteGlyphCandidate: true,
+                };
             };
 
             const ensureBitmapState = (bitmap) => {
@@ -1959,10 +2526,15 @@
                         renderOps: [],
                         nativeTextOps: new Map(),
                         drawOrderCounter: 0,
+                        spriteGlyphCandidates: [],
+                        forceBitmapGlyphFragments: false,
                     };
                     bitmapStates.set(bitmap, state);
                 } else if (!state.instanceMap) {
                     state.instanceMap = new Map();
+                }
+                if (!Array.isArray(state.spriteGlyphCandidates)) {
+                    state.spriteGlyphCandidates = [];
                 }
                 if (!Array.isArray(state.renderOps)) {
                     state.renderOps = [];
@@ -2002,6 +2574,67 @@
                 return parts.join(' ');
             };
 
+            const clearStandaloneSpriteGlyphCandidateReference = (bitmap, fragment) => {
+                if (!bitmap || !fragment) return false;
+                let removed = false;
+                const state = bitmapStates.get(bitmap);
+                if (state && Array.isArray(state.spriteGlyphCandidates)) {
+                    const before = state.spriteGlyphCandidates.length;
+                    state.spriteGlyphCandidates = state.spriteGlyphCandidates.filter((candidate) => candidate !== fragment);
+                    removed = state.spriteGlyphCandidates.length !== before;
+                }
+                try {
+                    if (bitmap._trStandaloneSpriteGlyphFragment === fragment) {
+                        bitmap._trStandaloneSpriteGlyphFragment = null;
+                    }
+                } catch (_) {}
+                return removed;
+            };
+
+            const getStandaloneSpriteGlyphCandidates = (bitmap, options = {}) => {
+                if (!bitmap) return [];
+                const includeClaimed = options.includeClaimed !== false;
+                const now = Date.now();
+                const state = bitmapStates.get(bitmap);
+                let candidates = state && Array.isArray(state.spriteGlyphCandidates)
+                    ? state.spriteGlyphCandidates.slice()
+                    : [];
+                try {
+                    const legacy = bitmap._trStandaloneSpriteGlyphFragment || null;
+                    if (legacy && candidates.indexOf(legacy) < 0) {
+                        candidates.push(legacy);
+                    }
+                } catch (_) {}
+
+                const valid = candidates.filter((candidate) => {
+                    if (!candidate || !candidate.standaloneSpriteGlyphCandidate) return false;
+                    if (candidate._trSpriteGlyphCanceled || candidate._trSpriteGlyphFallbackQueued) return false;
+                    const age = now - (candidate.timestamp || now);
+                    return age >= 0 && age <= SPRITE_GLYPH_MAX_PENDING_MS;
+                });
+                const active = includeClaimed
+                    ? valid
+                    : valid.filter((candidate) => !candidate._trSpriteGlyphClaimed);
+
+                if (state) {
+                    state.spriteGlyphCandidates = valid;
+                }
+                const latestUnclaimed = valid.filter((candidate) => !candidate._trSpriteGlyphClaimed).slice(-1)[0] || null;
+                try { bitmap._trStandaloneSpriteGlyphFragment = latestUnclaimed; } catch (_) {}
+                return active;
+            };
+
+            const rememberStandaloneSpriteGlyphCandidate = (bitmap, fragment) => {
+                const state = ensureBitmapState(bitmap);
+                if (!state || !fragment) return [];
+                getStandaloneSpriteGlyphCandidates(bitmap, { includeClaimed: true });
+                if (state.spriteGlyphCandidates.indexOf(fragment) < 0) {
+                    state.spriteGlyphCandidates.push(fragment);
+                }
+                try { bitmap._trStandaloneSpriteGlyphFragment = fragment; } catch (_) {}
+                return getStandaloneSpriteGlyphCandidates(bitmap, { includeClaimed: true });
+            };
+
             const nextDrawOrder = (state) => {
                 if (!state) return 0;
                 state.drawOrderCounter = (state.drawOrderCounter || 0) + 1;
@@ -2014,7 +2647,11 @@
                 let measured = 0;
                 try {
                     if (bitmap && typeof bitmap.measureTextWidth === 'function') {
+                        const perfMeasureStart = perf.isEnabled() ? perf.now() : 0;
                         const w = bitmap.measureTextWidth(cleaned);
+                        if (perfMeasureStart) {
+                            perf.time('bitmap.measureTextWidth.ms', perf.now() - perfMeasureStart);
+                        }
                         if (Number.isFinite(w)) measured = Math.ceil(w);
                     }
                 } catch (_) { /* ignore */ }
@@ -2099,8 +2736,11 @@
                     recordedAt: Date.now(),
                 };
                 state.renderOps.push(record);
+                perf.count('bitmap.renderOp.recorded');
+                perf.top('bitmap.renderOp.method', op.methodName);
                 if (state.renderOps.length > 256) {
                     const removed = state.renderOps.splice(0, state.renderOps.length - 256);
+                    perf.count('bitmap.renderOp.pruned', removed.length);
                     if (removed.length && state.nativeTextOps) {
                         removed.forEach((item) => {
                             if (item && item.nativeTextKey && state.nativeTextOps.get(item.nativeTextKey) === item) {
@@ -2157,6 +2797,8 @@
                     existing.textPreview = entry.trimmedText || entry.rawText || '';
                     existing.ownerType = entry.ownerType || existing.ownerType;
                     existing.debugCallSite = entry.debugCallSite || existing.debugCallSite || '';
+                    perf.count('bitmap.nativeTextOp.updated');
+                    perf.top('bitmap.owner', existing.ownerType || 'Bitmap');
                     return existing;
                 }
                 const record = {
@@ -2175,8 +2817,11 @@
                 if (state.nativeTextOps) {
                     state.nativeTextOps.set(entry.key, record);
                 }
+                perf.count('bitmap.nativeTextOp.recorded');
+                perf.top('bitmap.owner', record.ownerType || 'Bitmap');
                 if (state.renderOps.length > 256) {
                     const removed = state.renderOps.splice(0, state.renderOps.length - 256);
+                    perf.count('bitmap.renderOp.pruned', removed.length);
                     if (removed.length && state.nativeTextOps) {
                         removed.forEach((item) => {
                             if (item && item.nativeTextKey && state.nativeTextOps.get(item.nativeTextKey) === item) {
@@ -2197,15 +2842,24 @@
                 const drawFn = bitmap[drawMethodName] || bitmap.drawText;
                 if (typeof drawFn !== 'function') return;
                 const safeText = sanitizeBitmapDrawText(text, drawMethodName);
-                drawFn.call(
-                    bitmap,
-                    safeText,
-                    entry.drawParams.x,
-                    entry.drawParams.y,
-                    entry.drawParams.maxWidth,
-                    entry.drawParams.lineHeight,
-                    entry.drawParams.align
-                );
+                perf.count('bitmap.drawTextValue.calls');
+                perf.top('bitmap.drawTextValue.method', drawMethodName);
+                const perfDrawStart = perf.isEnabled() ? perf.now() : 0;
+                try {
+                    drawFn.call(
+                        bitmap,
+                        safeText,
+                        entry.drawParams.x,
+                        entry.drawParams.y,
+                        entry.drawParams.maxWidth,
+                        entry.drawParams.lineHeight,
+                        entry.drawParams.align
+                    );
+                } finally {
+                    if (perfDrawStart) {
+                        perf.time('bitmap.drawTextValue.ms', perf.now() - perfDrawStart);
+                    }
+                }
             };
 
             const replayBitmapEntry = (bitmap, entry) => {
@@ -2218,40 +2872,50 @@
 
             const replayBitmapRenderOp = (bitmap, op) => {
                 if (!bitmap || !op || !op.methodName) return;
-                switch (op.methodName) {
-                case 'drawText':
-                case 'drawTextS':
-                case 'drawTextM': {
-                    const drawMethodName = typeof bitmap[op.methodName] === 'function' ? op.methodName : 'drawText';
-                    const drawFn = bitmap[drawMethodName] || bitmap.drawText;
-                    if (typeof drawFn !== 'function') break;
-                    try { applyBitmapDrawState(bitmap, op.drawState); } catch (_) {}
-                    const drawArgs = Array.isArray(op.args) ? op.args.slice() : [];
-                    if (drawArgs.length > 0) {
-                        drawArgs[0] = sanitizeBitmapDrawText(drawArgs[0], drawMethodName);
+                perf.count('bitmap.replay.renderOp');
+                perf.top('bitmap.replay.method', op.methodName);
+                const perfReplayStart = perf.isEnabled() ? perf.now() : 0;
+                try {
+                    switch (op.methodName) {
+                    case 'drawText':
+                    case 'drawTextS':
+                    case 'drawTextM': {
+                        const drawMethodName = typeof bitmap[op.methodName] === 'function' ? op.methodName : 'drawText';
+                        const drawFn = bitmap[drawMethodName] || bitmap.drawText;
+                        if (typeof drawFn !== 'function') break;
+                        try { applyBitmapDrawState(bitmap, op.drawState); } catch (_) {}
+                        const drawArgs = Array.isArray(op.args) ? op.args.slice() : [];
+                        if (drawArgs.length > 0) {
+                            drawArgs[0] = sanitizeBitmapDrawText(drawArgs[0], drawMethodName);
+                        }
+                        drawFn.call(bitmap, ...drawArgs);
+                        break;
                     }
-                    drawFn.call(bitmap, ...drawArgs);
-                    break;
-                }
-                case 'fillRect':
-                    if (typeof bitmap.fillRect === 'function') bitmap.fillRect(...op.args);
-                    break;
-                case 'gradientFillRect':
-                    if (typeof bitmap.gradientFillRect === 'function') bitmap.gradientFillRect(...op.args);
-                    break;
-                case 'fillAll':
-                    if (typeof bitmap.fillAll === 'function') bitmap.fillAll(...op.args);
-                    break;
-                case 'blt':
-                    if (typeof bitmap.blt === 'function') bitmap.blt(...op.args);
-                    break;
-                default:
-                    break;
+                    case 'fillRect':
+                        if (typeof bitmap.fillRect === 'function') bitmap.fillRect(...op.args);
+                        break;
+                    case 'gradientFillRect':
+                        if (typeof bitmap.gradientFillRect === 'function') bitmap.gradientFillRect(...op.args);
+                        break;
+                    case 'fillAll':
+                        if (typeof bitmap.fillAll === 'function') bitmap.fillAll(...op.args);
+                        break;
+                    case 'blt':
+                        if (typeof bitmap.blt === 'function') bitmap.blt(...op.args);
+                        break;
+                    default:
+                        break;
+                    }
+                } finally {
+                    if (perfReplayStart) {
+                        perf.time('bitmap.replay.renderOp.ms', perf.now() - perfReplayStart);
+                    }
                 }
             };
 
             const collectReplayItems = (state, rect, currentEntry, relation) => {
                 if (!state || !rect || !isValidRect(rect) || typeof relation !== 'function') return [];
+                const perfCollectStart = perf.isEnabled() ? perf.now() : 0;
                 const items = [];
                 if (Array.isArray(state.renderOps)) {
                     state.renderOps.forEach((op) => {
@@ -2270,6 +2934,11 @@
                     });
                 }
                 items.sort((a, b) => (a.drawOrder || 0) - (b.drawOrder || 0));
+                perf.count('bitmap.collectReplay.calls');
+                perf.count('bitmap.collectReplay.items', items.length);
+                if (perfCollectStart) {
+                    perf.time('bitmap.collectReplay.ms', perf.now() - perfCollectStart);
+                }
                 return items;
             };
 
@@ -2294,14 +2963,22 @@
 
             const replayBitmapItems = (bitmap, items) => {
                 if (!bitmap || !Array.isArray(items) || items.length === 0) return;
-                items.forEach((item) => {
-                    if (!item) return;
-                    if (item.type === 'renderOp') {
-                        replayBitmapRenderOp(bitmap, item.op);
-                    } else if (item.type === 'text') {
-                        replayBitmapEntry(bitmap, item.entry);
+                perf.count('bitmap.replay.items', items.length);
+                const perfReplayStart = perf.isEnabled() ? perf.now() : 0;
+                try {
+                    items.forEach((item) => {
+                        if (!item) return;
+                        if (item.type === 'renderOp') {
+                            replayBitmapRenderOp(bitmap, item.op);
+                        } else if (item.type === 'text') {
+                            replayBitmapEntry(bitmap, item.entry);
+                        }
+                    });
+                } finally {
+                    if (perfReplayStart) {
+                        perf.time('bitmap.replay.items.ms', perf.now() - perfReplayStart);
                     }
-                });
+                }
             };
 
             const pushInvalidationGuard = (bitmap, guard) => {
@@ -2366,6 +3043,9 @@
 
             const markEntryStale = (state, entry, reason, details = null) => {
                 if (!state || !entry || entry._trStale) return;
+                perf.count('bitmap.entry.canceled');
+                perf.top('bitmap.cancel.reason', reason || 'unknown');
+                perf.top('bitmap.owner', entry.ownerType || 'Bitmap');
                 entry._trStale = true;
                 entry.canceledReason = reason;
                 entry.canceledAt = Date.now();
@@ -2444,6 +3124,7 @@
                     }
                 }
                 if (removed) {
+                    perf.count('bitmap.invalidate.removedEntries', removed);
                     discardFragmentsInRect(state, targetRect, reason, skipEntry);
                 }
                 return removed;
@@ -2543,10 +3224,43 @@
                 return removed.length;
             };
 
+            const cancelStandaloneSpriteGlyphCandidate = (bitmap, rect, reason) => {
+                if (!bitmap) return false;
+                const targetRect = rect && isValidRect(rect) ? rect : null;
+                const candidates = getStandaloneSpriteGlyphCandidates(bitmap, { includeClaimed: true });
+                let canceled = 0;
+                for (const fragment of candidates) {
+                    const candidateRect = fragmentRect(fragment);
+                    if (targetRect && candidateRect && !rectanglesOverlap(targetRect, candidateRect)) continue;
+
+                    if (fragment._trSpriteGlyphFallbackTimer) {
+                        try { clearTimeout(fragment._trSpriteGlyphFallbackTimer); } catch (_) {}
+                        fragment._trSpriteGlyphFallbackTimer = null;
+                    }
+                    if (fragment._trSpriteGlyphClaimed) {
+                        releaseSpriteGlyphClaim(fragment, reason);
+                    }
+                    fragment._trSpriteGlyphCanceled = true;
+                    clearStandaloneSpriteGlyphCandidateReference(bitmap, fragment);
+                    canceled++;
+                }
+                if (canceled > 0) {
+                    perf.count('spriteText.glyphCandidate.canceled', canceled);
+                    perf.top('spriteText.glyphCandidate.cancelReason', reason || 'unknown');
+                }
+                return canceled > 0;
+            };
+
             const handleBitmapInvalidation = (bitmap, rect, reason, options = {}) => {
                 if (!bitmap) return;
+                perf.count('bitmap.invalidate.calls');
+                perf.top('bitmap.invalidate.reason', reason || 'unknown');
                 const skipEntry = bitmap._trActiveRedrawEntry || null;
                 const state = bitmapStates.get(bitmap);
+                if (state) {
+                    state.forceBitmapGlyphFragments = false;
+                }
+                cancelStandaloneSpriteGlyphCandidate(bitmap, rect, reason);
 
                 try {
                     if (state && Array.isArray(state.fragments) && state.fragments.length > 0) {
@@ -2619,6 +3333,11 @@
                     if (isSmallTextScratchBitmap(this)) {
                         return result;
                     }
+                    if (isSmallTextDrawActive(this)) {
+                        perf.count('bitmap.invalidate.bypass.smallText');
+                        perf.top('bitmap.invalidate.method', methodName);
+                        return result;
+                    }
                     if (this && this._trBitmapReplayDepth && this._trBitmapReplayDepth > 0) {
                         if (shouldTraceBitmapDiagnostics() && rect !== false) {
                             const replayRect = rect && rect !== 'FULL' && isValidRect(rect) ? rect : null;
@@ -2627,6 +3346,10 @@
                         return result;
                     }
                     if (rect !== false) {
+                        perf.count('bitmap.invalidate.observed');
+                        perf.top('bitmap.invalidate.method', methodName);
+                        const perfInvalidateStart = perf.isEnabled() ? perf.now() : 0;
+                        try {
                         let resolvedRect = null;
                         if (rect === 'FULL') {
                             resolvedRect = null;
@@ -2672,11 +3395,18 @@
                             }
                             recordBitmapRenderOp(this, op);
                         }
+                        } finally {
+                            if (perfInvalidateStart) {
+                                perf.time('bitmap.invalidate.ms', perf.now() - perfInvalidateStart);
+                            }
+                        }
                     }
                     return result;
                 };
                 wrapped.__trInvalidationWrapped = true;
                 Bitmap.prototype[methodName] = wrapped;
+                perf.count('bitmap.invalidate.wrapperInstalled');
+                perf.top('bitmap.invalidate.wrapperMethod', methodName);
                 diag(`[bitmap/invalidate-hook] Installed for ${methodName}`);
             };
 
@@ -2761,6 +3491,7 @@
             const flushAggregatedLines = (bitmap, reason = 'manual', targetRect = null) => {
                 const state = bitmapStates.get(bitmap);
                 if (!state || !Array.isArray(state.fragments) || state.fragments.length === 0) return;
+                const perfFlushStart = perf.isEnabled() ? perf.now() : 0;
                 let fragments;
                 if (targetRect && isValidRect(targetRect)) {
                     const remaining = [];
@@ -2781,6 +3512,9 @@
                     fragments = state.fragments.splice(0, state.fragments.length);
                     diag(`[bitmap/flush] reason=${reason} fragments=${fragments.length}`);
                 }
+                perf.count('bitmap.flush.calls');
+                perf.count('bitmap.flush.fragments', fragments.length);
+                perf.top('bitmap.flush.reason', reason || 'unknown');
 
                 const lines = new Map();
                 for (const fragment of fragments) {
@@ -2788,6 +3522,7 @@
                     if (!lines.has(yKey)) lines.set(yKey, []);
                     lines.get(yKey).push(fragment);
                 }
+                perf.count('bitmap.flush.lines', lines.size);
 
                 const now = Date.now();
                 const entries = [];
@@ -2898,11 +3633,15 @@
                 });
 
                 const activationQueue = [];
+                perf.count('bitmap.flush.entries', entries.length);
                 for (const entry of entries) {
                     registerBitmapEntry(entry, activationQueue);
                 }
                 for (const entry of activationQueue) {
                     activateBitmapEntryTranslation(entry);
+                }
+                if (perfFlushStart) {
+                    perf.time('bitmap.flush.ms', perf.now() - perfFlushStart);
                 }
             };
 
@@ -2910,12 +3649,65 @@
                 const state = bitmapStates.get(bitmap);
                 if (!state) return;
                 if (state.flushTimer) return;
+                perf.count('bitmap.flush.scheduled');
                 state.flushTimer = setTimeout(() => {
                     state.flushTimer = null;
                     try { flushAggregatedLines(bitmap, 'timer'); } catch (err) {
                         logger.warn('[bitmap/flush-error]', err);
                     }
                 }, FLUSH_DELAY_MS);
+            };
+
+            const createSpriteGlyphBitmapFallbackFragment = (fragment) => {
+                if (!fragment) return null;
+                const fallback = Object.assign({}, fragment, {
+                    standaloneSpriteGlyphCandidate: false,
+                    spriteGlyphFallback: true,
+                    timestamp: Date.now(),
+                });
+                fallback._trSpriteGlyphClaimed = false;
+                fallback._trSpriteGlyphCanceled = false;
+                fallback._trSpriteGlyphFallbackTimer = null;
+                fallback._trSpriteGlyphFallbackQueued = false;
+                fallback._trSpriteGlyphFallbackFragment = null;
+                return fallback;
+            };
+
+            const queueSpriteGlyphBitmapFallback = (bitmap, fragment, reason = 'fallback') => {
+                if (!bitmap || !fragment || fragment._trSpriteGlyphCanceled) return false;
+                if (fragment._trSpriteGlyphFallbackQueued) return true;
+                const state = ensureBitmapState(bitmap);
+                if (!state || !Array.isArray(state.fragments)) return false;
+                if (fragment._trSpriteGlyphClaimed) {
+                    releaseSpriteGlyphClaim(fragment, reason);
+                }
+                const fallbackFragment = createSpriteGlyphBitmapFallbackFragment(fragment);
+                if (!fallbackFragment) return false;
+                fragment._trSpriteGlyphFallbackFragment = fallbackFragment;
+                fragment._trSpriteGlyphFallbackQueued = true;
+                state.fragments.push(fallbackFragment);
+                clearStandaloneSpriteGlyphCandidateReference(bitmap, fragment);
+                perf.count('spriteText.glyphFallback.queued');
+                perf.top('spriteText.glyphFallback.owner', fragment.ownerType || 'Bitmap');
+                perf.top('spriteText.glyphFallback.reason', reason || 'unknown');
+                diagHot(
+                    `sprite-text/fallback|${reason || 'unknown'}|${fragment.ownerType || 'Bitmap'}|${fragment.visibleText || fragment.rawText || ''}`,
+                    () => `[sprite-text/fallback] ${describeBitmap(bitmap)} reason=${reason || 'unknown'} text="${preview(fragment.visibleText || fragment.rawText || '')}"`
+                );
+                scheduleFlush(bitmap);
+                return true;
+            };
+
+            const scheduleStandaloneSpriteGlyphFallback = (bitmap, fragment) => {
+                if (!bitmap || !fragment || fragment._trSpriteGlyphClaimed || fragment._trSpriteGlyphCanceled) return false;
+                if (fragment._trSpriteGlyphFallbackTimer || fragment._trSpriteGlyphFallbackQueued) return true;
+                fragment._trSpriteGlyphFallbackTimer = setTimeout(() => {
+                    fragment._trSpriteGlyphFallbackTimer = null;
+                    if (!bitmap || !fragment || fragment._trSpriteGlyphClaimed || fragment._trSpriteGlyphCanceled) return;
+                    if (getStandaloneSpriteGlyphCandidates(bitmap, { includeClaimed: false }).indexOf(fragment) < 0) return;
+                    queueSpriteGlyphBitmapFallback(bitmap, fragment, 'unclaimed-timeout');
+                }, SPRITE_GLYPH_BASE_DELAY_MS);
+                return true;
             };
 
             const nextSpriteRunId = (() => {
@@ -2940,11 +3732,25 @@
                         flushDueAt: 0,
                         lastGlyphAt: 0,
                         maxInterGlyphMs: 0,
+                        mutationSeq: 0,
+                        nextGlyphOrder: 0,
                     };
                     spriteTextParents.set(parent, state);
                 }
                 if (!Array.isArray(state.glyphs)) state.glyphs = [];
+                if (!Number.isFinite(state.mutationSeq)) state.mutationSeq = 0;
+                if (!Number.isFinite(state.nextGlyphOrder)) state.nextGlyphOrder = 0;
                 return state;
+            };
+
+            const noteSpriteParentMutation = (parent, reason, amount = 1) => {
+                if (!parent || !spriteTextParents) return;
+                const state = spriteTextParents.get(parent);
+                if (!state) return;
+                const increment = Number.isFinite(Number(amount)) && Number(amount) > 0 ? Number(amount) : 1;
+                state.mutationSeq = (state.mutationSeq || 0) + increment;
+                perf.count('spriteText.parent.mutation', increment);
+                perf.top('spriteText.parent.mutationReason', reason || 'unknown');
             };
 
             const resolveSpriteTextDelay = (state) => {
@@ -2963,6 +3769,128 @@
                 const before = state.fragments.length;
                 state.fragments = state.fragments.filter((item) => item !== fragment);
                 return state.fragments.length !== before;
+            };
+
+            const releaseSpriteGlyphClaim = (fragment, reason = 'release') => {
+                if (!fragment || !fragment._trSpriteGlyphClaimed) return false;
+                const parent = fragment._trSpriteGlyphParent || null;
+                const sprite = fragment._trSpriteGlyphSprite || null;
+                if (parent && spriteTextParents) {
+                    try {
+                        const state = spriteTextParents.get(parent);
+                        if (state && Array.isArray(state.glyphs)) {
+                            state.glyphs = state.glyphs.filter((glyph) => glyph && glyph.fragment !== fragment);
+                        }
+                    } catch (_) {}
+                }
+                try {
+                    if (sprite && sprite._trSpriteGlyphFragment === fragment) {
+                        sprite._trSpriteGlyphFragment = null;
+                    }
+                } catch (_) {}
+                fragment._trSpriteGlyphClaimed = false;
+                fragment._trSpriteGlyphParent = null;
+                fragment._trSpriteGlyphSprite = null;
+                fragment._trSpriteGlyphRecord = null;
+                perf.count('spriteText.glyph.claimReleased');
+                perf.top('spriteText.glyph.claimReleaseReason', reason || 'release');
+                return true;
+            };
+
+            const downgradeStandaloneSpriteGlyphCandidates = (bitmap, reason = 'multi-draw-bitmap') => {
+                const state = ensureBitmapState(bitmap);
+                if (!state) return 0;
+                const candidates = getStandaloneSpriteGlyphCandidates(bitmap, { includeClaimed: true });
+                if (!candidates.length) return 0;
+                state.forceBitmapGlyphFragments = true;
+                let queued = 0;
+                for (const fragment of candidates) {
+                    if (!fragment || fragment._trSpriteGlyphFallbackQueued || fragment._trSpriteGlyphCanceled) continue;
+                    if (fragment._trSpriteGlyphFallbackTimer) {
+                        try { clearTimeout(fragment._trSpriteGlyphFallbackTimer); } catch (_) {}
+                        fragment._trSpriteGlyphFallbackTimer = null;
+                    }
+                    if (fragment._trSpriteGlyphClaimed) {
+                        releaseSpriteGlyphClaim(fragment, reason);
+                    }
+                    if (queueSpriteGlyphBitmapFallback(bitmap, fragment, reason)) {
+                        queued++;
+                    }
+                }
+                if (queued > 0) {
+                    perf.count('spriteText.glyphCandidate.downgraded', queued);
+                    perf.top('spriteText.glyphCandidate.downgradeReason', reason || 'unknown');
+                    diagHot(
+                        `sprite-text/downgrade|${reason}|${describeBitmap(bitmap)}|${queued}`,
+                        () => `[sprite-text/downgrade] ${describeBitmap(bitmap)} reason=${reason} glyphs=${queued}`
+                    );
+                }
+                return queued;
+            };
+
+            const rememberSpriteBitmapAttachment = (parent, sprite) => {
+                if (!spriteBitmapParents || !parent || !sprite) return;
+                let bitmap = null;
+                try { bitmap = sprite.bitmap; } catch (_) { bitmap = null; }
+                if (!bitmap) return;
+                try {
+                    let records = spriteBitmapParents.get(bitmap);
+                    if (!records) {
+                        records = [];
+                        spriteBitmapParents.set(bitmap, records);
+                    }
+                    for (const record of records) {
+                        if (record && record.parent === parent && record.sprite === sprite) return;
+                    }
+                    records.push({ parent, sprite });
+                } catch (_) {}
+            };
+
+            const forgetSpriteBitmapAttachment = (parent, sprite) => {
+                if (!spriteBitmapParents || !sprite) return;
+                let bitmap = null;
+                try { bitmap = sprite.bitmap; } catch (_) { bitmap = null; }
+                if (!bitmap) return;
+                try {
+                    const records = spriteBitmapParents.get(bitmap);
+                    if (!Array.isArray(records) || !records.length) return;
+                    const kept = records.filter((record) => record && !(record.parent === parent && record.sprite === sprite));
+                    if (kept.length) {
+                        spriteBitmapParents.set(bitmap, kept);
+                    } else {
+                        spriteBitmapParents.delete(bitmap);
+                    }
+                } catch (_) {}
+            };
+
+            const getKnownSpriteBitmapAttachments = (bitmap) => {
+                if (!spriteBitmapParents || !bitmap) return [];
+                try {
+                    const records = spriteBitmapParents.get(bitmap);
+                    if (!Array.isArray(records) || !records.length) return [];
+                    const kept = [];
+                    const attached = [];
+                    for (const record of records) {
+                        if (!record || !record.parent || !record.sprite) continue;
+                        let currentBitmap = null;
+                        try { currentBitmap = record.sprite.bitmap; } catch (_) { currentBitmap = null; }
+                        const stillAttached = !record.parent._destroyed
+                            && !record.sprite._destroyed
+                            && record.sprite.parent === record.parent
+                            && currentBitmap === bitmap;
+                        if (stillAttached) {
+                            kept.push(record);
+                            attached.push(record);
+                        }
+                    }
+                    if (kept.length !== records.length) {
+                        if (kept.length) spriteBitmapParents.set(bitmap, kept);
+                        else spriteBitmapParents.delete(bitmap);
+                    }
+                    return attached;
+                } catch (_) {
+                    return [];
+                }
             };
 
             const glyphLayout = (glyph) => {
@@ -3003,23 +3931,66 @@
 
             const markSpriteTextRunStale = (run, reason) => {
                 if (!run || run._trStale) return;
+                perf.count('spriteText.run.canceled');
+                perf.top('spriteText.cancel.reason', reason || 'unknown');
                 run._trStale = true;
+                if (run.activationTimer) {
+                    try { clearTimeout(run.activationTimer); } catch (_) {}
+                    run.activationTimer = null;
+                }
+                if (run.applyTimer) {
+                    try { clearTimeout(run.applyTimer); } catch (_) {}
+                    run.applyTimer = null;
+                }
                 run.canceledReason = reason;
                 run.canceledAt = Date.now();
                 diag(`[sprite-text/cancel] parent=${describeSprite(run.parent)} reason=${reason} id=${run.id || 'unknown'} text="${preview(run.trimmedText || '')}"`);
             };
 
+            const getAttachedSpriteTextGlyphs = (run) => {
+                if (!run || !Array.isArray(run.glyphs)) return [];
+                return run.glyphs.filter(glyph => isGlyphStillAttached(glyph));
+            };
+
             const isSpriteTextRunAlive = (run) => {
-                if (!run || run._trStale || !run.parent || !Array.isArray(run.glyphs) || !run.glyphs.length) return false;
-                const carrier = run.glyphs[0] && run.glyphs[0].sprite;
-                if (!carrier || carrier._destroyed || carrier.parent !== run.parent) return false;
-                return carrier._trSpriteTextRun === run;
+                if (!run || run._trStale || !run.parent || run.parent._destroyed || !Array.isArray(run.glyphs) || !run.glyphs.length) {
+                    return false;
+                }
+                return getAttachedSpriteTextGlyphs(run).length > 0;
+            };
+
+            const isSpriteTextRunApplyReady = (run) => {
+                if (!isSpriteTextRunAlive(run)) return false;
+                return getAttachedSpriteTextGlyphs(run).length === run.glyphs.length;
+            };
+
+            const refreshSpriteTextRunLayout = (run) => {
+                if (!run || !Array.isArray(run.glyphs) || !run.glyphs.length) return false;
+                const attachedGlyphs = getAttachedSpriteTextGlyphs(run);
+                if (attachedGlyphs.length !== run.glyphs.length) return false;
+                const layouts = attachedGlyphs.map(glyphLayout);
+                if (layouts.some(layout => !layout || !layout.visibleText)) return false;
+                const bounds = layouts.reduce((acc, layout) => ({
+                    x1: Math.min(acc.x1, layout.x),
+                    y1: Math.min(acc.y1, layout.y),
+                    x2: Math.max(acc.x2, layout.x + layout.width),
+                    y2: Math.max(acc.y2, layout.y + layout.height),
+                }), { x1: Infinity, y1: Infinity, x2: -Infinity, y2: -Infinity });
+                if (!isValidRect(bounds)) return false;
+                const lineHeight = Math.max(...layouts.map(layout => layout.lineHeight || 0), 1);
+                run.bounds = bounds;
+                run.width = Math.max(1, bounds.x2 - bounds.x1);
+                run.height = Math.max(1, bounds.y2 - bounds.y1, lineHeight);
+                run.lineHeight = lineHeight;
+                return true;
             };
 
             const measureSpriteRunTextWidth = (drawState, text, height) => {
                 if (typeof Bitmap === 'undefined' || !Bitmap) return 0;
                 let measureBitmap = null;
+                const perfMeasureStart = perf.isEnabled() ? perf.now() : 0;
                 try {
+                    perf.count('spriteText.measure.calls');
                     measureBitmap = new Bitmap(1, Math.max(1, Math.ceil(height || 24)));
                     applyBitmapDrawState(measureBitmap, drawState);
                     if (typeof measureBitmap.measureTextWidth === 'function') {
@@ -3028,24 +3999,210 @@
                     }
                 } catch (_) {
                     return 0;
+                } finally {
+                    if (perfMeasureStart) {
+                        perf.time('spriteText.measure.ms', perf.now() - perfMeasureStart);
+                    }
                 }
                 return 0;
             };
 
             const drawSpriteRunBitmap = (drawState, text, width, height) => {
+                perf.count('spriteText.bitmap.created');
                 const bitmap = new Bitmap(Math.max(1, Math.ceil(width)), Math.max(1, Math.ceil(height)));
                 try { applyBitmapDrawState(bitmap, drawState); } catch (_) {}
                 bitmap._trBitmapSkipDepth = (bitmap._trBitmapSkipDepth || 0) + 1;
+                const perfDrawStart = perf.isEnabled() ? perf.now() : 0;
                 try {
                     bitmap.drawText(text, 0, 0, bitmap.width, bitmap.height, 'center');
                 } finally {
                     bitmap._trBitmapSkipDepth = Math.max(0, (bitmap._trBitmapSkipDepth || 1) - 1);
+                    if (perfDrawStart) {
+                        perf.time('spriteText.bitmap.draw.ms', perf.now() - perfDrawStart);
+                    }
                 }
                 return bitmap;
             };
 
+            const createSpriteTextOverlaySprite = () => {
+                try {
+                    if (typeof Sprite !== 'undefined' && Sprite) {
+                        return new Sprite();
+                    }
+                } catch (_) {}
+                return null;
+            };
+
+            const restoreSpriteTextSourceGlyphs = (run) => {
+                if (!run || !Array.isArray(run.glyphs)) return;
+                run.glyphs.forEach((glyph) => {
+                    const glyphSprite = glyph && glyph.sprite;
+                    if (!glyphSprite || glyphSprite._trSpriteTextHiddenByRun !== run.id) return;
+                    try {
+                        glyphSprite.visible = glyphSprite._trSpriteTextPreviousVisible !== undefined
+                            ? glyphSprite._trSpriteTextPreviousVisible
+                            : true;
+                        delete glyphSprite._trSpriteTextHiddenByRun;
+                        delete glyphSprite._trSpriteTextPreviousVisible;
+                    } catch (_) {}
+                });
+            };
+
+            const hideSpriteTextSourceGlyphs = (run) => {
+                if (!run || !Array.isArray(run.glyphs)) return;
+                run.glyphs.forEach((glyph) => {
+                    const glyphSprite = glyph && glyph.sprite;
+                    if (!glyphSprite || glyphSprite.parent !== run.parent) return;
+                    try {
+                        if (glyphSprite._trSpriteTextHiddenByRun !== run.id) {
+                            glyphSprite._trSpriteTextPreviousVisible = glyphSprite.visible;
+                        }
+                        glyphSprite.visible = false;
+                        glyphSprite._trSpriteTextHiddenByRun = run.id;
+                    } catch (_) {}
+                });
+            };
+
+            const removeSpriteRunOverlay = (run, reason, restoreSources = true) => {
+                if (!run) return;
+                const overlay = run.overlaySprite;
+                if (overlay && overlay.parent && typeof overlay.parent.removeChild === 'function') {
+                    try {
+                        overlay.parent.removeChild(overlay);
+                        perf.count('spriteText.overlay.removed');
+                        perf.top('spriteText.overlay.removeReason', reason || 'unknown');
+                    } catch (_) {}
+                }
+                run.overlaySprite = null;
+                if (restoreSources) {
+                    restoreSpriteTextSourceGlyphs(run);
+                }
+            };
+
+            const ensureSpriteTextOverlay = (run) => {
+                if (!run || !run.parent || run.parent._destroyed) return null;
+                let overlay = run.overlaySprite || null;
+                if (!overlay || overlay._destroyed) {
+                    overlay = createSpriteTextOverlaySprite();
+                    if (!overlay) return null;
+                    run.overlaySprite = overlay;
+                    try {
+                        overlay._trSpriteTextObserverBypass = true;
+                        overlay._trSpriteTextOverlayRunId = run.id;
+                    } catch (_) {}
+                    perf.count('spriteText.overlay.created');
+                }
+                try {
+                    overlay._trSpriteTextObserverBypass = true;
+                    overlay._trSpriteTextOverlayRunId = run.id;
+                } catch (_) {}
+                return overlay;
+            };
+
+            const resolveSpriteTextOverlayLayer = (run) => {
+                const parent = run && run.parent;
+                const children = parent && Array.isArray(parent.children) ? parent.children : null;
+                if (!parent || !children || !Array.isArray(run.glyphs)) {
+                    return { insertIndex: null, referenceSprite: null };
+                }
+                let lastIndex = -1;
+                let referenceSprite = null;
+                for (const glyph of run.glyphs) {
+                    const sprite = glyph && glyph.sprite;
+                    if (!sprite || sprite.parent !== parent) continue;
+                    const index = children.indexOf(sprite);
+                    if (index < 0) continue;
+                    if (index >= lastIndex) {
+                        lastIndex = index;
+                        referenceSprite = sprite;
+                    }
+                }
+                if (lastIndex < 0) {
+                    return { insertIndex: null, referenceSprite };
+                }
+                return {
+                    insertIndex: Math.max(0, Math.min(children.length, lastIndex + 1)),
+                    referenceSprite,
+                };
+            };
+
+            const attachSpriteTextOverlay = (run, overlay) => {
+                if (!run || !overlay || !run.parent || run.parent._destroyed) return false;
+                const parent = run.parent;
+                const layer = resolveSpriteTextOverlayLayer(run);
+                try {
+                    if (layer.referenceSprite) {
+                        if (layer.referenceSprite.z !== undefined) overlay.z = layer.referenceSprite.z;
+                        if (layer.referenceSprite.zIndex !== undefined) overlay.zIndex = layer.referenceSprite.zIndex;
+                    }
+                } catch (_) {}
+
+                try {
+                    if (Number.isFinite(layer.insertIndex)
+                        && typeof parent.addChildAt === 'function'
+                        && Array.isArray(parent.children)) {
+                        const currentIndex = parent.children.indexOf(overlay);
+                        if (overlay.parent === parent && currentIndex === layer.insertIndex) {
+                            return true;
+                        }
+                        parent.addChildAt(overlay, layer.insertIndex);
+                        return true;
+                    }
+                } catch (error) {
+                    logger.warn('[sprite-text/layer-error]', error);
+                }
+
+                try {
+                    if (overlay.parent !== parent && typeof parent.addChild === 'function') {
+                        parent.addChild(overlay);
+                    }
+                    return overlay.parent === parent;
+                } catch (error) {
+                    logger.warn('[sprite-text/layer-fallback-error]', error);
+                    return false;
+                }
+            };
+
+            const scheduleSpriteTextRunApply = (run, translated, source, expectedRunId, delayMs = SPRITE_RUN_STABILITY_MS) => {
+                if (!run || run._trStale) return;
+                if (run.applyTimer) return;
+                const waitMs = Math.max(0, Math.ceil(Number(delayMs) || 0));
+                perf.count('spriteText.run.applyScheduled');
+                run.applyTimer = setTimeout(() => {
+                    run.applyTimer = null;
+                    try {
+                        applySpriteTextRunTranslation(run, translated, source, expectedRunId);
+                    } catch (error) {
+                        logger.warn('[sprite-text/apply-deferred-error]', error);
+                    }
+                }, waitMs);
+            };
+
             const applySpriteTextRunTranslation = (run, translated, source, expectedRunId = null) => {
-                if (!run || (expectedRunId && run.id !== expectedRunId) || !isSpriteTextRunAlive(run)) return;
+                if (!run || (expectedRunId && run.id !== expectedRunId)) return;
+                if (!isSpriteTextRunApplyReady(run) || !refreshSpriteTextRunLayout(run)) {
+                    if (!isSpriteTextRunAlive(run)) {
+                        removeSpriteRunOverlay(run, 'source-removed-before-apply', false);
+                        markSpriteTextRunStale(run, 'source-removed-before-apply');
+                    } else {
+                        markSpriteTextRunStale(run, 'source-changed-before-apply');
+                    }
+                    return;
+                }
+                const now = Date.now();
+                const parentState = spriteTextParents ? spriteTextParents.get(run.parent) : null;
+                const currentMutationSeq = parentState && Number.isFinite(parentState.mutationSeq)
+                    ? parentState.mutationSeq
+                    : run.parentMutationSeq;
+                if (currentMutationSeq !== run.parentMutationSeq && now - (run.createdAt || now) < SPRITE_RUN_MAX_DEFER_MS) {
+                    run.parentMutationSeq = currentMutationSeq;
+                    run.readyAt = now + SPRITE_RUN_STABILITY_MS;
+                    perf.count('spriteText.run.deferred');
+                    perf.top('spriteText.defer.reason', 'parentMutationBeforeApply');
+                    scheduleSpriteTextRunApply(run, translated, source, expectedRunId, SPRITE_RUN_STABILITY_MS);
+                    return;
+                }
+                run.parentMutationSeq = currentMutationSeq;
 
                 let restored = translated;
                 try {
@@ -3059,15 +4216,19 @@
                 if (typeof restored !== 'string') restored = run.rawText;
                 const restoredTrimmed = sanitizePerChar(stripRpgmEscapes(restored || '')).trim();
                 if (!restoredTrimmed || restoredTrimmed === run.trimmedText) {
+                    perf.count('spriteText.translation.skipSame');
                     diag(`[sprite-text/skip-same] parent=${describeSprite(run.parent)} id=${run.id} text="${preview(run.trimmedText)}"`);
                     return;
                 }
 
-                const carrier = run.glyphs[0] && run.glyphs[0].sprite;
-                if (!carrier) return;
+                const overlay = ensureSpriteTextOverlay(run);
+                if (!overlay) return;
+                perf.count('spriteText.translation.apply');
+                perf.top('spriteText.translation.source', source || 'unknown');
                 const outlinePadding = run.drawState && Number.isFinite(run.drawState.outlineWidth)
                     ? Math.max(2, run.drawState.outlineWidth + 2)
                     : 3;
+                const perfApplyStart = perf.isEnabled() ? perf.now() : 0;
                 const measuredWidth = measureSpriteRunTextWidth(run.drawState, restoredTrimmed, run.height);
                 const targetWidth = Math.max(
                     1,
@@ -3078,27 +4239,47 @@
                 const translatedBitmap = drawSpriteRunBitmap(run.drawState, restored, targetWidth, targetHeight);
 
                 try {
-                    carrier.bitmap = translatedBitmap;
-                    carrier.x = Math.floor((run.bounds ? run.bounds.x1 : 0) - Math.max(0, targetWidth - (run.width || targetWidth)) / 2);
-                    carrier.y = Math.floor(run.bounds ? run.bounds.y1 : 0);
-                    if (Number.isFinite(Number(carrier.ry))) {
-                        carrier.ry = carrier.y;
-                    }
-                    if (carrier.anchor) {
-                        carrier.anchor.x = 0;
-                        carrier.anchor.y = 0;
-                    }
-                    carrier.visible = true;
-                    for (let i = 1; i < run.glyphs.length; i++) {
-                        const glyphSprite = run.glyphs[i] && run.glyphs[i].sprite;
-                        if (glyphSprite && glyphSprite.parent === run.parent) {
-                            glyphSprite.visible = false;
-                            glyphSprite._trSpriteTextHiddenByRun = run.id;
+                    overlay.bitmap = translatedBitmap;
+                    const referenceSprite = run.glyphs[0] && run.glyphs[0].sprite ? run.glyphs[0].sprite : null;
+                    if (referenceSprite) {
+                        if (Number.isFinite(Number(referenceSprite.opacity))) overlay.opacity = referenceSprite.opacity;
+                        if (Number.isFinite(Number(referenceSprite.alpha))) overlay.alpha = referenceSprite.alpha;
+                        if (referenceSprite.blendMode !== undefined) overlay.blendMode = referenceSprite.blendMode;
+                        if (referenceSprite.tint !== undefined) overlay.tint = referenceSprite.tint;
+                        if (overlay.scale && referenceSprite.scale) {
+                            if (Number.isFinite(Number(referenceSprite.scale.x))) overlay.scale.x = referenceSprite.scale.x;
+                            if (Number.isFinite(Number(referenceSprite.scale.y))) overlay.scale.y = referenceSprite.scale.y;
                         }
+                        if (Number.isFinite(Number(referenceSprite.rotation))) overlay.rotation = referenceSprite.rotation;
+                        if (referenceSprite.z !== undefined) overlay.z = referenceSprite.z;
+                        if (referenceSprite.zIndex !== undefined) overlay.zIndex = referenceSprite.zIndex;
                     }
+                    overlay.x = Math.floor((run.bounds ? run.bounds.x1 : 0) - Math.max(0, targetWidth - (run.width || targetWidth)) / 2);
+                    overlay.y = Math.floor(run.bounds ? run.bounds.y1 : 0);
+                    overlay.dy = referenceSprite && Number.isFinite(Number(referenceSprite.dy))
+                        ? referenceSprite.dy
+                        : (Number.isFinite(Number(overlay.dy)) ? overlay.dy : 0);
+                    overlay.ry = referenceSprite && Number.isFinite(Number(referenceSprite.ry))
+                        ? referenceSprite.ry
+                        : overlay.y;
+                    if (overlay.anchor) {
+                        overlay.anchor.x = 0;
+                        overlay.anchor.y = 0;
+                    }
+                    overlay.visible = true;
+                    if (!attachSpriteTextOverlay(run, overlay)) {
+                        removeSpriteRunOverlay(run, 'attach-failed');
+                        return;
+                    }
+                    hideSpriteTextSourceGlyphs(run);
                 } catch (applyError) {
                     logger.warn('[sprite-text/apply-error]', applyError);
+                    removeSpriteRunOverlay(run, 'apply-error');
                     return;
+                } finally {
+                    if (perfApplyStart) {
+                        perf.time('spriteText.apply.ms', perf.now() - perfApplyStart);
+                    }
                 }
 
                 run.translationStatus = 'completed';
@@ -3111,10 +4292,58 @@
                 diag(`[sprite-text/redraw] parent=${describeSprite(run.parent)} src=${source} id=${run.id} text="${preview(run.trimmedText)}" -> "${preview(restoredTrimmed)}" glyphs=${run.glyphs.length}`);
             };
 
+            const scheduleSpriteTextRunActivation = (run, delayMs = 0) => {
+                if (!run || run._trStale || run.translationStatus !== 'pending') return;
+                const waitMs = Math.max(0, Math.ceil(Number(delayMs) || 0));
+                if (run.activationTimer) return;
+                perf.count('spriteText.run.activationScheduled');
+                run.activationTimer = setTimeout(() => {
+                    run.activationTimer = null;
+                    try {
+                        activateSpriteTextRunTranslation(run);
+                    } catch (error) {
+                        logger.warn('[sprite-text/activation-error]', error);
+                    }
+                }, waitMs);
+            };
+
             const activateSpriteTextRunTranslation = (run) => {
                 if (!run || run._trStale || run.translationStatus === 'completed' || run.translationStatus === 'translating') return;
+                const now = Date.now();
+                if (!isSpriteTextRunApplyReady(run)) {
+                    if (!isSpriteTextRunAlive(run)) {
+                        removeSpriteRunOverlay(run, 'source-removed-before-activate', false);
+                        markSpriteTextRunStale(run, 'source-removed-before-activate');
+                    } else {
+                        markSpriteTextRunStale(run, 'source-changed-before-activate');
+                    }
+                    return;
+                }
+                const readyAt = Number(run.readyAt);
+                if (Number.isFinite(readyAt) && readyAt > now) {
+                    scheduleSpriteTextRunActivation(run, readyAt - now);
+                    return;
+                }
+                const parentState = spriteTextParents ? spriteTextParents.get(run.parent) : null;
+                const currentMutationSeq = parentState && Number.isFinite(parentState.mutationSeq)
+                    ? parentState.mutationSeq
+                    : run.parentMutationSeq;
+                if (currentMutationSeq !== run.parentMutationSeq && now - (run.createdAt || now) < SPRITE_RUN_MAX_DEFER_MS) {
+                    run.parentMutationSeq = currentMutationSeq;
+                    run.readyAt = now + SPRITE_RUN_STABILITY_MS;
+                    perf.count('spriteText.run.deferred');
+                    perf.top('spriteText.defer.reason', 'parentMutation');
+                    scheduleSpriteTextRunActivation(run, SPRITE_RUN_STABILITY_MS);
+                    return;
+                }
+                run.parentMutationSeq = currentMutationSeq;
+                if (!refreshSpriteTextRunLayout(run)) {
+                    markSpriteTextRunStale(run, 'layout-changed-before-activate');
+                    return;
+                }
                 if (!run.normalizedSource || translationCache.shouldSkip(run.normalizedSource) || skipLikeCounter(run.normalizedSource)) {
                     run.translationStatus = 'skipped';
+                    perf.count('spriteText.translation.skipped');
                     diagHot(
                         `sprite-text/skip|${preview(run.normalizedSource)}|${run.glyphs ? run.glyphs.length : 0}`,
                         () => `[sprite-text/skip] parent=${describeSprite(run.parent)} reason=cacheSkip id=${run.id || 'unknown'} text="${preview(run.normalizedSource || '')}"`
@@ -3129,6 +4358,7 @@
 
                 try {
                     if (translationCache.completed.has(run.normalizedSource)) {
+                        perf.count('spriteText.translation.cacheHit');
                         applySpriteTextRunTranslation(run, translationCache.completed.get(run.normalizedSource), 'cache', run.id);
                         return;
                     }
@@ -3138,6 +4368,7 @@
 
                 run.translationStatus = 'translating';
                 const targetRunId = run.id;
+                perf.count('spriteText.translation.request');
                 run.translationPromise = translationCache.requestTranslation(run.translationSource)
                     .then((translated) => applySpriteTextRunTranslation(run, translated, 'async', targetRunId))
                     .catch((error) => {
@@ -3172,6 +4403,8 @@
                     ? dominant.glyph.fragment.drawState
                     : (group[0].fragment ? group[0].fragment.drawState : null);
                 const lineHeight = Math.max(...layouts.map(layout => layout.lineHeight || 0), 1);
+                const parentState = spriteTextParents ? spriteTextParents.get(parent) : null;
+                const now = Date.now();
                 const run = {
                     id: nextSpriteRunId(),
                     parent,
@@ -3185,7 +4418,14 @@
                     lineHeight,
                     drawState,
                     translationStatus: 'pending',
-                    createdAt: Date.now(),
+                    createdAt: now,
+                    readyAt: now + SPRITE_RUN_STABILITY_MS,
+                    parentMutationSeq: parentState && Number.isFinite(parentState.mutationSeq)
+                        ? parentState.mutationSeq
+                        : 0,
+                    activationTimer: null,
+                    applyTimer: null,
+                    overlaySprite: null,
                     debugCallSite: group.map(glyph => glyph.fragment && glyph.fragment.debugCallSite).filter(Boolean)[0] || '',
                 };
                 run.placeholderInfo = prepareTextForTranslation(run.rawText);
@@ -3198,12 +4438,17 @@
                         if (glyph && glyph.sprite) glyph.sprite._trSpriteTextRun = run;
                     } catch (_) {}
                 });
+                perf.count('spriteText.run.created');
+                perf.count('spriteText.run.glyphs', group.length);
                 return run;
             };
 
             const flushSpriteTextParent = (parent, reason = 'timer') => {
                 const state = spriteTextParents ? spriteTextParents.get(parent) : null;
                 if (!state || !Array.isArray(state.glyphs) || state.glyphs.length === 0) return;
+                const perfFlushStart = perf.isEnabled() ? perf.now() : 0;
+                perf.count('spriteText.flush.calls');
+                perf.top('spriteText.flush.reason', reason || 'unknown');
 
                 const now = Date.now();
                 const attached = [];
@@ -3264,9 +4509,16 @@
                                 keepSingles.push(glyph);
                             } else if (glyph) {
                                 const text = glyph.fragment ? fragmentVisibleText(glyph.fragment) : '';
+                                const fallbackQueued = glyph.fragment
+                                    ? queueSpriteGlyphBitmapFallback(
+                                        glyph.bitmap || glyph.fragment.bitmap,
+                                        glyph.fragment,
+                                        'single-glyph-timeout'
+                                    )
+                                    : false;
                                 diagHot(
-                                    `sprite-text/skip-single|${text}`,
-                                    () => `[sprite-text/skip] parent=${describeSprite(parent)} reason=singleGlyph text="${preview(text)}"`
+                                    `sprite-text/skip-single|${text}|${fallbackQueued ? 'fallback' : 'skip'}`,
+                                    () => `[sprite-text/${fallbackQueued ? 'fallback' : 'skip'}] parent=${describeSprite(parent)} reason=singleGlyph text="${preview(text)}"`
                                 );
                             }
                             continue;
@@ -3277,6 +4529,10 @@
                 });
 
                 state.glyphs = keepSingles;
+                perf.count('spriteText.flush.attachedGlyphs', attached.length);
+                perf.count('spriteText.flush.lines', lines.size);
+                perf.count('spriteText.flush.runs', runs.length);
+                perf.count('spriteText.flush.heldSingles', state.glyphs.length);
                 if (state.glyphs.length === 0) {
                     state.lastGlyphAt = 0;
                     state.maxInterGlyphMs = 0;
@@ -3292,10 +4548,13 @@
                 }
 
                 for (const run of runs) {
-                    activateSpriteTextRunTranslation(run);
+                    scheduleSpriteTextRunActivation(run, Math.max(0, (run.readyAt || Date.now()) - Date.now()));
                 }
                 if (state.glyphs.length > 0) {
                     scheduleSpriteTextFlush(parent);
+                }
+                if (perfFlushStart) {
+                    perf.time('spriteText.flush.ms', perf.now() - perfFlushStart);
                 }
             };
 
@@ -3324,19 +4583,39 @@
                 if (!state) return;
                 state.flushDueAt = Date.now() + resolveSpriteTextDelay(state);
                 if (state.flushTimer) return;
+                perf.count('spriteText.flush.scheduled');
                 state.flushTimer = setTimeout(() => {
                     runSpriteTextFlushTimer(parent);
                 }, resolveSpriteTextDelay(state));
             };
 
             const enqueueSpriteGlyph = (parent, sprite, bitmap, fragment) => {
-                if (!parent || !sprite || !bitmap || !fragment || fragment._trSpriteGlyphClaimed) return false;
+                if (!parent || !sprite || !bitmap || !fragment || fragment._trSpriteGlyphClaimed || fragment._trSpriteGlyphCanceled) return false;
                 const state = ensureSpriteTextParentState(parent);
                 if (!state) return false;
 
+                if (fragment._trSpriteGlyphFallbackTimer) {
+                    try { clearTimeout(fragment._trSpriteGlyphFallbackTimer); } catch (_) {}
+                    fragment._trSpriteGlyphFallbackTimer = null;
+                }
+                if (fragment._trSpriteGlyphFallbackQueued) {
+                    const fallbackFragment = fragment._trSpriteGlyphFallbackFragment || null;
+                    if (fallbackFragment && removePendingBitmapFragment(bitmap, fallbackFragment)) {
+                        fragment._trSpriteGlyphFallbackQueued = false;
+                        fragment._trSpriteGlyphFallbackFragment = null;
+                    } else {
+                        return false;
+                    }
+                }
                 fragment._trSpriteGlyphClaimed = true;
                 removePendingBitmapFragment(bitmap, fragment);
+                try {
+                    if (bitmap._trStandaloneSpriteGlyphFragment === fragment) {
+                        bitmap._trStandaloneSpriteGlyphFragment = null;
+                    }
+                } catch (_) {}
                 const now = Date.now();
+                state.mutationSeq = (state.mutationSeq || 0) + 1;
                 if (state.lastGlyphAt > 0) {
                     const interval = now - state.lastGlyphAt;
                     if (Number.isFinite(interval) && interval >= 0) {
@@ -3353,31 +4632,75 @@
                     bitmap,
                     fragment,
                     seenAt: now,
-                    order: state.glyphs.length ? Math.max(...state.glyphs.map(item => item.order || 0)) + 1 : 1,
+                    order: ++state.nextGlyphOrder,
                 };
+                fragment._trSpriteGlyphParent = parent;
+                fragment._trSpriteGlyphSprite = sprite;
+                fragment._trSpriteGlyphRecord = glyph;
                 state.glyphs.push(glyph);
+                perf.count('spriteText.glyph.enqueued');
+                perf.top('spriteText.parent', describeSprite(parent));
                 try { sprite._trSpriteGlyphFragment = fragment; } catch (_) {}
                 scheduleSpriteTextFlush(parent);
                 return true;
             };
 
+            const claimStandaloneSpriteGlyphFromKnownAttachment = (bitmap, fragment) => {
+                if (!bitmap || !fragment || fragment._trSpriteGlyphClaimed || fragment._trSpriteGlyphCanceled) return false;
+                const candidates = getStandaloneSpriteGlyphCandidates(bitmap, { includeClaimed: true });
+                if (candidates.length > 1) {
+                    downgradeStandaloneSpriteGlyphCandidates(bitmap, 'multi-draw-bitmap');
+                    return false;
+                }
+                if (candidates.length === 1 && candidates[0] !== fragment) return false;
+                const records = getKnownSpriteBitmapAttachments(bitmap);
+                for (const record of records) {
+                    if (!record || !record.parent || !record.sprite) continue;
+                    if (enqueueSpriteGlyph(record.parent, record.sprite, bitmap, fragment)) {
+                        perf.count('spriteText.glyph.claimedFromKnownAttachment');
+                        return true;
+                    }
+                }
+                return false;
+            };
+
             const observeSpriteChildText = (parent, child) => {
                 if (!parent || !child || child._trSpriteTextObserverBypass) return;
+                rememberSpriteBitmapAttachment(parent, child);
                 let bitmap = null;
                 try { bitmap = child.bitmap; } catch (_) { bitmap = null; }
                 if (!bitmap) return;
-                const fragment = bitmap._trStandaloneSpriteGlyphFragment;
+                const candidates = getStandaloneSpriteGlyphCandidates(bitmap, { includeClaimed: true });
+                if (candidates.length > 1) {
+                    downgradeStandaloneSpriteGlyphCandidates(bitmap, 'multi-draw-bitmap');
+                    return;
+                }
+                const fragment = candidates.find((candidate) => candidate && !candidate._trSpriteGlyphClaimed) || null;
                 if (!fragment || !fragment.standaloneSpriteGlyphCandidate) return;
                 const age = Date.now() - (fragment.timestamp || Date.now());
                 if (age < 0 || age > SPRITE_GLYPH_MAX_PENDING_MS) return;
                 enqueueSpriteGlyph(parent, child, bitmap, fragment);
             };
 
+            const handleSpriteTextSourceRemoval = (run, child) => {
+                if (!run || !child) return;
+                perf.count('spriteText.glyph.removed');
+                if (run.translationStatus !== 'completed') {
+                    removeSpriteRunOverlay(run, 'source-removed-before-complete', false);
+                    markSpriteTextRunStale(run, 'source-removed-before-complete');
+                    return;
+                }
+                const remainingGlyphs = getAttachedSpriteTextGlyphs(run).length;
+                const reason = remainingGlyphs > 0 ? 'source-partially-removed' : 'source-removed';
+                removeSpriteRunOverlay(run, reason, remainingGlyphs > 0);
+                markSpriteTextRunStale(run, reason);
+            };
+
             const observeSpriteTextRemoval = (child) => {
-                if (!child) return;
+                if (!child || child._trSpriteTextObserverBypass) return;
                 const run = child._trSpriteTextRun;
-                if (run && child === (run.glyphs[0] && run.glyphs[0].sprite)) {
-                    markSpriteTextRunStale(run, 'carrier-removed');
+                if (run) {
+                    handleSpriteTextSourceRemoval(run, child);
                 }
             };
 
@@ -3390,6 +4713,7 @@
                         const wrappedAddChild = function(...children) {
                             const result = originalAddChild.apply(this, children);
                             try {
+                                noteSpriteParentMutation(this, 'addChild', children.length || 1);
                                 children.forEach(child => observeSpriteChildText(this, child));
                             } catch (error) {
                                 logger.warn('[sprite-text/addChild-observer-error]', error);
@@ -3401,12 +4725,34 @@
                         target.addChild = wrappedAddChild;
                         installed = true;
                     }
+                    if (typeof target.addChildAt === 'function' && target.addChildAt.__trSpriteChildObserver !== SPRITE_CHILD_OBSERVER_TOKEN) {
+                        const originalAddChildAt = target.addChildAt.__trOriginal || target.addChildAt;
+                        const wrappedAddChildAt = function(...args) {
+                            const child = args && args.length ? args[0] : null;
+                            const result = originalAddChildAt.apply(this, args);
+                            try {
+                                noteSpriteParentMutation(this, 'addChildAt', 1);
+                                observeSpriteChildText(this, child);
+                            } catch (error) {
+                                logger.warn('[sprite-text/addChildAt-observer-error]', error);
+                            }
+                            return result;
+                        };
+                        wrappedAddChildAt.__trSpriteChildObserver = SPRITE_CHILD_OBSERVER_TOKEN;
+                        wrappedAddChildAt.__trOriginal = originalAddChildAt;
+                        target.addChildAt = wrappedAddChildAt;
+                        installed = true;
+                    }
                     if (typeof target.removeChild === 'function' && target.removeChild.__trSpriteChildObserver !== SPRITE_CHILD_OBSERVER_TOKEN) {
                         const originalRemoveChild = target.removeChild.__trOriginal || target.removeChild;
                         const wrappedRemoveChild = function(...children) {
                             const result = originalRemoveChild.apply(this, children);
                             try {
-                                children.forEach(observeSpriteTextRemoval);
+                                noteSpriteParentMutation(this, 'removeChild', children.length || 1);
+                                children.forEach((child) => {
+                                    forgetSpriteBitmapAttachment(this, child);
+                                    observeSpriteTextRemoval(child);
+                                });
                             } catch (_) {}
                             return result;
                         };
@@ -3415,7 +4761,35 @@
                         target.removeChild = wrappedRemoveChild;
                         installed = true;
                     }
+                    if (typeof target.removeChildAt === 'function' && target.removeChildAt.__trSpriteChildObserver !== SPRITE_CHILD_OBSERVER_TOKEN) {
+                        const originalRemoveChildAt = target.removeChildAt.__trOriginal || target.removeChildAt;
+                        const wrappedRemoveChildAt = function(...args) {
+                            let child = null;
+                            try {
+                                const index = Number(args && args.length ? args[0] : NaN);
+                                if (Number.isInteger(index) && this.children && this.children[index]) {
+                                    child = this.children[index];
+                                }
+                            } catch (_) {}
+                            const result = originalRemoveChildAt.apply(this, args);
+                            try {
+                                const removed = child || result;
+                                noteSpriteParentMutation(this, 'removeChildAt', 1);
+                                forgetSpriteBitmapAttachment(this, removed);
+                                observeSpriteTextRemoval(removed);
+                            } catch (_) {}
+                            return result;
+                        };
+                        wrappedRemoveChildAt.__trSpriteChildObserver = SPRITE_CHILD_OBSERVER_TOKEN;
+                        wrappedRemoveChildAt.__trOriginal = originalRemoveChildAt;
+                        target.removeChildAt = wrappedRemoveChildAt;
+                        installed = true;
+                    }
                     if (installed) diag(`[sprite-text/hook] Installed child observer on ${label}`);
+                    if (installed) {
+                        perf.count('spriteText.observer.installed');
+                        perf.top('spriteText.observer.target', label || 'unknown');
+                    }
                     return installed;
                 } catch (error) {
                     logger.warn(`[sprite-text/hook-error] Failed to observe ${label}`, error);
@@ -3460,6 +4834,7 @@
                 try {
                     if (translationCache.completed.has(entry.normalizedSource)) {
                         const translated = translationCache.completed.get(entry.normalizedSource);
+                        perf.count('bitmap.translation.cacheHit');
                         applyBitmapTranslation(entry, translated, 'cache', entry.instanceId);
                         return;
                     }
@@ -3469,6 +4844,7 @@
 
                 entry.translationStatus = 'translating';
                 const targetInstanceId = entry.instanceId;
+                perf.count('bitmap.translation.request');
                 entry.translationPromise = translationCache.requestTranslation(entry.translationSource)
                     .then(translated => applyBitmapTranslation(entry, translated, 'async', targetInstanceId))
                     .catch(error => {
@@ -3483,13 +4859,14 @@
                 const { bitmap, key } = entry;
                 const state = bitmapStates.get(bitmap);
                 if (!state) return;
+                perf.count('bitmap.entry.registerAttempt');
+                perf.top('bitmap.owner', entry.ownerType || 'Bitmap');
 
                 const normalized = entry.trimmedText;
                 const looksLikeCounter = skipLikeCounter(normalized);
-                const standaloneSpriteGlyph = entry.spriteGlyphCandidate && textUnitCount(normalized) <= 1;
                 const shouldSkipText = !!normalized && !looksLikeCounter && translationCache.shouldSkip(normalized);
-                if (!normalized || standaloneSpriteGlyph || looksLikeCounter || shouldSkipText) {
-                    const reason = !normalized ? 'empty' : (standaloneSpriteGlyph ? 'spriteGlyph' : (looksLikeCounter ? 'counterLike' : 'cacheSkip'));
+                if (!normalized || looksLikeCounter || shouldSkipText) {
+                    const reason = !normalized ? 'empty' : (looksLikeCounter ? 'counterLike' : 'cacheSkip');
                     const existing = state.entries.get(key);
                     if (existing) {
                         markEntryStale(state, existing, 'native-replace', { rect: deriveEntryRect(existing) });
@@ -3499,6 +4876,8 @@
                     entry.translationStatus = 'skipped';
                     const nativeOp = recordNativeBitmapTextOp(entry);
                     if (nativeOp && nativeOp.drawOrder) entry.drawOrder = nativeOp.drawOrder;
+                    perf.count('bitmap.entry.skipped');
+                    perf.top('bitmap.entry.skipReason', reason);
                     diag(`[bitmap/skip] ${describeBitmap(bitmap)} ${describeEntry(entry)} reason=${reason} replay=${nativeOp ? `nativeOp#${nativeOp.drawOrder}` : 'none'} text="${preview(normalized)}"${entry.debugCallSite ? ` site=${entry.debugCallSite}` : ''}`);
                     return null;
                 }
@@ -3506,6 +4885,7 @@
                 removeNativeTextOpByKey(state, key);
                 const existing = state.entries.get(key);
                 if (existing && existing.trimmedText === entry.trimmedText) {
+                    perf.count('bitmap.entry.updatedExisting');
                     existing.detectedAt = Date.now();
                     existing.rawText = entry.rawText;
                     existing.visibleText = entry.visibleText;
@@ -3527,6 +4907,7 @@
                     return existing;
                 }
                 if (existing) {
+                    perf.count('bitmap.entry.replaced');
                     markEntryStale(state, existing, 'replace', { rect: deriveEntryRect(existing) });
                 }
 
@@ -3546,6 +4927,8 @@
                     entry.drawOrder = 0;
                     const nativeOp = recordNativeBitmapTextOp(entry);
                     if (nativeOp && nativeOp.drawOrder) entry.drawOrder = nativeOp.drawOrder;
+                    perf.count('bitmap.entry.skipped');
+                    perf.top('bitmap.entry.skipReason', 'emptyNormalized');
                     diag(`[bitmap/skip] ${describeBitmap(bitmap)} ${describeEntry(entry)} reason=emptyNormalized replay=${nativeOp ? `nativeOp#${nativeOp.drawOrder}` : 'none'} text="${preview(entry.trimmedText)}"`);
                     return null;
                 }
@@ -3553,6 +4936,7 @@
                 const now = Date.now();
                 entry.instanceId = nextInstanceId();
                 entry.createdAt = now;
+                perf.count('bitmap.entry.created');
 
                 telemetry.logTextDetected('bitmap', normalized, entry.drawParams.x, entry.drawParams.y, {
                     ownerType: entry.ownerType,
@@ -3591,15 +4975,20 @@
                 if (typeof restored !== 'string') restored = entry.rawText;
                 const restoredTrimmed = sanitizePerChar(stripRpgmEscapes(restored || '')).trim();
                 if (!restoredTrimmed || restoredTrimmed === entry.trimmedText) {
+                    perf.count('bitmap.translation.skipSame');
                     diag(`[bitmap/skip-same] ${describeBitmap(entry.bitmap)} ${describeEntry(entry)} text="${preview(entry.trimmedText)}"`);
                     return;
                 }
 
                 const bitmap = entry.bitmap;
                 if (!bitmap) return;
+                perf.count('bitmap.translation.apply');
+                perf.top('bitmap.translation.source', source || 'unknown');
+                perf.top('bitmap.owner', entry.ownerType || 'Bitmap');
 
                 const prevActiveEntry = bitmap._trActiveRedrawEntry || null;
                 bitmap._trActiveRedrawEntry = entry;
+                const perfRedrawStart = perf.isEnabled() ? perf.now() : 0;
                 try {
                     const outlinePadding = entry.drawState && Number.isFinite(entry.drawState.outlineWidth)
                         ? Math.max(1, entry.drawState.outlineWidth + 1)
@@ -3615,6 +5004,9 @@
                     const replayAfter = guardRect
                         ? collectReplayItems(state, guardRect, entry, order => order > currentOrder)
                         : [];
+                    perf.count('bitmap.redraw.calls');
+                    perf.count('bitmap.redraw.replayBefore', replayBefore.length);
+                    perf.count('bitmap.redraw.replayAfter', replayAfter.length);
                     diag(`[bitmap/redraw] ${describeBitmap(bitmap)} src=${source} method=${entry.methodName || 'drawText'} ${describeEntry(entry)} "${preview(entry.trimmedText)}" -> "${preview(restoredTrimmed)}"`);
                     if (shouldTraceBitmapDiagnostics()) {
                         diag(`[bitmap/redraw-plan] ${describeBitmap(bitmap)} clear=${guardRect ? formatRect(guardRect) : 'n/a'} before=${replayBefore.length} [${summarizeReplayItems(replayBefore)}] after=${replayAfter.length} [${summarizeReplayItems(replayAfter)}]${entry.debugCallSite ? ` site=${entry.debugCallSite}` : ''}`);
@@ -3634,6 +5026,9 @@
                     });
                 } finally {
                     bitmap._trActiveRedrawEntry = prevActiveEntry;
+                    if (perfRedrawStart) {
+                        perf.time('bitmap.redraw.ms', perf.now() - perfRedrawStart);
+                    }
                 }
 
                 entry.translationStatus = 'completed';
@@ -3650,28 +5045,46 @@
                 const textStr = String(inputText ?? '');
                 const safeAlign = normalizeCanvasTextAlign(align);
                 const callArgs = [textStr, rawX, rawY, maxWidth, lineHeight, safeAlign];
+                perf.count('bitmap.draw.calls');
+                perf.top('bitmap.draw.method', methodName);
+                const invokeOriginalDraw = () => {
+                    perf.count('bitmap.draw.nativeCalls');
+                    const perfNativeStart = perf.isEnabled() ? perf.now() : 0;
+                    try {
+                        return originalFn.apply(bitmap, callArgs);
+                    } finally {
+                        if (perfNativeStart) {
+                            perf.time('bitmap.draw.native.ms', perf.now() - perfNativeStart);
+                        }
+                    }
+                };
 
                 if (textStr.startsWith(REDRAW_SIGNATURE)) {
                     const cleanText = textStr.substring(REDRAW_SIGNATURE.length);
                     diag(`[bitmap/bypass:${methodName}] Signed input "${preview(cleanText)}" at (${rawX},${rawY})`);
                     callArgs[0] = cleanText;
-                    return originalFn.apply(bitmap, callArgs);
+                    perf.count('bitmap.draw.bypass.signed');
+                    return invokeOriginalDraw();
                 }
 
                 if (bitmap && bitmap._trBitmapReplayDepth && bitmap._trBitmapReplayDepth > 0) {
-                    return originalFn.apply(bitmap, callArgs);
+                    perf.count('bitmap.draw.bypass.replay');
+                    return invokeOriginalDraw();
                 }
 
                 if (!bitmap || (bitmap._trBitmapSkipDepth && bitmap._trBitmapSkipDepth > 0)) {
-                    return originalFn.apply(bitmap, callArgs);
+                    perf.count('bitmap.draw.bypass.skipDepth');
+                    return invokeOriginalDraw();
                 }
 
                 if (bitmap._trPreferWindowPipeline && bitmap._trWindowPipelineDepth > 0) {
-                    return originalFn.apply(bitmap, callArgs);
+                    perf.count('bitmap.draw.bypass.windowPipeline');
+                    return invokeOriginalDraw();
                 }
 
                 if (bitmap._trMessageContents) {
-                    return originalFn.apply(bitmap, callArgs);
+                    perf.count('bitmap.draw.bypass.messageContents');
+                    return invokeOriginalDraw();
                 }
 
                 const owner = contentsOwners && contentsOwners.get ? contentsOwners.get(bitmap) : null;
@@ -3688,7 +5101,9 @@
                         `bitmap/bypass-small-text|${ownerType}|${bitmap.width || 0}x${bitmap.height || 0}|${visiblePreview}|${debugCallSite}`,
                         () => `[bitmap/bypass-small-text] ${describeBitmap(bitmap, owner)} text="${visiblePreview}"${debugCallSite ? ` site=${debugCallSite}` : ''}`
                     );
-                    return originalFn.apply(bitmap, callArgs);
+                    perf.count('bitmap.draw.bypass.smallText');
+                    perf.top('bitmap.owner', ownerType || 'Bitmap');
+                    return invokeOriginalDraw();
                 }
                 if (!owner
                     && ownerType === 'Bitmap'
@@ -3698,7 +5113,9 @@
                         `bitmap/bypass-normal-char|${ownerType}|${bitmap.width || 0}x${bitmap.height || 0}|${visiblePreview}|${debugCallSite}`,
                         () => `[bitmap/bypass-normal-char] ${describeBitmap(bitmap, owner)} text="${visiblePreview}"${debugCallSite ? ` site=${debugCallSite}` : ''}`
                     );
-                    return originalFn.apply(bitmap, callArgs);
+                    perf.count('bitmap.draw.bypass.normalCharacter');
+                    perf.top('bitmap.owner', ownerType || 'Bitmap');
+                    return invokeOriginalDraw();
                 }
                 if (hasDedicatedOwnerHook(owner) || bitmap._trHasDedicatedTextHook) {
                     const visiblePreview = preview(stripRpgmEscapes(textStr));
@@ -3706,11 +5123,15 @@
                         `bitmap/bypass-owner|${ownerType}|${bitmap.width || 0}x${bitmap.height || 0}|${visiblePreview}`,
                         () => `[bitmap/bypass-owner] ${describeBitmap(bitmap, owner)} text="${visiblePreview}"`
                     );
-                    return originalFn.apply(bitmap, callArgs);
+                    perf.count('bitmap.draw.bypass.dedicatedOwner');
+                    perf.top('bitmap.owner', ownerType || 'Bitmap');
+                    return invokeOriginalDraw();
                 }
+
                 const state = ensureBitmapState(bitmap);
                 if (!state) {
-                    return originalFn.apply(bitmap, callArgs);
+                    perf.count('bitmap.draw.bypass.noState');
+                    return invokeOriginalDraw();
                 }
 
                 const numericX = Number(rawX);
@@ -3722,6 +5143,51 @@
                 const safeLineHeight = Number.isFinite(numericLineHeight) && numericLineHeight > 0
                     ? numericLineHeight
                     : (bitmap.fontSize || 24);
+                const standaloneSpriteGlyphFragment = state.forceBitmapGlyphFragments
+                    ? null
+                    : createStandaloneSpriteGlyphFragment(
+                        bitmap,
+                        methodName,
+                        textStr,
+                        rawX,
+                        rawY,
+                        maxWidth,
+                        lineHeight,
+                        safeAlign,
+                        owner,
+                        ownerType,
+                        debugCallSite
+                    );
+                if (standaloneSpriteGlyphFragment) {
+                    perf.count('spriteText.glyphCandidate');
+                    perf.count('bitmap.draw.bypass.spriteGlyphCandidate');
+                    perf.top('spriteText.glyphOwner', ownerType || 'Bitmap');
+                    const candidates = rememberStandaloneSpriteGlyphCandidate(bitmap, standaloneSpriteGlyphFragment);
+                    if (shouldTraceBitmapDiagnostics()) {
+                        diag(`[bitmap/sprite-glyph:${methodName}] ${describeBitmap(bitmap, owner)} text="${preview(standaloneSpriteGlyphFragment.visibleText)}" @ (${safeX},${safeY}) size=${Math.round(bitmap.width || 0)}x${Math.round(bitmap.height || 0)}${debugCallSite ? ` site=${debugCallSite}` : ''}`);
+                    }
+                    const result = invokeOriginalDraw();
+                    if (candidates.length > 1) {
+                        downgradeStandaloneSpriteGlyphCandidates(bitmap, 'multi-draw-bitmap');
+                        return result;
+                    }
+                    if (!claimStandaloneSpriteGlyphFromKnownAttachment(bitmap, standaloneSpriteGlyphFragment)) {
+                        scheduleStandaloneSpriteGlyphFallback(bitmap, standaloneSpriteGlyphFragment);
+                    }
+                    return result;
+                }
+
+                const pendingSpriteGlyphs = getStandaloneSpriteGlyphCandidates(bitmap, { includeClaimed: true });
+                if (pendingSpriteGlyphs.length > 0) {
+                    downgradeStandaloneSpriteGlyphCandidates(bitmap, 'mixed-bitmap-draw');
+                } else {
+                    try {
+                        if (bitmap && bitmap._trStandaloneSpriteGlyphFragment) {
+                            bitmap._trStandaloneSpriteGlyphFragment = null;
+                        }
+                    } catch (_) {}
+                }
+
                 const widthEstimate = estimateWidth(bitmap, textStr, maxWidth);
                 const drawState = captureBitmapDrawState(bitmap);
                 const fragment = {
@@ -3741,25 +5207,22 @@
                     timestamp: Date.now(),
                     debugCallSite,
                 };
-                fragment.standaloneSpriteGlyphCandidate = isStandaloneSpriteGlyphCandidate(bitmap, fragment, owner);
-                if (fragment.standaloneSpriteGlyphCandidate) {
-                    try { bitmap._trStandaloneSpriteGlyphFragment = fragment; } catch (_) {}
-                }
 
                 if (shouldTraceBitmapDiagnostics()) {
                     diag(`[bitmap/fragment:${methodName}] ${describeBitmap(bitmap, owner)} text="${preview(fragment.visibleText)}" @ (${safeX},${safeY}) width=${Math.round(fragment.width)} max=${Math.round(Number.isFinite(fragment.maxWidth) ? fragment.maxWidth : fragment.width)} line=${Math.round(fragment.lineHeight)}${debugCallSite ? ` site=${debugCallSite}` : ''}`);
                 }
 
-                const result = originalFn.apply(bitmap, callArgs);
+                perf.count('bitmap.fragment.candidate');
+                perf.top('bitmap.owner', ownerType || 'Bitmap');
+                const result = invokeOriginalDraw();
 
                 try {
-                    if (fragment.standaloneSpriteGlyphCandidate) {
-                        return result;
-                    }
                     const stateRef = ensureBitmapState(bitmap);
                     if (!stateRef) return result;
                     stateRef.fragments.push(fragment);
+                    perf.count('bitmap.fragment.queued');
                     if (stateRef.fragments.length > 200) {
+                        perf.count('bitmap.fragment.overflowFlush');
                         flushAggregatedLines(bitmap, 'overflow');
                     } else {
                         scheduleFlush(bitmap);
@@ -3789,6 +5252,8 @@
                     wrapped.__trOriginal = originalFn;
                     try { wrapped.name = `trWrapped_${methodName}`; } catch (_) {}
                     Bitmap.prototype[methodName] = wrapped;
+                    perf.count('bitmap.draw.wrapperInstalled');
+                    perf.top('bitmap.draw.wrapperMethod', methodName);
                     diag(`[bitmap/hook] Wrapped Bitmap.${methodName}`);
                     return true;
                 } catch (wrapError) {
