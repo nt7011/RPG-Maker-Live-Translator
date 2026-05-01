@@ -2937,6 +2937,7 @@
                     state = {
                         glyphs: [],
                         flushTimer: null,
+                        flushDueAt: 0,
                         lastGlyphAt: 0,
                         maxInterGlyphMs: 0,
                     };
@@ -2944,12 +2945,6 @@
                 }
                 if (!Array.isArray(state.glyphs)) state.glyphs = [];
                 return state;
-            };
-
-            const clearSpriteTextTimer = (state) => {
-                if (!state || !state.flushTimer) return;
-                try { clearTimeout(state.flushTimer); } catch (_) {}
-                state.flushTimer = null;
             };
 
             const resolveSpriteTextDelay = (state) => {
@@ -3304,17 +3299,33 @@
                 }
             };
 
+            const runSpriteTextFlushTimer = (parent) => {
+                const state = ensureSpriteTextParentState(parent);
+                if (!state) return;
+                state.flushTimer = null;
+                const waitMs = Math.ceil((state.flushDueAt || 0) - Date.now());
+                if (waitMs > 8) {
+                    state.flushTimer = setTimeout(
+                        () => runSpriteTextFlushTimer(parent),
+                        Math.min(waitMs, SPRITE_GLYPH_MAX_DELAY_MS)
+                    );
+                    return;
+                }
+                state.flushDueAt = 0;
+                try {
+                    flushSpriteTextParent(parent, 'timer');
+                } catch (error) {
+                    logger.warn('[sprite-text/flush-error]', error);
+                }
+            };
+
             const scheduleSpriteTextFlush = (parent) => {
                 const state = ensureSpriteTextParentState(parent);
                 if (!state) return;
-                clearSpriteTextTimer(state);
+                state.flushDueAt = Date.now() + resolveSpriteTextDelay(state);
+                if (state.flushTimer) return;
                 state.flushTimer = setTimeout(() => {
-                    state.flushTimer = null;
-                    try {
-                        flushSpriteTextParent(parent, 'timer');
-                    } catch (error) {
-                        logger.warn('[sprite-text/flush-error]', error);
-                    }
+                    runSpriteTextFlushTimer(parent);
                 }, resolveSpriteTextDelay(state));
             };
 
@@ -3735,11 +3746,16 @@
                     try { bitmap._trStandaloneSpriteGlyphFragment = fragment; } catch (_) {}
                 }
 
-                diag(`[bitmap/fragment:${methodName}] ${describeBitmap(bitmap, owner)} text="${preview(fragment.visibleText)}" @ (${safeX},${safeY}) width=${Math.round(fragment.width)} max=${Math.round(Number.isFinite(fragment.maxWidth) ? fragment.maxWidth : fragment.width)} line=${Math.round(fragment.lineHeight)}${debugCallSite ? ` site=${debugCallSite}` : ''}`);
+                if (shouldTraceBitmapDiagnostics()) {
+                    diag(`[bitmap/fragment:${methodName}] ${describeBitmap(bitmap, owner)} text="${preview(fragment.visibleText)}" @ (${safeX},${safeY}) width=${Math.round(fragment.width)} max=${Math.round(Number.isFinite(fragment.maxWidth) ? fragment.maxWidth : fragment.width)} line=${Math.round(fragment.lineHeight)}${debugCallSite ? ` site=${debugCallSite}` : ''}`);
+                }
 
                 const result = originalFn.apply(bitmap, callArgs);
 
                 try {
+                    if (fragment.standaloneSpriteGlyphCandidate) {
+                        return result;
+                    }
                     const stateRef = ensureBitmapState(bitmap);
                     if (!stateRef) return result;
                     stateRef.fragments.push(fragment);
