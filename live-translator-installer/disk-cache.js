@@ -1,3 +1,5 @@
+// Persistent JSONL translation cache factory.
+// This stores successful runtime translations between launches so repeated text can be served without another provider call.
 (() => {
     'use strict';
 
@@ -7,6 +9,13 @@
 
     if (!globalScope.LiveTranslatorModules) {
         globalScope.LiveTranslatorModules = {};
+    }
+    if (!globalScope.LiveTranslatorModules.runtime) {
+        globalScope.LiveTranslatorModules.runtime = {};
+    }
+    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
+    if (typeof defineRuntimeModule !== 'function') {
+        throw new Error('[LiveTranslator] runtime module registry is unavailable before disk-cache.js.');
     }
 
     function ensureLogger(logger) {
@@ -19,16 +28,37 @@
         };
     }
 
-    function resolveCacheDir() {
+    function getPathContext(explicitPaths) {
+        if (explicitPaths && typeof explicitPaths === 'object') return explicitPaths;
+        return globalScope.LiveTranslatorPaths && typeof globalScope.LiveTranslatorPaths === 'object'
+            ? globalScope.LiveTranslatorPaths
+            : {};
+    }
+
+    function resolveFallbackCacheFile(pathModule) {
         try {
             if (typeof process !== 'undefined' && typeof process.cwd === 'function') {
                 const cwd = process.cwd();
                 if (cwd && typeof cwd === 'string') {
-                    return cwd;
+                    return pathModule.join(cwd, 'translation-cache.log');
                 }
             }
         } catch (_) {}
-        return null;
+        return '';
+    }
+
+    function resolveCacheTarget(pathModule, explicitPaths) {
+        const paths = getPathContext(explicitPaths);
+        let file = typeof paths.translationCacheFile === 'string' ? paths.translationCacheFile : '';
+        if (!file && typeof paths.supportPath === 'string' && paths.supportPath) {
+            file = pathModule.join(paths.supportPath, 'translation-cache.log');
+        }
+        if (!file) file = resolveFallbackCacheFile(pathModule);
+        if (!file) return null;
+        return {
+            file,
+            dir: pathModule.dirname(file),
+        };
     }
 
     function normalizeSettings(settings) {
@@ -64,11 +94,12 @@
         return null;
     }
 
-    globalScope.LiveTranslatorModules.createDiskCache = function createDiskCache(options = {}) {
+    function createDiskCache(options = {}) {
         const {
             logger,
             settings = {},
             defaultCacheMegabytes = 32,
+            paths = null,
         } = options;
 
         const log = ensureLogger(logger);
@@ -97,7 +128,9 @@
             })(),
             clearOnLaunch: !!cacheSettings.clearOnLaunch,
         };
-        const dir = (fs && path) ? resolveCacheDir() : null;
+        const cacheTarget = (fs && path) ? resolveCacheTarget(path, paths) : null;
+        const dir = cacheTarget && cacheTarget.dir;
+        const file = cacheTarget && cacheTarget.file;
         const disabledReason = (() => {
             if (!fs || !path) return 'fs/path modules unavailable';
             if (!dir || typeof dir !== 'string') return 'cache directory could not be resolved';
@@ -112,7 +145,6 @@
             }
         }
         const enabled = !disabledReason;
-        const file = enabled ? path.join(dir, 'translation-cache.log') : null;
 
         const maxMegabytes = normalizedSettings.maxMegabytes;
         const maxBytes = maxMegabytes === Infinity ? Infinity : maxMegabytes * 1024 * 1024;
@@ -254,5 +286,9 @@
             ensureLaunchPrune: prepareOnLaunch,
             getMaxMegabytes: () => maxMegabytes,
         };
-    };
+    }
+
+    defineRuntimeModule('runtime.diskCache', {
+        createDiskCache,
+    });
 })();

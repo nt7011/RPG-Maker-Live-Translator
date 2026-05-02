@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 
+// Extracts translatable strings from RPG Maker data files into precache records.
+// The Precacher UI and CLI use this before translation to scan Map/CommonEvent/etc. JSON without running the game.
+
 'use strict';
 
 const fs = require('fs');

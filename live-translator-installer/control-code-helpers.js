@@ -1,3 +1,5 @@
+// RPG Maker escape/control-code protection helpers.
+// These functions replace control codes with placeholders before translation and restore them before drawing translated text.
 (() => {
     'use strict';
 
@@ -8,9 +10,12 @@
     if (!globalScope.LiveTranslatorModules) {
         globalScope.LiveTranslatorModules = {};
     }
-
-    if (globalScope.LiveTranslatorModules.controlCodeHelpers) {
-        return;
+    if (!globalScope.LiveTranslatorModules.hooks) {
+        globalScope.LiveTranslatorModules.hooks = {};
+    }
+    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
+    if (typeof defineRuntimeModule !== 'function') {
+        throw new Error('[LiveTranslator] runtime module registry is unavailable before control-code-helpers.js.');
     }
 
     const CONVERTED_CONTROL_CODE_PATTERN = '\\x1b(?:[A-Za-z0-9_#]+|[^\\s\\w])(?:\\[[^\\]]*\\]|<[^>]*>)?';
@@ -202,11 +207,11 @@
         return String(text).replace(runPattern, (match) => (/\r\n/.test(match) ? '\r\n' : '\n'));
     }
 
-    globalScope.LiveTranslatorModules.controlCodeHelpers = {
+    defineRuntimeModule('hooks.controlCodeHelpers', {
         stripRpgmEscapes,
         prepareTextForTranslation,
         restoreControlCodes,
         CONTROL_CODE_PATTERN,
         CONTROL_CODE_PLACEHOLDER,
-    };
+    });
 })();

@@ -1,3 +1,5 @@
+// Precacher UI window controller for extraction and batch translation.
+// This standalone page runs offline-style jobs against game data and writes precache files for later game launches.
 (() => {
     'use strict';
 
@@ -71,16 +73,18 @@
         const supportDir = resolveSupportDir();
         const precacherDir = path.join(supportDir, 'precacher');
 
+        const gameRoot = trimTrailingSeparator(getQueryValue('gameRoot')) || process.cwd();
+
         paths = {
-            gameRoot: process.cwd(),
+            gameRoot,
             supportDir,
             precacherDir,
-            dataDir: resolveDataDir(process.cwd()),
+            dataDir: resolveDataDir(gameRoot),
             outputFile: path.join(precacherDir, 'precache.json'),
             rejectedFile: path.join(precacherDir, 'precache-rejected.json'),
             translatorConfig: path.join(supportDir, 'translator.json'),
             settingsFile: path.join(supportDir, 'settings.json'),
-            uiSettingsFile: path.join(supportDir, 'precacher-ui.json'),
+            uiSettingsFile: path.join(precacherDir, 'ui.json'),
         };
 
         precacher = req(path.join(precacherDir, 'precacher.js'));
@@ -192,7 +196,7 @@
             try {
                 settings = readJsonFile(paths.uiSettingsFile);
             } catch (err) {
-                addLog(`[PrecacheUI] Failed to read precacher-ui.json: ${formatError(err)}`);
+                addLog(`[PrecacheUI] Failed to read precacher/ui.json: ${formatError(err)}`);
             }
         }
 
@@ -263,7 +267,7 @@
             return true;
         } catch (err) {
             if (!options.silent) {
-                addLog(`[PrecacheUI] Failed to save precacher-ui.json: ${formatError(err)}`);
+                addLog(`[PrecacheUI] Failed to save precacher/ui.json: ${formatError(err)}`);
             }
             return false;
         }

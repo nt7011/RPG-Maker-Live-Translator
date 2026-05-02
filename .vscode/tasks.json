@@ -45,7 +45,8 @@
                 "experimentation_l",
                 "experimentation",
                 "experimentation_user",
-                "experimentation_goo"
+                "experimentation_goo",
+                "experimentation_yum"
             ],
             "default": "experimentation"
         }

@@ -1,3 +1,5 @@
+// Translation cache, batching, rate limiting, and precache lookup manager.
+// Hooks ask this service for translations; it decides whether to use cached text, precache records, or a provider request.
 (() => {
     'use strict';
 
@@ -7,6 +9,13 @@
 
     if (!globalScope.LiveTranslatorModules) {
         globalScope.LiveTranslatorModules = {};
+    }
+    if (!globalScope.LiveTranslatorModules.runtime) {
+        globalScope.LiveTranslatorModules.runtime = {};
+    }
+    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
+    if (typeof defineRuntimeModule !== 'function') {
+        throw new Error('[LiveTranslator] runtime module registry is unavailable before translation-manager.js.');
     }
 
     function noop() {}
@@ -23,6 +32,16 @@
         }
         return {
             logTranslation: () => {},
+        };
+    }
+
+    function ensureTextTracker(textTracker) {
+        if (textTracker && typeof textTracker.translationEvent === 'function') {
+            return textTracker;
+        }
+        return {
+            translationEvent: () => {},
+            decision: () => {},
         };
     }
 
@@ -81,7 +100,36 @@
         return [];
     }
 
-    function createPrecacheLogSink(logger = {}) {
+    function getPathContext(explicitPaths) {
+        if (explicitPaths && typeof explicitPaths === 'object') return explicitPaths;
+        return globalScope.LiveTranslatorPaths && typeof globalScope.LiveTranslatorPaths === 'object'
+            ? globalScope.LiveTranslatorPaths
+            : {};
+    }
+
+    function resolvePrecacheLogFile(pathModule, explicitPaths) {
+        const paths = getPathContext(explicitPaths);
+        if (typeof paths.precacheLogFile === 'string' && paths.precacheLogFile) {
+            return paths.precacheLogFile;
+        }
+        if (typeof paths.supportPath === 'string' && paths.supportPath) {
+            return pathModule.join(paths.supportPath, PRECACHE_LOG_FILE);
+        }
+        try {
+            const cwd = (typeof process !== 'undefined' && process && typeof process.cwd === 'function')
+                ? process.cwd()
+                : null;
+            return cwd ? pathModule.join(cwd, PRECACHE_LOG_FILE) : '';
+        } catch (_) {
+            return '';
+        }
+    }
+
+    function createPrecacheLogSink(options = {}) {
+        const {
+            logger = {},
+            paths = null,
+        } = options || {};
         let fs = null;
         let path = null;
         try {
@@ -94,22 +142,13 @@
             }
         } catch (_) {}
 
-        const cwd = (() => {
-            try {
-                return (typeof process !== 'undefined' && process && typeof process.cwd === 'function')
-                    ? process.cwd()
-                    : null;
-            } catch (_) {
-                return null;
-            }
-        })();
-        if (!fs || !path || !cwd) {
+        const file = path ? resolvePrecacheLogFile(path, paths) : '';
+        if (!fs || !path || !file) {
             return { write: () => {} };
         }
 
-        const file = path.join(cwd, PRECACHE_LOG_FILE);
         const warn = typeof logger.warn === 'function' ? logger.warn.bind(logger) : () => {};
-        clearPrecacheRuntimeLogs(fs, path, cwd, warn);
+        clearPrecacheRuntimeLogs(fs, file, warn);
         let chain = Promise.resolve();
 
         return {
@@ -129,8 +168,8 @@
         };
     }
 
-    function clearPrecacheRuntimeLogs(fs, path, cwd, warn) {
-        clearRuntimeLogFile(fs, path.join(cwd, PRECACHE_LOG_FILE), warn);
+    function clearPrecacheRuntimeLogs(fs, file, warn) {
+        clearRuntimeLogFile(fs, file, warn);
     }
 
     function clearRuntimeLogFile(fs, file, warn) {
@@ -352,10 +391,11 @@
     function createPrecacheStore(options = {}) {
         const {
             logger = {},
+            paths = null,
         } = options || {};
         const records = getLoadedPrecacheRecords();
         const tables = buildPrecacheTables(records);
-        const sink = createPrecacheLogSink(logger);
+        const sink = createPrecacheLogSink({ logger, paths });
         const active = tables.exact.size > 0;
 
         const writeLog = (payload) => {
@@ -780,10 +820,12 @@
             precacheStore = null,
             diag = noop,
             settings = {},
+            textTracker = null,
         } = options || {};
 
         const logError = typeof logger.error === 'function' ? logger.error.bind(logger) : console.error;
         const telemetrySafe = ensureTelemetry(telemetry);
+        const textTrackerSafe = ensureTextTracker(textTracker);
         const disk = diskCache && typeof diskCache === 'object' ? diskCache : { enabled: false };
         let translateSeq = 0;
 
@@ -793,23 +835,52 @@
             requestTranslation,
             requestTranslationStream,
             shouldSkip,
+            describeSkip,
             performTranslation,
             performTranslationStream,
             storeCompletedTranslation,
         };
 
-        function shouldSkip(text) {
-            if (!text) return true;
-            const trimmed = String(text).trim();
-            if (!trimmed) return true;
+        function describeSkip(text) {
+            const raw = String(text ?? '');
+            const trimmed = raw.trim();
             const disableCjkFilter = !!(settings
                 && settings.translation
                 && settings.translation.disableCjkFilter);
-            if (disableCjkFilter) return false;
             const hasKorean = /[\uAC00-\uD7AF]/u.test(trimmed);
-            if (hasKorean) return true;
             const hasJapaneseOrChinese = /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF]/u.test(trimmed);
-            return !hasJapaneseOrChinese;
+            const base = {
+                skip: false,
+                reason: '',
+                disableCjkFilter,
+                hasJapaneseOrChinese,
+                hasKorean,
+                length: trimmed.length,
+            };
+            if (!raw) {
+                return Object.assign(base, { skip: true, reason: 'emptyInput' });
+            }
+            if (!trimmed) {
+                return Object.assign(base, { skip: true, reason: 'emptyTrimmed' });
+            }
+            if (disableCjkFilter) {
+                return Object.assign(base, { reason: 'cjkFilterDisabled' });
+            }
+            if (hasKorean) {
+                return Object.assign(base, { skip: true, reason: 'koreanText' });
+            }
+            if (!hasJapaneseOrChinese) {
+                return Object.assign(base, { skip: true, reason: 'noJapaneseOrChinese' });
+            }
+            return Object.assign(base, { reason: 'hasJapaneseOrChinese' });
+        }
+
+        function shouldSkip(text) {
+            return describeSkip(text).skip;
+        }
+
+        function getSkipReason(text) {
+            return describeSkip(text).reason;
         }
 
         function isAbortErrorLike(error) {
@@ -844,13 +915,45 @@
             try { cache.ongoing.delete(normalized); } catch (_) {}
         }
 
-        function resolvePrecacheShortcut(normalized) {
+        function normalizeRequestContext(context, normalized) {
+            const source = context && typeof context === 'object' ? context : {};
+            return {
+                recordId: source.recordId ? String(source.recordId) : '',
+                hook: source.hook ? String(source.hook) : '',
+                source: source.source ? String(source.source) : '',
+                normalizedSource: normalized,
+            };
+        }
+
+        function logTranslationEvent(event, normalized, result = null, context = {}) {
+            telemetrySafe.logTranslation(event, normalized, result);
+            textTrackerSafe.translationEvent(event, normalized, result, context);
+        }
+
+        function wireRecordToPromise(translationPromise, normalized, context) {
+            if (!context || !context.recordId || !translationPromise || typeof translationPromise.then !== 'function') {
+                return translationPromise;
+            }
+            translationPromise.then(
+                (translated) => {
+                    textTrackerSafe.translationEvent('completed', normalized, translated, context);
+                    return translated;
+                },
+                (error) => {
+                    const message = error && error.message ? error.message : 'unknown error';
+                    textTrackerSafe.translationEvent(isAbortErrorLike(error) ? 'aborted' : 'error', normalized, message, context);
+                }
+            );
+            return translationPromise;
+        }
+
+        function resolvePrecacheShortcut(normalized, context = {}) {
             if (!precacheStore || typeof precacheStore.lookup !== 'function') return null;
             const hit = precacheStore.lookup(normalized);
             if (!hit || typeof hit.translation !== 'string' || !hit.translation.trim()) return null;
 
             storeCompletedTranslation(normalized, hit.translation);
-            telemetrySafe.logTranslation('precache_hit', normalized, hit.translation);
+            logTranslationEvent('precache_hit', normalized, hit.translation, Object.assign({}, context, { source: 'precache' }));
             return hit.translation;
         }
 
@@ -876,59 +979,87 @@
             return translationPromise;
         }
 
-        function requestTranslation(text) {
+        function requestTranslation(text, context = {}) {
             const normalized = normalizeCacheKey(text);
-            telemetrySafe.logTranslation('request', normalized);
+            const requestContext = normalizeRequestContext(context, normalized);
+            logTranslationEvent('request', normalized, null, requestContext);
 
-            const precached = resolvePrecacheShortcut(normalized);
+            const precached = resolvePrecacheShortcut(normalized, requestContext);
             if (precached !== null) {
                 return Promise.resolve(precached);
             }
 
             if (cache.completed.has(normalized)) {
                 const existing = cache.completed.get(normalized);
-                telemetrySafe.logTranslation('cache_hit', normalized, existing);
+                logTranslationEvent('cache_hit', normalized, existing, Object.assign({}, requestContext, { source: 'cache' }));
                 return Promise.resolve(existing);
             }
 
             if (cache.ongoing.has(normalized)) {
-                return cache.ongoing.get(normalized);
+                const ongoing = cache.ongoing.get(normalized);
+                if (requestContext.recordId) {
+                    textTrackerSafe.decision(requestContext.recordId, 'translation.joined_ongoing', '', {
+                        normalizedSource: normalized,
+                    });
+                }
+                wireRecordToPromise(ongoing, normalized, requestContext);
+                return ongoing;
             }
 
-            telemetrySafe.logTranslation('cache_miss', normalized);
+            logTranslationEvent('cache_miss', normalized, null, requestContext);
             if (isCacheOnlyProvider) {
-                telemetrySafe.logTranslation('skip', normalized, 'cache miss in none mode');
+                logTranslationEvent('skip', normalized, 'cache miss in none mode', requestContext);
                 return Promise.resolve(normalized);
             }
             const translationPromise = cache.performTranslation(normalized);
+            wireRecordToPromise(translationPromise, normalized, requestContext);
             return trackTranslationPromise(normalized, translationPromise);
         }
 
         function requestTranslationStream(text, options = {}) {
             const normalized = normalizeCacheKey(text);
-            telemetrySafe.logTranslation('request', normalized);
+            const requestContext = normalizeRequestContext(options, normalized);
+            logTranslationEvent('request', normalized, null, requestContext);
 
-            const precached = resolvePrecacheShortcut(normalized);
+            const precached = resolvePrecacheShortcut(normalized, requestContext);
             if (precached !== null) {
                 return Promise.resolve(precached);
             }
 
             if (cache.completed.has(normalized)) {
                 const existing = cache.completed.get(normalized);
-                telemetrySafe.logTranslation('cache_hit', normalized, existing);
+                logTranslationEvent('cache_hit', normalized, existing, Object.assign({}, requestContext, { source: 'cache' }));
                 return Promise.resolve(existing);
             }
 
             if (cache.ongoing.has(normalized)) {
-                return cache.ongoing.get(normalized);
+                const ongoing = cache.ongoing.get(normalized);
+                if (requestContext.recordId) {
+                    textTrackerSafe.decision(requestContext.recordId, 'translation.joined_ongoing', '', {
+                        normalizedSource: normalized,
+                    });
+                }
+                wireRecordToPromise(ongoing, normalized, requestContext);
+                return ongoing;
             }
 
-            telemetrySafe.logTranslation('cache_miss', normalized);
+            logTranslationEvent('cache_miss', normalized, null, requestContext);
             if (isCacheOnlyProvider) {
-                telemetrySafe.logTranslation('skip', normalized, 'cache miss in none mode');
+                logTranslationEvent('skip', normalized, 'cache miss in none mode', requestContext);
                 return Promise.resolve(normalized);
             }
-            const translationPromise = cache.performTranslationStream(normalized, options);
+            const streamOptions = Object.assign({}, options);
+            if (requestContext.recordId && typeof options.onDelta === 'function') {
+                streamOptions.onDelta = (partial) => {
+                    // Stream delta diagnostics are disabled because they are too noisy.
+                    // textTrackerSafe.decision(requestContext.recordId, 'translation.stream_delta', '', {
+                    //     preview: preview(partial),
+                    // });
+                    return options.onDelta(partial);
+                };
+            }
+            const translationPromise = cache.performTranslationStream(normalized, streamOptions);
+            wireRecordToPromise(translationPromise, normalized, requestContext);
             return trackTranslationPromise(normalized, translationPromise);
         }
 
@@ -1019,6 +1150,8 @@
         }
 
         cache.shouldSkip = shouldSkip;
+        cache.describeSkip = describeSkip;
+        cache.getSkipReason = getSkipReason;
         cache.requestTranslation = requestTranslation;
         cache.requestTranslationStream = requestTranslationStream;
         cache.performTranslation = performTranslation;
@@ -1027,7 +1160,7 @@
         return cache;
     }
 
-    globalScope.LiveTranslatorModules.createTranslationManager = function createTranslationManager(options = {}) {
+    function createTranslationManager(options = {}) {
         const {
             logger,
             telemetry,
@@ -1041,6 +1174,8 @@
             dbg,
             diag,
             settings = {},
+            textTracker = null,
+            paths = null,
         } = options;
 
         const rateLimiter = createRateLimiter({ dbg });
@@ -1051,7 +1186,7 @@
             logger,
             diag,
         });
-        const precacheStore = createPrecacheStore({ logger });
+        const precacheStore = createPrecacheStore({ logger, paths });
         try {
             if (precacheStore && precacheStore.active && typeof logger.info === 'function') {
                 const stats = precacheStore.getStats();
@@ -1075,8 +1210,13 @@
             precacheStore,
             diag,
             settings,
+            textTracker,
         });
 
         return { translationCache };
-    };
+    }
+
+    defineRuntimeModule('runtime.translationManager', {
+        createTranslationManager,
+    });
 })();

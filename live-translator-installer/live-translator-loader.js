@@ -1,116 +1,198 @@
+// RPG Maker loads this file from js/plugins as the plugin entry point.
+// It locates the live-translator support folder, reads the install manifest, loads loader helpers, then runs the declared runtime phases.
 (() => {
     'use strict';
 
-    const SUPPORT_SCRIPTS = [
-        'translator.js',
-        'window-helpers.js',
-        'control-code-helpers.js',
-        'hooks.js',
-        'disk-cache.js',
-        'window-draw-hooks.js',
-        'translation-manager.js',
-        'text-replacement-addon.js',
-        'precacher-ui-launcher.js',
-    ];
-    const SUPPORT_FILES = ['translator.json', 'settings.json'];
-    const OPTIONAL_SUPPORT_FILES = ['precacher/precache.json'];
-    const MIN_NW_VERSION = '0.105.0';
-    const DIAGNOSTICS_FILE = 'diagnostics.log';
+    const INSTALL_MANIFEST_FILE = 'install-manifest.json';
 
-    function resolveDiagnosticsPath() {
-        try {
-            const req = (typeof require === 'function')
-                ? require
-                : (typeof window !== 'undefined' && typeof window.require === 'function' ? window.require : null);
-            if (!req || typeof process === 'undefined') return null;
-            const fs = req('fs');
-            const path = req('path');
-            const cwd = typeof process.cwd === 'function' ? process.cwd() : null;
-            if (!cwd || typeof cwd !== 'string') return null;
-            const full = path.join(cwd, DIAGNOSTICS_FILE);
-            return { fs, full };
-        } catch (_) {
-            return null;
-        }
-    }
-
-    const earlyDiag = (() => {
-        const resolved = resolveDiagnosticsPath();
-        if (!resolved) return { log: () => {}, init: () => {} };
-        const { fs, full } = resolved;
-        const enqueue = (line) => {
-            try {
-                if (fs && fs.promises && typeof fs.promises.appendFile === 'function') {
-                    fs.promises.appendFile(full, line, 'utf8').catch(() => {});
-                } else if (fs && typeof fs.appendFile === 'function') {
-                    fs.appendFile(full, line, 'utf8', () => {});
-                }
-            } catch (_) {}
-        };
-        return {
-            init: () => {
-                try {
-                    if (fs && typeof fs.writeFileSync === 'function') {
-                        fs.writeFileSync(full, '', { flag: 'w' });
-                        return;
-                    }
-                } catch (_) {}
-            },
-            log: (level, message, err) => {
-                try {
-                    const ts = new Date().toISOString();
-                    const parts = [ts, level, message];
-                    if (err && err.stack) parts.push(err.stack);
-                    else if (err) parts.push(String(err));
-                    enqueue(parts.join(' | ') + '\n');
-                } catch (_) {}
-            }
-        };
-    })();
-
-    function makeFallbackLogger() {
-        const consoleRef = typeof console !== 'undefined' ? console : {};
-        const safe = (method, fallback) => {
-            const fn = consoleRef[method];
-            if (typeof fn === 'function') return fn.bind(consoleRef);
-            return fallback;
-        };
-        return {
-            info: safe('info', () => {}),
-            warn: safe('warn', safe('log', () => {})),
-            error: safe('error', safe('warn', () => {})),
-            debug: safe('debug', safe('log', () => {})),
-        };
+    function getGlobalScope() {
+        return typeof window !== 'undefined'
+            ? window
+            : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
     }
 
     function resolveSupportDir(loaderScript) {
-        try {
-            const base = new URL(loaderScript.src, window.location.href);
-            return new URL('./live-translator/', base).href;
-        } catch (err) {
-            console.error('[LiveTranslatorLoader] Could not resolve support directory:', err);
-            return null;
-        }
+        const base = new URL(loaderScript.src, window.location.href);
+        return new URL('./live-translator/', base).href;
     }
 
-    function injectScript(url) {
+    function injectBootstrapScript(url) {
         return new Promise((resolve, reject) => {
+            const parent = document.head || document.documentElement;
+            if (!parent || typeof parent.appendChild !== 'function') {
+                reject(new Error('[LiveTranslatorLoader] Document has no script insertion point.'));
+                return;
+            }
             const tag = document.createElement('script');
             tag.src = url;
             tag.async = false;
             tag.onload = resolve;
             tag.onerror = () => reject(new Error(`Failed to load ${url}`));
-            document.head.appendChild(tag);
+            parent.appendChild(tag);
         });
     }
 
-    async function loadSupportFile(supportDir, file, logger, required = true, assets = {}) {
-        const log = (level, ...args) => {
-            const fn = logger && typeof logger[level] === 'function' ? logger[level] : null;
-            if (fn) {
-                fn(...args);
+    function installLoaderModuleRegistry() {
+        const scope = getGlobalScope();
+        const modules = Object.create(null);
+        scope.LiveTranslatorLoaderModules = modules;
+        scope.LiveTranslatorLoaderDefine = function defineLoaderModule(name, value) {
+            if (!name || typeof name !== 'string') {
+                throw new Error('[LiveTranslatorLoader] Invalid loader module name.');
             }
+            if (!value || (typeof value !== 'object' && typeof value !== 'function')) {
+                throw new Error(`[LiveTranslatorLoader] Invalid loader module: ${name}`);
+            }
+            if (Object.prototype.hasOwnProperty.call(modules, name)) {
+                throw new Error(`[LiveTranslatorLoader] Duplicate loader module: ${name}`);
+            }
+            modules[name] = typeof Object.freeze === 'function' ? Object.freeze(value) : value;
+            return modules[name];
         };
+        scope.LiveTranslatorLoaderRequire = function requireLoaderModule(name) {
+            if (!Object.prototype.hasOwnProperty.call(modules, name)) {
+                throw new Error(`[LiveTranslatorLoader] Missing loader module: ${name}`);
+            }
+            return modules[name];
+        };
+    }
+
+    function installRuntimeModuleRegistry() {
+        const scope = getGlobalScope();
+        const modules = scope.LiveTranslatorModules && typeof scope.LiveTranslatorModules === 'object'
+            ? scope.LiveTranslatorModules
+            : Object.create(null);
+        scope.LiveTranslatorModules = modules;
+
+        const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
+        const parseName = (name) => {
+            if (!name || typeof name !== 'string') {
+                throw new Error('[LiveTranslator] Invalid runtime module name.');
+            }
+            const parts = name.split('.').map((part) => part.trim()).filter(Boolean);
+            if (!parts.length || parts.join('.') !== name) {
+                throw new Error(`[LiveTranslator] Invalid runtime module path: ${name}`);
+            }
+            return parts;
+        };
+
+        scope.LiveTranslatorDefine = function defineRuntimeModule(name, value) {
+            if (!value || (typeof value !== 'object' && typeof value !== 'function')) {
+                throw new Error(`[LiveTranslator] Invalid runtime module export: ${name}`);
+            }
+
+            const parts = parseName(name);
+            let cursor = modules;
+            for (let i = 0; i < parts.length - 1; i += 1) {
+                const part = parts[i];
+                if (!hasOwn(cursor, part)) {
+                    cursor[part] = Object.create(null);
+                } else if (!cursor[part] || typeof cursor[part] !== 'object') {
+                    throw new Error(`[LiveTranslator] Runtime module namespace conflict: ${parts.slice(0, i + 1).join('.')}`);
+                }
+                cursor = cursor[part];
+            }
+
+            const leaf = parts[parts.length - 1];
+            if (hasOwn(cursor, leaf)) {
+                throw new Error(`[LiveTranslator] Duplicate runtime module: ${name}`);
+            }
+
+            cursor[leaf] = typeof Object.freeze === 'function' ? Object.freeze(value) : value;
+            return cursor[leaf];
+        };
+
+        scope.LiveTranslatorRequire = function requireRuntimeModule(name) {
+            const parts = parseName(name);
+            let cursor = modules;
+            for (const part of parts) {
+                if (!cursor || typeof cursor !== 'object' || !hasOwn(cursor, part)) {
+                    throw new Error(`[LiveTranslator] Missing runtime module: ${name}`);
+                }
+                cursor = cursor[part];
+            }
+            return cursor;
+        };
+    }
+
+    function cloneList(list) {
+        return Array.isArray(list) ? list.slice() : [];
+    }
+
+    function normalizeRuntimeManifest(manifest) {
+        if (!manifest || typeof manifest !== 'object' || !manifest.runtime || typeof manifest.runtime !== 'object') {
+            throw new Error('[LiveTranslatorLoader] install-manifest.json is invalid.');
+        }
+        const runtime = manifest.runtime;
+        return {
+            minNwVersion: runtime.minNwVersion || '',
+            loaderHelpers: cloneList(runtime.loaderHelpers),
+            requiredAssets: cloneList(runtime.requiredAssets),
+            optionalAssets: cloneList(runtime.optionalAssets),
+            scriptLoadOrder: cloneList(runtime.scriptLoadOrder),
+        };
+    }
+
+    async function loadRuntimeManifest(supportDir) {
+        const url = new URL(INSTALL_MANIFEST_FILE, supportDir).href;
+        const response = await fetch(url);
+        if (!response.ok) {
+            throw new Error(`[LiveTranslatorLoader] Failed to load ${INSTALL_MANIFEST_FILE}: HTTP ${response.status} ${response.statusText}`);
+        }
+        return normalizeRuntimeManifest(await response.json());
+    }
+
+    async function loadLoaderHelpers(supportDir, manifest) {
+        const loaderHelpers = Array.isArray(manifest.loaderHelpers) ? manifest.loaderHelpers : [];
+        for (const script of loaderHelpers) {
+            await injectBootstrapScript(new URL(script, supportDir).href);
+        }
+    }
+
+    function getLoaderModule(name) {
+        const requireModule = getGlobalScope().LiveTranslatorLoaderRequire;
+        if (typeof requireModule !== 'function') {
+            throw new Error('[LiveTranslatorLoader] Loader module registry is unavailable.');
+        }
+        return requireModule(name);
+    }
+
+    function getConfigModule() {
+        const requireModule = getGlobalScope().LiveTranslatorRequire;
+        if (typeof requireModule === 'function') {
+            const configModule = requireModule('config');
+            if (configModule && typeof configModule.applyAssets === 'function') return configModule;
+        }
+        throw new Error('[LiveTranslatorLoader] config.js did not expose runtime module config.');
+    }
+
+    function createConfiguredLogger(settings) {
+        const scope = getGlobalScope();
+        const requireModule = scope.LiveTranslatorRequire;
+        if (typeof requireModule === 'function') {
+            const createLoggerBundle = requireModule('createLoggerBundle');
+            const bundle = createLoggerBundle({
+                settings: settings || {},
+                paths: scope.LiveTranslatorPaths || {},
+                maxLogsPerFrame: 1000,
+            });
+            if (bundle && bundle.logger) return bundle.logger;
+        }
+        throw new Error('[LiveTranslatorLoader] logger.js did not expose runtime module createLoggerBundle.');
+    }
+
+    function logAssetEvent(logger, level, ...args) {
+        const fn = logger && typeof logger[level] === 'function' ? logger[level] : null;
+        if (fn) fn(...args);
+    }
+
+    async function loadSupportFile(options = {}) {
+        const {
+            supportDir,
+            file,
+            logger,
+            required = true,
+        } = options;
         const url = new URL(file, supportDir).href;
         try {
             const response = await fetch(url);
@@ -119,46 +201,60 @@
                 err.code = 'HTTP';
                 throw err;
             }
+
             const text = await response.text();
-            const lower = file.toLowerCase();
-            if (lower.endsWith('.json')) {
-                try {
-                    assets[file] = {
-                        raw: text,
-                        json: JSON.parse(text)
-                    };
-                } catch (parseErr) {
-                    const msg = required
-                        ? `[LiveTranslatorLoader][Fatal] ${file} is present but invalid JSON. Re-copy the plugin files.`
-                        : `[LiveTranslatorLoader] Optional asset ${file} is invalid JSON; skipping it.`;
-                    log(required ? 'error' : 'warn', msg, parseErr);
-                    if (required) throw new Error(msg);
-                    return assets;
-                }
-            } else {
-                assets[file] = { raw: text };
-            }
-            log('debug', `[LiveTranslatorLoader] Loaded asset ${file}`);
+            const lower = String(file || '').toLowerCase();
+            const asset = lower.endsWith('.json')
+                ? { raw: text, json: JSON.parse(text) }
+                : { raw: text };
+            logAssetEvent(logger, 'debug', `[LiveTranslatorLoader] Loaded asset ${file}`);
+            return { file, asset };
         } catch (err) {
             if (!required) {
-                log('debug', `[LiveTranslatorLoader] Optional asset ${file} unavailable.`);
-                return assets;
+                logAssetEvent(logger, 'debug', `[LiveTranslatorLoader] Optional asset ${file} unavailable.`);
+                return null;
             }
-            const msg = `[LiveTranslatorLoader][Fatal] Missing or unreadable asset ${file} (expected in live-translator folder next to live-translator-loader.js).`;
-            log('error', msg, err);
+            const msg = `[LiveTranslatorLoader][Fatal] Missing, unreadable, or invalid asset ${file} (expected in live-translator folder next to live-translator-loader.js).`;
+            logAssetEvent(logger, 'error', msg, err);
             throw err;
         }
-        return assets;
     }
 
-    async function loadSupportFiles(supportDir, logger) {
+    async function loadSupportFiles(options = {}) {
+        const {
+            supportDir,
+            logger,
+            manifest = {},
+        } = options;
         const assets = {};
-        await Promise.all(
-            SUPPORT_FILES.map((file) => loadSupportFile(supportDir, file, logger, true, assets))
+        const requiredFiles = Array.isArray(manifest.requiredAssets)
+            ? manifest.requiredAssets
+            : [];
+        const optionalFiles = Array.isArray(manifest.optionalAssets)
+            ? manifest.optionalAssets
+            : [];
+
+        const requiredEntries = await Promise.all(
+            requiredFiles.map((file) => loadSupportFile({
+                supportDir,
+                file,
+                logger,
+                required: true,
+            }))
         );
-        await Promise.all(
-            OPTIONAL_SUPPORT_FILES.map((file) => loadSupportFile(supportDir, file, logger, false, assets))
+        const optionalEntries = await Promise.all(
+            optionalFiles.map((file) => loadSupportFile({
+                supportDir,
+                file,
+                logger,
+                required: false,
+            }))
         );
+        for (const entry of requiredEntries.concat(optionalEntries)) {
+            if (entry && entry.file && entry.asset) {
+                assets[entry.file] = entry.asset;
+            }
+        }
         return assets;
     }
 
@@ -175,7 +271,8 @@
         return 0;
     }
 
-    function detectNwVersion(logger) {
+    function detectNwVersion(logger, minNwVersion) {
+        if (!minNwVersion) return;
         try {
             const nwVersion = (typeof globalThis !== 'undefined'
                 && globalThis.process
@@ -189,9 +286,9 @@
                 return;
             }
 
-            const cmp = compareVersions(nwVersion, MIN_NW_VERSION);
+            const cmp = compareVersions(nwVersion, minNwVersion);
             if (cmp < 0) {
-                logger.warn(`[LiveTranslator][Compat] Detected NW.js version ${nwVersion}; below minimum ${MIN_NW_VERSION}. Update NW.js to avoid syntax errors and translation issues.`);
+                logger.warn(`[LiveTranslator][Compat] Detected NW.js version ${nwVersion}; below minimum ${minNwVersion}. Update NW.js to avoid syntax errors and translation issues.`);
             } else {
                 logger.debug(`[LiveTranslator] Detected NW.js version ${nwVersion}.`);
             }
@@ -200,208 +297,126 @@
         }
     }
 
-    function validateDeepLConfig(deepl, isActiveProvider, logger) {
-        if (!deepl || typeof deepl !== 'object') {
-            const msg = '[LiveTranslator][Config] translator.json missing "settings.deepl" object for DeepL provider.';
-            if (isActiveProvider) throw new Error(msg);
-            logger.warn(msg);
-            return;
+    function beginBootstrapState() {
+        const scope = getGlobalScope();
+        const existing = scope.LiveTranslatorLoaderState;
+        if (scope.LiveTranslatorLoaderBootstrapped
+            || (existing && (existing.status === 'loading' || existing.status === 'ready'))) {
+            return null;
         }
-        const apiKeyRaw = typeof deepl.apiKey === 'string' ? deepl.apiKey : '';
-        const apiKey = apiKeyRaw.trim();
-
-        const msgMissing = '[LiveTranslator][Config] translator.json missing "settings.deepl.apiKey"; DeepL requests will fail.';
-        const msgWhitespace = '[LiveTranslator][Config] settings.deepl.apiKey contains whitespace; check copy/paste and remove spaces.';
-        const msgUnderscore = '[LiveTranslator][Config] settings.deepl.apiKey contains underscore; DeepL keys typically use hyphens. Verify the key.';
-
-        if (!apiKey) {
-            if (isActiveProvider) {
-                logger.error(msgMissing);
-                throw new Error(msgMissing);
-            }
-            logger.warn(msgMissing);
-            return;
-        }
-        if (/\s/.test(apiKeyRaw)) {
-            if (isActiveProvider) {
-                const err = new Error(msgWhitespace);
-                logger.error(msgWhitespace);
-                throw err;
-            }
-            logger.warn(msgWhitespace);
-        }
-        if (/_/.test(apiKeyRaw)) {
-            if (isActiveProvider) {
-                const err = new Error(msgUnderscore);
-                logger.error(msgUnderscore);
-                throw err;
-            }
-            logger.warn(msgUnderscore);
-        }
+        scope.LiveTranslatorLoaderState = {
+            status: 'loading',
+            startedAt: Date.now(),
+            error: null,
+        };
+        return scope.LiveTranslatorLoaderState;
     }
 
-    function validateGameMessageSettings(settings, logger) {
-        if (!settings || typeof settings !== 'object') return;
-        const gameMessage = settings.gameMessage;
-        if (!gameMessage || typeof gameMessage !== 'object') return;
-
-        const raw = gameMessage.textScale;
-        if (raw === undefined || raw === null || raw === '') return;
-
-        const numeric = Number(raw);
-        if (!Number.isInteger(numeric) || numeric < 1 || numeric > 100) {
-            logger.warn('[LiveTranslator][Config] settings.json "gameMessage.textScale" should be an integer from 1 to 100. Falling back to 100.');
+    function createRuntimeScriptPlan(manifest) {
+        const scriptLoadOrder = Array.isArray(manifest.scriptLoadOrder)
+            ? manifest.scriptLoadOrder.slice()
+            : [];
+        if (scriptLoadOrder[0] !== 'logger.js' || scriptLoadOrder[1] !== 'config.js') {
+            throw new Error('[LiveTranslatorLoader] runtime.scriptLoadOrder must begin with logger.js and config.js.');
         }
+        return {
+            preAssetScripts: scriptLoadOrder.slice(0, 2),
+            postAssetScripts: scriptLoadOrder.slice(2),
+        };
     }
 
-    function validateTranslationSettings(settings, logger) {
-        if (!settings || typeof settings !== 'object') return;
-        const translation = settings.translation;
-        if (!translation || typeof translation !== 'object') return;
+    async function loadPreAssetScripts(scriptInjector, scriptPlan) {
+        const preAssetScripts = scriptPlan.preAssetScripts;
+        await scriptInjector.injectSupportScript(preAssetScripts[0]);
+        const configuredLogger = createConfiguredLogger({});
+        scriptInjector.setLogger(configuredLogger);
 
-        const raw = Object.prototype.hasOwnProperty.call(translation, 'maxOutputTokens')
-            ? translation.maxOutputTokens
-            : translation.max_output_tokens;
-        if (raw === undefined || raw === null || raw === '') return;
-
-        const numeric = Number(raw);
-        if (!Number.isInteger(numeric) || numeric <= 0) {
-            logger.warn('[LiveTranslator][Config] settings.json "translation.maxOutputTokens" should be a positive integer. Falling back to 512.');
+        for (const script of preAssetScripts.slice(1)) {
+            await scriptInjector.injectSupportScript(script);
         }
-    }
-
-    function validateJsonSanity(assets, logger) {
-        const cfg = assets['translator.json'] && assets['translator.json'].json;
-        if (!cfg || typeof cfg !== 'object') {
-            throw new Error('[LiveTranslator][Config] translator.json missing or invalid.');
-        }
-
-        const provider = (cfg.provider || '').toString().trim().toLowerCase();
-        if (!provider) {
-            throw new Error('[LiveTranslator][Config] translator.json missing required "provider" string (deepl/local/none).');
-        }
-        if (!cfg.settings || typeof cfg.settings !== 'object') {
-            throw new Error('[LiveTranslator][Config] translator.json missing required "settings" object.');
-        }
-
-        if (provider === 'deepl') {
-            validateDeepLConfig(cfg.settings.deepl, true, logger);
-        } else if (provider === 'local') {
-            validateDeepLConfig(cfg.settings.deepl, false, logger);
-            const local = cfg.settings.local;
-            if (!local || typeof local !== 'object') {
-                throw new Error('[LiveTranslator][Config] translator.json missing "settings.local" object for local provider.');
-            } else if (!local.model || typeof local.model !== 'string' || !local.model.trim()) {
-                logger.warn('[LiveTranslator][Config] translator.json missing "settings.local.model"; local LLM requests will fail.');
-            }
-        } else if (provider === 'none') {
-            // Cache-only mode intentionally skips external provider validation.
-        } else {
-            throw new Error(`[LiveTranslator][Config] translator.json contains unsupported provider "${cfg.provider}".`);
-        }
-
-        const settings = assets['settings.json'] && assets['settings.json'].json;
-        if (!settings || typeof settings !== 'object') {
-            throw new Error('[LiveTranslator][Config] settings.json missing or invalid.');
-        }
-        validateGameMessageSettings(settings, logger);
-        validateTranslationSettings(settings, logger);
+        return configuredLogger;
     }
 
     async function bootstrap() {
+        // Phase 0: confirm RPG Maker provided a browser document and the current plugin script.
         if (typeof document === 'undefined') {
-            console.error('[LiveTranslatorLoader] No document context available.');
-            return;
+            throw new Error('[LiveTranslatorLoader] No document context available.');
         }
 
         const loaderScript = document.currentScript;
         if (!loaderScript || !loaderScript.src) {
-            console.error('[LiveTranslatorLoader] document.currentScript unavailable.');
-            return;
+            throw new Error('[LiveTranslatorLoader] document.currentScript unavailable.');
         }
 
         if (typeof window === 'undefined') return;
-        if (window.LiveTranslatorLoaderBootstrapped) {
-            console.log('[LiveTranslatorLoader] Bootstrap already completed, skipping.');
+
+        // Phase 1: claim bootstrap ownership so duplicate plugin loads do not race each other.
+        const state = beginBootstrapState();
+        if (!state) {
+            console.log('[LiveTranslatorLoader] Bootstrap already completed or in progress, skipping.');
             return;
         }
-        window.LiveTranslatorLoaderBootstrapped = true;
+        installLoaderModuleRegistry();
+        installRuntimeModuleRegistry();
 
-        const fallbackLogger = makeFallbackLogger();
-        const diagLogger = {
-            error: (msg, err) => { earlyDiag.log('ERROR', msg, err); fallbackLogger.error(msg, err); },
-            warn: (msg, err) => { earlyDiag.log('WARN', msg, err); fallbackLogger.warn(msg, err); },
-            info: (msg, err) => { earlyDiag.log('INFO', msg, err); fallbackLogger.info(msg, err); },
-            debug: (msg, err) => { fallbackLogger.debug(msg, err); },
-        };
-
-        try { if (typeof earlyDiag.init === 'function') earlyDiag.init(); } catch (_) {}
-
-        const supportDir = resolveSupportDir(loaderScript);
-        if (!supportDir) return;
-        if (!window.LiveTranslatorAssets) window.LiveTranslatorAssets = {};
-
-        let logger = diagLogger;
-
+        let logger = null;
         try {
-            const loggerUrl = new URL('logger.js', supportDir).href;
-            await injectScript(loggerUrl);
-            if (globalThis.LiveTranslatorModules && typeof globalThis.LiveTranslatorModules.createLoggerBundle === 'function') {
-                const bundle = globalThis.LiveTranslatorModules.createLoggerBundle({
-                    settings: window.LiveTranslatorSettings || {},
-                    maxLogsPerFrame: 1000,
-                });
-                if (bundle && bundle.logger) {
-                    logger = bundle.logger;
-                }
-            }
-        } catch (err) {
-            diagLogger.error('[LiveTranslatorLoader] Failed to load logger.js:', err);
-        }
+            // Phase 2: resolve the support folder next to live-translator-loader.js.
+            const supportDir = resolveSupportDir(loaderScript);
 
-        detectNwVersion(logger);
+            // Phase 3: load the install manifest, then the remaining manifest-declared loader helpers.
+            const manifest = await loadRuntimeManifest(supportDir);
+            const scriptPlan = createRuntimeScriptPlan(manifest);
+            await loadLoaderHelpers(supportDir, manifest);
+            const pathResolver = getLoaderModule('pathResolver');
+            const scriptInjectorModule = getLoaderModule('scriptInjector');
 
-        try {
-            const assets = await loadSupportFiles(supportDir, logger);
-            Object.assign(window.LiveTranslatorAssets, assets);
-            if (assets['translator.json'] && assets['translator.json'].json) {
-                window.LiveTranslatorConfig = assets['translator.json'].json;
-            }
-            if (assets['settings.json'] && assets['settings.json'].json) {
-                window.LiveTranslatorSettings = assets['settings.json'].json;
-            }
-            validateJsonSanity(assets, logger);
-        } catch (err) {
-            logger.error('[LiveTranslatorLoader] Failed while loading support assets:', err);
-            throw err;
-        }
+            // Phase 4: create the ordered support-script injector.
+            const scriptInjector = scriptInjectorModule.createScriptInjector({
+                supportDir,
+                document,
+            });
 
-        try {
-            for (const script of SUPPORT_SCRIPTS) {
-                const url = new URL(script, supportDir).href;
-                await injectScript(url);
-                logger.debug(`[LiveTranslatorLoader] Loaded script ${script}`);
-                if (script === 'translator.js'
-                    && window.LiveTranslatorConfig
-                    && String(window.LiveTranslatorConfig.provider || '').trim().toLowerCase() === 'local'
-                    && window.TextProcessor
-                    && typeof window.TextProcessor.validateConfiguredLocalModel === 'function') {
-                    await window.TextProcessor.validateConfiguredLocalModel();
-                    logger.debug('[LiveTranslatorLoader] Validated configured local model selection.');
-                }
-            }
+            // Phase 5: publish runtime paths before logger/config/runtime modules read them.
+            window.LiveTranslatorPaths = pathResolver.createRuntimePaths({
+                loaderScript,
+                supportDir,
+            });
+
+            // Phase 6: load the pre-asset scripts so logging and config asset application are available.
+            logger = await loadPreAssetScripts(scriptInjector, scriptPlan);
+            detectNwVersion(logger, manifest.minNwVersion);
+
+            // Phase 7: fetch translator/settings/precache assets and apply them to runtime globals.
+            const assets = await loadSupportFiles({
+                supportDir,
+                logger,
+                manifest,
+            });
+            getConfigModule().applyAssets(assets, { scope: window, logger });
+            logger = createConfiguredLogger(window.LiveTranslatorSettings);
+            scriptInjector.setLogger(logger);
+
+            // Phase 8: load the remaining runtime scripts in manifest order.
+            await scriptInjector.injectSupportScripts(scriptPlan.postAssetScripts);
+
+            // Phase 9: mark the loader ready only after every declared phase has completed.
+            state.status = 'ready';
+            state.readyAt = Date.now();
+            window.LiveTranslatorLoaderBootstrapped = true;
             logger.info('[LiveTranslatorLoader] All scripts loaded.');
-            try { earlyDiag.log('INFO', '[LiveTranslatorLoader] Bootstrap completed successfully'); } catch (_) {}
         } catch (err) {
-            logger.error('[LiveTranslatorLoader] Failed while loading support scripts:', err);
+            state.status = 'failed';
+            state.failedAt = Date.now();
+            state.error = err && err.message ? err.message : String(err);
+            if (logger && typeof logger.error === 'function') {
+                logger.error('[LiveTranslatorLoader] Failed during bootstrap:', err);
+            }
             throw err;
         }
     }
 
     bootstrap().catch((err) => {
-        try {
-            earlyDiag.log('FATAL', '[LiveTranslatorLoader] Unhandled error during bootstrap', err);
-        } catch (_) {}
         try {
             setTimeout(() => { throw err; }, 0);
         } catch (_) {

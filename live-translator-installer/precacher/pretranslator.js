@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 
+// Batch-translates precache records through the configured translation provider.
+// The Precacher UI and CLI use this after extraction to fill precache.json before the game loads it.
+
 'use strict';
 
 const fs = require('fs');

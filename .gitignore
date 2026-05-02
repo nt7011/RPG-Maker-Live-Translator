@@ -1,5 +1,8 @@
 experimentation*/
 live-translator-installer/settings.json
+live-translator-installer/diagnostics.log
+live-translator-installer/precache.log
+live-translator-installer/translation-cache.log
 reminder_*
 .codex
 

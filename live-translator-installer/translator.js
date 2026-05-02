@@ -1,4 +1,5 @@
-
+// Translation provider facade for DeepL, local LLM, and cache-only modes.
+// Translation-manager calls this module when a text request misses the in-memory, disk, and precache layers.
 (() => {
     'use strict';
 
@@ -6,6 +7,15 @@
     const TRANSLATOR_CONFIG = initializeTranslatorConfig();
     const logger = (() => {
         try {
+            if (typeof globalThis !== 'undefined'
+                && typeof globalThis.LiveTranslatorRequire === 'function') {
+                const createLoggerBundle = globalThis.LiveTranslatorRequire('createLoggerBundle');
+                const bundle = createLoggerBundle({
+                    settings: (typeof globalThis.LiveTranslatorSettings === 'object' && globalThis.LiveTranslatorSettings) || {},
+                    maxLogsPerFrame: 1000,
+                });
+                return bundle && bundle.logger ? bundle.logger : console;
+            }
             if (typeof globalThis !== 'undefined'
                 && globalThis.LiveTranslatorModules
                 && typeof globalThis.LiveTranslatorModules.createLoggerBundle === 'function') {
@@ -39,13 +49,6 @@
                 throw new Error('Streaming translation is only supported for the local provider.');
             }
             return translateOneLocalStream(String(text), TRANSLATOR_CONFIG.settings.local, options);
-        },
-
-        async validateConfiguredLocalModel() {
-            if (TRANSLATOR_CONFIG.provider !== 'local') {
-                return null;
-            }
-            return resolveLocalChatModelSelection(TRANSLATOR_CONFIG.settings.local);
         },
 
         async translateMany(texts, targetLang = null) {

@@ -19,16 +19,31 @@
         "autoDumpIntervalMs": 5000,
         "topLimit": 12
     },
+    "redraw": {
+        "extraPadding": 0,
+        "defaultOutline": 0
+    },
+    "bitmapFallback": {
+        "mode": "redraw"
+    },
     "translation": {
         "disableCjkFilter": false,
         "maxOutputTokens": 512
     },
     "gameMessage": {
-        "textScale": 100
+        "textScale": 100,
+        "originAwareLineBreaks": false
+    },
+    "textScaleOthers": 100,
+    "textTracker": {
+        "formerLimit": 100,
+        "untrackableLimit": 100,
+        "historyLimit": 1600,
+        "decisionLimit": 80
     },
     "diskCache": {
         "enabled": true,
         "maxMegabytes": 2048,
-        "clearOnLaunch": false
+        "clearOnLaunch": true
     }
 }

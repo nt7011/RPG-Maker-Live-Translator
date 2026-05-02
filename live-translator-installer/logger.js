@@ -1,3 +1,5 @@
+// Logging, throttling, and telemetry channel factory.
+// This is loaded early so loader, bootstrap, and hook modules can report failures without spamming the game loop.
 (() => {
     'use strict';
 
@@ -8,56 +10,11 @@
     if (!globalScope.LiveTranslatorModules) {
         globalScope.LiveTranslatorModules = {};
     }
+    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
+    if (typeof defineRuntimeModule !== 'function') {
+        throw new Error('[LiveTranslator] runtime module registry is unavailable before logger.js.');
+    }
 
-    const DIAGNOSTICS_FILE = 'diagnostics.log';
-    const MAX_DIAG_BYTES = 128 * 1024 * 1024;
-    const diagnosticsSink = (() => {
-        try {
-            const req = (typeof require === 'function')
-                ? require
-                : (typeof window !== 'undefined' && typeof window.require === 'function' ? window.require : null);
-            if (!req || typeof process === 'undefined') return { write: () => {} };
-            const fs = req('fs');
-            const path = req('path');
-            const cwd = typeof process.cwd === 'function' ? process.cwd() : null;
-            if (!cwd || typeof cwd !== 'string') return { write: () => {} };
-            const full = path.join(cwd, DIAGNOSTICS_FILE);
-            const ensureSize = async () => {
-                if (!fs || !fs.promises || typeof fs.promises.stat !== 'function') return;
-                try {
-                    const stat = await fs.promises.stat(full);
-                    if (stat && stat.size > MAX_DIAG_BYTES) {
-                        const data = await fs.promises.readFile(full, 'utf8');
-                        if (data && data.length) {
-                            const slice = data.slice(Math.max(0, data.length - MAX_DIAG_BYTES / 2));
-                            await fs.promises.writeFile(full, slice, 'utf8');
-                        }
-                    }
-                } catch (_) {}
-            };
-            const append = (line) => {
-                try {
-                    if (fs && fs.promises && typeof fs.promises.appendFile === 'function') {
-                        fs.promises.appendFile(full, line, 'utf8')
-                            .then(() => ensureSize())
-                            .catch(() => {});
-                    } else if (fs && typeof fs.appendFile === 'function') {
-                        fs.appendFile(full, line, 'utf8', () => {});
-                    }
-                } catch (_) {}
-            };
-            return {
-                write: (level, parts) => {
-                    try {
-                        const line = `${new Date().toISOString()} | ${level} | ${parts.join(' ')}\n`;
-                        append(line);
-                    } catch (_) {}
-                }
-            };
-        } catch (_) {
-            return { write: () => {} };
-        }
-    })();
     const DEFAULT_LOG_LEVELS = {
         error: 0,
         warn: 1,
@@ -117,7 +74,7 @@
         return clone;
     }
 
-    globalScope.LiveTranslatorModules.createLoggerBundle = function createLoggerBundle(options = {}) {
+    defineRuntimeModule('createLoggerBundle', function createLoggerBundle(options = {}) {
         const {
             settings: rawSettings = {},
             logLevels = DEFAULT_LOG_LEVELS,
@@ -244,9 +201,6 @@
         function emit(level, ...args) {
             if (!shouldLog(level)) return;
             if (shouldSuppress(level, args)) return;
-            if (level === 'warn' || level === 'error') {
-                try { diagnosticsSink.write(level.toUpperCase(), args.map((a) => String(a))); } catch (_) {}
-            }
             switch (normalizeLevel(level)) {
                 case 'error':
                     originalConsoleError(...args);
@@ -297,7 +251,7 @@
                 preview: options.preview || defaultPreview,
             }),
         };
-    };
+    });
 
     function createTelemetryChannel(options = {}) {
         const {

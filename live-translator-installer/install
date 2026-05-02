@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Cross-platform installer for Text Replacement Addon
+# Cross-platform installer for RPG Maker Live Translator
 # Detects OS and runs appropriate installer script
 
 set -euo pipefail

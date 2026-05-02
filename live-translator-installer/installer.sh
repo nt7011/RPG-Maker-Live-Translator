@@ -6,12 +6,76 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 game_root="$(cd "${script_dir}/.." && pwd)"
+manifest_path="${script_dir}/install-manifest.json"
 
-echo -e "\033[32mInstalling Text Replacement Addon...\033[0m"
+json_string() {
+    local key="$1"
+    sed -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$manifest_path" | head -n 1
+}
+
+json_array() {
+    local key="$1"
+    sed -n "/\"${key}\"[[:space:]]*:/,/]/p" "$manifest_path" \
+        | sed -n 's/^[[:space:]]*"\([^"]*\)"[[:space:]]*,\{0,1\}[[:space:]]*$/\1/p'
+}
+
+copy_support_entry() {
+    local rel="$1"
+    local source="${script_dir}/${rel}"
+    local destination="${support_dir}/${rel}"
+
+    if [ ! -e "$source" ]; then
+        echo -e "\033[31mManifest entry missing from installer: $rel\033[0m"
+        exit 1
+    fi
+
+    mkdir -p "$(dirname "$destination")"
+    if [ -d "$source" ]; then
+        mkdir -p "$destination"
+        cp -R "$source/." "$destination/"
+    else
+        cp "$source" "$destination"
+    fi
+    echo -e "\033[33mCopied $rel into support directory\033[0m"
+}
+
+remove_obsolete_entry() {
+    local rel="$1"
+    local target="${support_dir}/${rel}"
+
+    if [ -e "$target" ] || [ -L "$target" ]; then
+        rm -f "$target"
+        echo -e "\033[36mRemoved obsolete support path $rel\033[0m"
+    fi
+}
+
+if [ ! -f "$manifest_path" ]; then
+    echo -e "\033[31mError: install-manifest.json not found at $manifest_path\033[0m"
+    exit 1
+fi
+
+support_name="$(json_string supportDirectory)"
+loader_name="$(json_string loader)"
+settings_dev="$(json_string developmentSource)"
+settings_release="$(json_string releaseSource)"
+settings_destination="$(json_string destination)"
+
+if [ -z "$support_name" ] || [ -z "$loader_name" ]; then
+    echo -e "\033[31mError: install-manifest.json is missing supportDirectory or loader\033[0m"
+    exit 1
+fi
+
+for required_array in files loaderHelpers scriptLoadOrder requiredAssets; do
+    if [ -z "$(json_array "$required_array")" ]; then
+        echo -e "\033[31mError: install-manifest.json is missing $required_array\033[0m"
+        exit 1
+    fi
+done
+
+echo -e "\033[32mInstalling RPG Maker Live Translator...\033[0m"
 
 pushd "$game_root" > /dev/null
 
-# Check and fix name field in both package.json and www/package.json
 handled_any=false
 for PKG_PATH in "package.json" "www/package.json"; do
   if [ ! -f "$PKG_PATH" ]; then
@@ -34,7 +98,6 @@ if [ "$handled_any" = false ]; then
   echo -e "\033[33mpackage.json not found - this is normal for some RPG Maker versions\033[0m"
 fi
 
-# Detect folder structure
 PLUGINS_DIR=""
 PLUGINS_FILE=""
 
@@ -53,40 +116,67 @@ else
     exit 1
 fi
 
-loader_path="${script_dir}/live-translator-loader.js"
+loader_path="${script_dir}/${loader_name}"
 
 if [ ! -f "$loader_path" ]; then
-    echo -e "\033[31mError: live-translator-loader.js not found at $loader_path\033[0m"
+    echo -e "\033[31mError: $loader_name not found at $loader_path\033[0m"
     popd > /dev/null
     exit 1
 fi
 
-cp "$loader_path" "$PLUGINS_DIR/live-translator-loader.js"
+cp "$loader_path" "$PLUGINS_DIR/$loader_name"
 echo -e "\033[33mLoader file copied successfully to $PLUGINS_DIR\033[0m"
 
-support_dir="$PLUGINS_DIR/live-translator"
-mkdir -p "$support_dir"
+support_dir="$PLUGINS_DIR/$support_name"
+case "$support_dir" in
+    "$PLUGINS_DIR"/*) ;;
+    *)
+        echo -e "\033[31mRefusing to use unexpected support directory: $support_dir\033[0m"
+        popd > /dev/null
+        exit 1
+        ;;
+esac
 
-while IFS= read -r -d '' file; do
-    name="$(basename "$file")"
-    cp "$file" "$support_dir/$name"
-    echo -e "\033[33mCopied $name into $support_dir\033[0m"
-done < <(find "$script_dir" -maxdepth 1 -type f \
-    ! -name "live-translator-loader.js" \
-    ! -name "install" \
-    ! -name "installer.ps1" \
-    ! -name "installer.sh" \
-    -print0)
+if [ ! -d "$support_dir" ]; then
+    mkdir -p "$support_dir"
+    echo -e "\033[36mCreated plugin support directory at $support_dir\033[0m"
+else
+    echo -e "\033[36mUsing existing plugin support directory at $support_dir\033[0m"
+fi
 
-# Check if the plugin entry already exists in plugins.js
+while IFS= read -r entry; do
+    [ -z "$entry" ] && continue
+    copy_support_entry "$entry"
+done < <(json_array files)
+
+settings_source="${script_dir}/${settings_dev}"
+settings_source_name="local settings.json"
+if [ ! -f "$settings_source" ]; then
+    settings_source="${script_dir}/${settings_release}"
+    settings_source_name="release settings template"
+fi
+if [ ! -f "$settings_source" ]; then
+    echo -e "\033[31mError: no settings source found. Expected local settings.json or release template.\033[0m"
+    popd > /dev/null
+    exit 1
+fi
+cp "$settings_source" "$support_dir/$settings_destination"
+echo -e "\033[33mCopied $settings_source_name to $settings_destination\033[0m"
+
+while IFS= read -r entry; do
+    [ -z "$entry" ] && continue
+    remove_obsolete_entry "$entry"
+done < <(json_array obsolete)
+
+created_plugins_backup=false
 if [ -f "$PLUGINS_FILE" ]; then
-    if grep -q "live-translator-loader" "$PLUGINS_FILE"; then
+    if grep -q "$loader_name" "$PLUGINS_FILE"; then
         echo -e "\033[33mPlugin entry already exists in $PLUGINS_FILE\033[0m"
     else
         echo -e "\033[33mAdding plugin entry to $PLUGINS_FILE...\033[0m"
 
-        # Create a backup
         cp "$PLUGINS_FILE" "$PLUGINS_FILE.backup"
+        created_plugins_backup=true
         echo -e "\033[36mBackup created: $PLUGINS_FILE.backup\033[0m"
 
         entry='{"name":"live-translator-loader","status":true,"description":"Entry point for the live translation system","parameters":{}},'
@@ -106,5 +196,7 @@ fi
 
 popd > /dev/null
 
-echo -e "\033[32mText Replacement Addon installed successfully!\033[0m"
-echo -e "\033[36mA backup of the original plugins.js was created as plugins.js.backup\033[0m"
+echo -e "\033[32mRPG Maker Live Translator installed successfully!\033[0m"
+if [ "$created_plugins_backup" = true ]; then
+    echo -e "\033[36mA backup of the original plugins.js was created as plugins.js.backup\033[0m"
+fi
