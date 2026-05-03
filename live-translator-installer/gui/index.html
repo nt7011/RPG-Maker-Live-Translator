@@ -7,18 +7,37 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <header class="app-header">
-        <div>
-            <h1>Live Translator <span>Monitor</span></h1>
-            <div id="run-state" class="run-state warn">Scaffold only</div>
-        </div>
-        <div class="header-actions">
-            <button id="refresh-status" type="button" class="secondary">Refresh</button>
-            <button id="close-window" type="button" class="secondary">Close</button>
-        </div>
-    </header>
-
     <main>
+        <section class="panel">
+            <div class="section-title compact">
+                <h2>Active</h2>
+                <span id="active-text-summary" class="summary-status neutral">0 entries</span>
+            </div>
+            <div id="active-texts" class="text-record-list">
+                <div class="empty">No trackable active text records.</div>
+            </div>
+        </section>
+
+        <section class="panel">
+            <div class="section-title compact">
+                <h2>Formerly Active</h2>
+                <span id="formerly-active-summary" class="summary-status neutral">0 entries</span>
+            </div>
+            <div id="formerly-active-texts" class="text-record-list">
+                <div class="empty">No formerly active text records.</div>
+            </div>
+        </section>
+
+        <section class="panel">
+            <div class="section-title compact">
+                <h2>Untrackable</h2>
+                <span id="untrackable-summary" class="summary-status neutral">0 entries</span>
+            </div>
+            <div id="untrackable-texts" class="text-record-list">
+                <div class="empty">No untrackable text records.</div>
+            </div>
+        </section>
+
         <section class="panel status-panel">
             <div class="section-title">
                 <h2>Translator Status</h2>
@@ -94,36 +113,6 @@
                 </table>
             </div>
         </details>
-
-        <section class="panel">
-            <div class="section-title compact">
-                <h2>Active</h2>
-                <span id="active-text-summary" class="summary-status neutral">0 entries</span>
-            </div>
-            <div id="active-texts" class="text-record-list">
-                <div class="empty">No trackable active text records.</div>
-            </div>
-        </section>
-
-        <section class="panel">
-            <div class="section-title compact">
-                <h2>Formerly Active</h2>
-                <span id="formerly-active-summary" class="summary-status neutral">0 entries</span>
-            </div>
-            <div id="formerly-active-texts" class="text-record-list">
-                <div class="empty">No formerly active text records.</div>
-            </div>
-        </section>
-
-        <section class="panel">
-            <div class="section-title compact">
-                <h2>Untrackable</h2>
-                <span id="untrackable-summary" class="summary-status neutral">0 entries</span>
-            </div>
-            <div id="untrackable-texts" class="text-record-list">
-                <div class="empty">No untrackable text records.</div>
-            </div>
-        </section>
 
         <section class="panel">
             <div class="logs-header">

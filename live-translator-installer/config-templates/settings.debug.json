@@ -30,6 +30,7 @@
         "disableCjkFilter": false,
         "maxOutputTokens": 512
     },
+    "ignoreTranslationRegex": [],
     "gameMessage": {
         "textScale": 100,
         "originAwareLineBreaks": false

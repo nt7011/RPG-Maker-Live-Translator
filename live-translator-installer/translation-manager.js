@@ -83,6 +83,121 @@
         return aliases;
     }
 
+    const IGNORE_REGEX_SETTING = 'ignoreTranslationRegex';
+    const IGNORE_REGEX_FLAG_ORDER = ['i', 'm', 's', 'u'];
+    const OPTIONAL_IGNORE_REGEX_FLAGS = {
+        i: true,
+        m: true,
+        s: true,
+        u: true,
+    };
+
+    function compileIgnoreTranslationRegexRules(settings, logger = {}) {
+        const warn = typeof logger.warn === 'function' ? logger.warn.bind(logger) : noop;
+        const rawRules = settings && settings[IGNORE_REGEX_SETTING];
+        if (rawRules === undefined || rawRules === null || rawRules === '') return [];
+        if (!Array.isArray(rawRules)) {
+            warn(`[LiveTranslator][Config] settings.json "${IGNORE_REGEX_SETTING}" should be an array of regex strings.`);
+            return [];
+        }
+
+        const rules = [];
+        rawRules.forEach((rawRule, index) => {
+            if (typeof rawRule !== 'string') {
+                warn(`[LiveTranslator][Config] settings.json "${IGNORE_REGEX_SETTING}[${index}]" should be a regex string.`);
+                return;
+            }
+
+            const parsed = parseIgnoreRegexRule(rawRule);
+            if (!parsed.pattern) {
+                warn(`[LiveTranslator][Config] settings.json "${IGNORE_REGEX_SETTING}[${index}]" is empty and was ignored.`);
+                return;
+            }
+
+            const normalizedFlags = normalizeIgnoreRegexFlags(parsed.flags);
+            if (normalizedFlags.error) {
+                warn(`[LiveTranslator][Config] settings.json "${IGNORE_REGEX_SETTING}[${index}]" has unsupported flags "${parsed.flags}". Use only i, m, or s; Unicode mode is always enabled.`);
+                return;
+            }
+
+            try {
+                const regex = new RegExp(parsed.pattern, normalizedFlags.flags);
+                rules.push({
+                    index,
+                    raw: rawRule,
+                    pattern: parsed.pattern,
+                    flags: regex.flags,
+                    display: `/${regex.source}/${regex.flags}`,
+                    slashForm: parsed.slashForm,
+                    regex,
+                });
+            } catch (err) {
+                const message = err && err.message ? err.message : String(err || 'invalid regex');
+                warn(`[LiveTranslator][Config] settings.json "${IGNORE_REGEX_SETTING}[${index}]" is not a valid JavaScript regex: ${message}`);
+            }
+        });
+        return rules;
+    }
+
+    function parseIgnoreRegexRule(rawRule) {
+        const value = String(rawRule || '').trim();
+        if (!value) return { pattern: '', flags: '', slashForm: false };
+        if (value.charAt(0) === '/') {
+            const lastSlash = value.lastIndexOf('/');
+            if (lastSlash > 0 && /^[A-Za-z]*$/u.test(value.slice(lastSlash + 1))) {
+                return {
+                    pattern: value.slice(1, lastSlash),
+                    flags: value.slice(lastSlash + 1),
+                    slashForm: true,
+                };
+            }
+        }
+        return { pattern: value, flags: '', slashForm: false };
+    }
+
+    function normalizeIgnoreRegexFlags(rawFlags) {
+        const seen = { u: true };
+        for (const flag of String(rawFlags || '')) {
+            if (!OPTIONAL_IGNORE_REGEX_FLAGS[flag]) {
+                return { error: true, flags: 'u' };
+            }
+            seen[flag] = true;
+        }
+        return {
+            error: false,
+            flags: IGNORE_REGEX_FLAG_ORDER.filter((flag) => seen[flag]).join(''),
+        };
+    }
+
+    function findIgnoredTranslationRegexMatch(text, rules) {
+        if (!rules || !rules.length) return null;
+        const target = String(text ?? '');
+        for (const rule of rules) {
+            if (!rule || !rule.regex) continue;
+            try {
+                rule.regex.lastIndex = 0;
+                const match = rule.regex.exec(target);
+                if (!match) continue;
+                return {
+                    rule,
+                    matchText: typeof match[0] === 'string' ? match[0] : '',
+                    matchIndex: Number.isFinite(match.index) ? match.index : 0,
+                };
+            } catch (_) {}
+        }
+        return null;
+    }
+
+    function createCompletedTranslationMap(isIgnored) {
+        const map = new Map();
+        const baseHas = map.has.bind(map);
+        const baseGet = map.get.bind(map);
+        const shouldHide = typeof isIgnored === 'function' ? isIgnored : () => false;
+        map.has = (key) => (shouldHide(key) ? false : baseHas(key));
+        map.get = (key) => (shouldHide(key) ? undefined : baseGet(key));
+        return map;
+    }
+
     const PRECACHE_ASSET_KEY = 'precacher/precache.json';
     const PRECACHE_LOG_FILE = 'precache.log';
     const CONTROL_CODE_PLACEHOLDER = '¤';
@@ -827,19 +942,55 @@
         const telemetrySafe = ensureTelemetry(telemetry);
         const textTrackerSafe = ensureTextTracker(textTracker);
         const disk = diskCache && typeof diskCache === 'object' ? diskCache : { enabled: false };
+        const ignoreTranslationRegexRules = compileIgnoreTranslationRegexRules(settings, logger);
         let translateSeq = 0;
 
         const cache = {
-            completed: new Map(),
+            completed: createCompletedTranslationMap((key) => !!describeIgnoreTranslationRegex(key).skip),
             ongoing: new Map(),
             requestTranslation,
             requestTranslationStream,
             shouldSkip,
             describeSkip,
+            shouldIgnoreTranslation,
+            describeIgnoreTranslationRegex,
             performTranslation,
             performTranslationStream,
             storeCompletedTranslation,
         };
+
+        function describeIgnoreTranslationRegex(text) {
+            const raw = String(text ?? '');
+            const trimmed = raw.trim();
+            const ignoredMatch = findIgnoredTranslationRegexMatch(trimmed, ignoreTranslationRegexRules);
+            const base = {
+                skip: false,
+                reason: '',
+                checkedFirst: IGNORE_REGEX_SETTING,
+                regexMode: 'javascript-unicode',
+                regexTarget: 'trimmedTranslationSource',
+                ignoreRegexCount: ignoreTranslationRegexRules.length,
+                length: trimmed.length,
+            };
+            if (!trimmed || !ignoredMatch) return base;
+            const rule = ignoredMatch.rule;
+            return Object.assign(base, {
+                skip: true,
+                reason: IGNORE_REGEX_SETTING,
+                filter: IGNORE_REGEX_SETTING,
+                regex: rule.display,
+                regexIndex: rule.index,
+                regexFlags: rule.flags,
+                regexPattern: rule.pattern,
+                regexSlashForm: rule.slashForm,
+                matchedText: ignoredMatch.matchText,
+                matchIndex: ignoredMatch.matchIndex,
+            });
+        }
+
+        function shouldIgnoreTranslation(text) {
+            return describeIgnoreTranslationRegex(text).skip;
+        }
 
         function describeSkip(text) {
             const raw = String(text ?? '');
@@ -852,6 +1003,10 @@
             const base = {
                 skip: false,
                 reason: '',
+                checkedFirst: IGNORE_REGEX_SETTING,
+                regexMode: 'javascript-unicode',
+                regexTarget: 'trimmedTranslationSource',
+                ignoreRegexCount: ignoreTranslationRegexRules.length,
                 disableCjkFilter,
                 hasJapaneseOrChinese,
                 hasKorean,
@@ -930,6 +1085,17 @@
             textTrackerSafe.translationEvent(event, normalized, result, context);
         }
 
+        function resolveSkipShortcut(normalized, requestContext) {
+            const skipInfo = cache.describeIgnoreTranslationRegex(normalized);
+            if (!skipInfo || skipInfo.skip !== true) return null;
+            const reason = skipInfo.reason || 'translation filter';
+            logTranslationEvent('skip', normalized, reason, Object.assign({}, requestContext, skipInfo, {
+                source: 'filter',
+                skipReason: reason,
+            }));
+            return normalized;
+        }
+
         function wireRecordToPromise(translationPromise, normalized, context) {
             if (!context || !context.recordId || !translationPromise || typeof translationPromise.then !== 'function') {
                 return translationPromise;
@@ -984,6 +1150,11 @@
             const requestContext = normalizeRequestContext(context, normalized);
             logTranslationEvent('request', normalized, null, requestContext);
 
+            const skipped = resolveSkipShortcut(normalized, requestContext);
+            if (skipped !== null) {
+                return Promise.resolve(skipped);
+            }
+
             const precached = resolvePrecacheShortcut(normalized, requestContext);
             if (precached !== null) {
                 return Promise.resolve(precached);
@@ -1020,6 +1191,11 @@
             const normalized = normalizeCacheKey(text);
             const requestContext = normalizeRequestContext(options, normalized);
             logTranslationEvent('request', normalized, null, requestContext);
+
+            const skipped = resolveSkipShortcut(normalized, requestContext);
+            if (skipped !== null) {
+                return Promise.resolve(skipped);
+            }
 
             const precached = resolvePrecacheShortcut(normalized, requestContext);
             if (precached !== null) {
@@ -1065,8 +1241,14 @@
 
         async function performTranslation(text) {
             const normalized = String(text);
-            if (cache.shouldSkip(normalized)) {
-                telemetrySafe.logTranslation('skip', normalized, 'trivial text (no letters/already translated)');
+            const ignoreInfo = cache.describeIgnoreTranslationRegex(normalized);
+            if (ignoreInfo.skip) {
+                telemetrySafe.logTranslation('skip', normalized, ignoreInfo.reason || 'translation filter');
+                return normalized;
+            }
+            const skipInfo = cache.describeSkip(normalized);
+            if (skipInfo.skip) {
+                telemetrySafe.logTranslation('skip', normalized, skipInfo.reason || 'translation filter');
                 return normalized;
             }
 
@@ -1099,8 +1281,14 @@
 
         async function performTranslationStream(text, options = {}) {
             const normalized = String(text);
-            if (cache.shouldSkip(normalized)) {
-                telemetrySafe.logTranslation('skip', normalized, 'trivial text (no letters/already translated)');
+            const ignoreInfo = cache.describeIgnoreTranslationRegex(normalized);
+            if (ignoreInfo.skip) {
+                telemetrySafe.logTranslation('skip', normalized, ignoreInfo.reason || 'translation filter');
+                return normalized;
+            }
+            const skipInfo = cache.describeSkip(normalized);
+            if (skipInfo.skip) {
+                telemetrySafe.logTranslation('skip', normalized, skipInfo.reason || 'translation filter');
                 return normalized;
             }
 
@@ -1152,6 +1340,8 @@
         cache.shouldSkip = shouldSkip;
         cache.describeSkip = describeSkip;
         cache.getSkipReason = getSkipReason;
+        cache.shouldIgnoreTranslation = shouldIgnoreTranslation;
+        cache.describeIgnoreTranslationRegex = describeIgnoreTranslationRegex;
         cache.requestTranslation = requestTranslation;
         cache.requestTranslationStream = requestTranslationStream;
         cache.performTranslation = performTranslation;

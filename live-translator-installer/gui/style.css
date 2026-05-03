@@ -20,33 +20,10 @@ button {
     font: inherit;
 }
 
-.app-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    padding: 20px 28px;
-    background: #ffffff;
-    border-bottom: 1px solid #d9dee7;
-}
-
-h1,
 h2 {
     margin: 0;
     line-height: 1.2;
     letter-spacing: 0;
-}
-
-h1 {
-    font-size: 28px;
-    font-weight: 650;
-}
-
-h1 span {
-    color: #52606d;
-    font-size: 15px;
-    font-weight: 600;
-    text-transform: uppercase;
 }
 
 h2 {
@@ -57,7 +34,7 @@ h2 {
 main {
     display: grid;
     gap: 16px;
-    padding: 18px 28px 28px;
+    padding: 18px 20px 24px;
 }
 
 .panel {
@@ -91,11 +68,6 @@ main {
 
 .section-title.compact {
     margin-bottom: 12px;
-}
-
-.header-actions {
-    display: flex;
-    gap: 8px;
 }
 
 button {
@@ -172,7 +144,6 @@ button:disabled {
 }
 
 .status,
-.run-state,
 .summary-status {
     display: inline-flex;
     align-items: center;
@@ -184,12 +155,6 @@ button:disabled {
     font-weight: 650;
     text-align: center;
     white-space: nowrap;
-}
-
-.run-state {
-    justify-content: flex-start;
-    width: fit-content;
-    margin-top: 6px;
 }
 
 .neutral {
@@ -254,13 +219,15 @@ tbody tr:last-child td {
 }
 
 .text-record-list {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    display: flex;
+    flex-wrap: wrap;
     gap: 8px;
     align-items: start;
+    justify-content: flex-start;
 }
 
 .text-record-list > .empty {
+    flex: 1 1 100%;
     padding: 18px;
     border: 1px dashed #ccd4df;
     border-radius: 8px;
@@ -272,7 +239,10 @@ tbody tr:last-child td {
 }
 
 .text-record {
-    min-width: 0;
+    flex: 0 1 auto;
+    width: fit-content;
+    min-width: 118px;
+    max-width: min(100%, 460px);
     overflow: hidden;
     border: 1px solid #d9dee7;
     border-radius: 8px;
@@ -360,7 +330,8 @@ tbody tr:last-child td {
 }
 
 .text-detail-row {
-    grid-column: 1 / -1;
+    flex: 1 0 100%;
+    width: 100%;
     overflow: hidden;
     border: 1px solid #d9dee7;
     border-left: 6px solid #9aa4b2;
@@ -474,46 +445,55 @@ tbody tr:last-child td {
 }
 
 .text-status-detected .text-bubble {
-    background: #eef1f5;
+    background: #ffffff;
 }
 
 .text-status-pending .text-bubble {
-    background: #fff4d6;
+    background: #92cace
 }
 
 .text-status-translating .text-bubble {
-    background: #e5efff;
+    background: #a1ecf1;
 }
 
 .text-status-completed .text-bubble {
-    background: #e3f6ed;
+    background: #ddf7f3;
 }
 
-.text-status-skipped .text-bubble,
-.text-status-stale .text-bubble,
-.text-status-removed .text-bubble,
+.text-status-skipped .text-bubble {
+    background: #e8ebef;
+}
+
+.text-status-stale .text-bubble {
+    background: #eee7ff;
+}
+
+.text-status-removed .text-bubble {
+    background: #efe2d2;
+}
+
 .text-status-disappeared .text-bubble {
-    background: #eeeaff;
+    background: #f4eaff;
 }
 
 .text-status-failed .text-bubble {
-    background: #fbe1dd;
+    background: #fce1e1;
 }
 
 .text-hook-bitmap .text-bubble {
-    border-left-color: #1f7a8c;
+    border-left-color: #1f2328;
 }
 
 .text-hook-bitmap.text-detail-row {
-    border-left-color: #1f7a8c;
+    border-left-color: #1f2328;
 }
 
 .text-hook-sprite .text-bubble {
-    border-left-color: #8b5cf6;
+    border-left-color: #236a3b;
 }
 
 .text-hook-sprite.text-detail-row {
-    border-left-color: #8b5cf6;
+    border-left-color: #236a3b;
 }
 
 .text-hook-choice .text-bubble {
@@ -525,27 +505,27 @@ tbody tr:last-child td {
 }
 
 .text-hook-help .text-bubble {
-    border-left-color: #2f7d4c;
+    border-left-color: #b58a5a;
 }
 
 .text-hook-help.text-detail-row {
-    border-left-color: #2f7d4c;
+    border-left-color: #b58a5a;
 }
 
 .text-hook-message .text-bubble {
-    border-left-color: #c84b6a;
+    border-left-color: #d64f8a;
 }
 
 .text-hook-message.text-detail-row {
-    border-left-color: #c84b6a;
+    border-left-color: #d64f8a;
 }
 
 .text-hook-pixi .text-bubble {
-    border-left-color: #6b5b95;
+    border-left-color: #73639d;
 }
 
 .text-hook-pixi.text-detail-row {
-    border-left-color: #6b5b95;
+    border-left-color: #73639d;
 }
 
 .text-hook-window .text-bubble {
@@ -588,20 +568,14 @@ tbody tr:last-child td {
         min-width: 0;
     }
 
-    .app-header,
     .section-title,
     .logs-header {
         align-items: stretch;
         flex-direction: column;
     }
 
-    .app-header {
-        display: grid;
-        padding: 16px;
-    }
-
     main {
-        padding: 14px;
+        padding: 12px;
     }
 
     .status-grid {
@@ -609,10 +583,6 @@ tbody tr:last-child td {
     }
 
     .path-grid {
-        grid-template-columns: 1fr;
-    }
-
-    .text-record-list {
         grid-template-columns: 1fr;
     }
 

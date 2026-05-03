@@ -637,21 +637,24 @@
                         : translatedText;
                     restored = sanitizeDrawTextOutput(restored, textEntry.type);
                     textEntry.translatedText = restored;
-                    textEntry.translationStatus = 'completed';
                     textEntry.translationTimestamp = Date.now();
-                    trackWindowEntry(windowData, textEntry, 'completed', {
-                        type: 'translation.completed',
-                    });
-                    dbg(`[Text Updated] "${text}" -> "${restored}"`);
 
-                    if (text.trim() === translatedText) {
+                    if (text.trim() === String(translatedText || '').trim()
+                        || String(textEntry.convertedText || text || '').trim() === String(restored || '').trim()) {
                         dbg(`[Translation Skip] Original and translated text are identical: "${preview(text)}"`);
+                        textEntry.translationStatus = 'skipped';
                         trackWindowEntry(windowData, textEntry, 'skipped', {
                             type: 'translation.skipped',
                             message: 'translated text matched original',
                         });
                         return;
                     }
+
+                    textEntry.translationStatus = 'completed';
+                    trackWindowEntry(windowData, textEntry, 'completed', {
+                        type: 'translation.completed',
+                    });
+                    dbg(`[Text Updated] "${text}" -> "${restored}"`);
 
                     try { redrawTranslatedText(textEntry, windowData); } catch (_) {}
                 })

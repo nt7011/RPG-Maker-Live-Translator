@@ -38,6 +38,17 @@ Visit https://nt7011.github.io/
 
 To translate other languages than Chinese, Japanese, or Korean, set `"translation.disableCjkFilter": true` in `settings.json`.
 
+To suppress specific source strings before any precache/cache/provider translation is applied, add regex strings under `"ignoreTranslationRegex"` in `settings.json`:
+
+```json
+"ignoreTranslationRegex": [
+  "^\\s*[A-Z]\\s*$",
+  "/^SYSTEM:/i"
+]
+```
+
+Rules are checked against the trimmed translation source. They use JavaScript regular expressions in Unicode mode by default. To opt into flags, use slash form such as `"/^SYSTEM:/i"` or `"/^SYSTEM$/m"`. Supported optional flags are `i` (case-insensitive), `m` (make `^`/`$` match line starts/ends), and `s` (make `.` match newlines).
+
 ## Precacher GUI (Beta)
 After installing the plugin, press `Ctrl+Shift+P` in the game window or run `LiveTranslatorPrecacher.open()` from DevTools.
 Extraction follows `settings.json` `translation.disableCjkFilter` and uses the same CJK gate as live translation.

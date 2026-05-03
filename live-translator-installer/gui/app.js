@@ -85,12 +85,6 @@
         el.textContent = value;
     }
 
-    function setRunState(tone, value) {
-        if (!refs['run-state']) return;
-        refs['run-state'].className = `run-state ${tone}`;
-        refs['run-state'].textContent = value;
-    }
-
     function formatNumber(value) {
         const numeric = Number(value);
         if (!Number.isFinite(numeric)) return '0';
@@ -347,25 +341,12 @@
         }
     }
 
-    function refreshStatus() {
-        refreshRuntimeContext();
-        refreshConfigSummary();
-        refreshRuntimeFeed();
-        renderStatus();
-        renderHookResults();
-        renderTextRecordSections();
-        renderLogs();
-        addLog('info', 'Status refresh complete.');
-    }
-
     function renderStatus() {
         const summary = state.hookSummary;
         if (summary && summary.total > 0) {
             const tone = summary.failed > 0 ? 'bad' : (summary.skipped > 0 ? 'warn' : 'ok');
-            setRunState(tone, summary.failed > 0 ? 'Hook failures' : 'Runtime connected');
             setSummaryStatus('runtime-feed', tone, `${formatNumber(summary.installed)} installed / ${formatNumber(summary.total)} hooks`);
         } else {
-            setRunState('warn', 'Waiting for runtime');
             setSummaryStatus('runtime-feed', 'warn', 'Not wired');
         }
         setText('provider', state.provider || '-');
@@ -555,9 +536,26 @@
     }
 
     function getTextRecordDetailInsertIndex(container, activeIndex, recordCount) {
+        const flexRowEndIndex = getTextRecordFlexRowEndIndex(container, activeIndex);
+        if (flexRowEndIndex >= activeIndex) return Math.min(recordCount - 1, flexRowEndIndex);
         const columns = getTextRecordGridColumnCount(container);
         const rowEndIndex = activeIndex + (columns - ((activeIndex % columns) + 1));
         return Math.min(recordCount - 1, rowEndIndex);
+    }
+
+    function getTextRecordFlexRowEndIndex(container, activeIndex) {
+        if (!container || activeIndex < 0) return -1;
+        const records = Array.from(container.children || [])
+            .filter((child) => child && child.classList && child.classList.contains('text-record'));
+        const activeRecord = records[activeIndex];
+        if (!activeRecord) return -1;
+        const rowTop = activeRecord.offsetTop;
+        let rowEndIndex = activeIndex;
+        for (let index = activeIndex + 1; index < records.length; index += 1) {
+            if (Math.abs(records[index].offsetTop - rowTop) > 1) break;
+            rowEndIndex = index;
+        }
+        return rowEndIndex;
     }
 
     function getTextRecordGridColumnCount(container) {
@@ -1062,9 +1060,7 @@
     }
 
     function bindEvents() {
-        refs['refresh-status'].addEventListener('click', refreshStatus);
-        refs['close-window'].addEventListener('click', closeSelf);
-        refs['clear-log'].addEventListener('click', clearLog);
+        if (refs['clear-log']) refs['clear-log'].addEventListener('click', clearLog);
     }
 
     function boot() {
