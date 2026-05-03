@@ -296,6 +296,18 @@
             }
         }
 
+        function isCounterLikeWindowText(text) {
+            const trimmed = String(text || '').trim();
+            const nonSpace = trimmed.replace(/\s+/g, '');
+            const cjkMatch = trimmed.match(/[\u3040-\u30FF\u4E00-\u9FFF]/g);
+            const cjkCount = cjkMatch ? cjkMatch.length : 0;
+            const hasDigit = /\d/.test(trimmed);
+            const onlyNumPunct = /^[0-9()\[\]\-+/*.,:;!?％%]+$/u.test(nonSpace);
+            return (
+                hasDigit && (cjkCount <= 1) && nonSpace.length <= 10
+            ) || onlyNumPunct || /\d+\s*[\u3040-\u30FF\u4E00-\u9FFF]\s*\(\d+\)/u.test(trimmed);
+        }
+
         function clearPendingInvalidation(entry) {
             if (!entry || !entry._trPendingInvalidation) return false;
             delete entry._trPendingInvalidation;
@@ -356,6 +368,216 @@
             return window && isUsableBitmap(window.contents) ? window.contents : null;
         }
 
+        function getBitmapReplayApi() {
+            try {
+                const api = globalScope.LiveTranslatorBitmapReplay;
+                if (!api || api.__token !== 'liveTranslator.bitmapReplay') return null;
+                if (typeof api.ensureBitmapState !== 'function'
+                    || typeof api.nextDrawOrder !== 'function'
+                    || typeof api.collectReplayItems !== 'function'
+                    || typeof api.replayBitmapItems !== 'function'
+                    || typeof api.withBitmapReplay !== 'function'
+                    || typeof api.rectFromDimensions !== 'function') {
+                    return null;
+                }
+                return api;
+            } catch (_) {
+                return null;
+            }
+        }
+
+        function assignWindowTextDrawOrder(contents, entry) {
+            if (!contents || !entry) return;
+            const replayApi = getBitmapReplayApi();
+            if (!replayApi) return;
+            try {
+                const state = replayApi.ensureBitmapState(contents);
+                if (!state) return;
+                entry.drawOrder = replayApi.nextDrawOrder(state);
+            } catch (_) {}
+        }
+
+        function createClearRectFromArea(clearArea, replayApi) {
+            if (!clearArea || !replayApi || typeof replayApi.rectFromDimensions !== 'function') return null;
+            try {
+                return replayApi.rectFromDimensions(clearArea.x, clearArea.y, clearArea.w, clearArea.h);
+            } catch (_) {
+                return null;
+            }
+        }
+
+        function getReplayItemRect(item) {
+            if (!item) return null;
+            if (item.type === 'renderOp' && item.op && item.op.rect) return item.op.rect;
+            if (item.type === 'text' && item.entry && item.entry.bounds) return item.entry.bounds;
+            if (item.type === 'windowText' && item.entry && item.entry.bounds) return item.entry.bounds;
+            return null;
+        }
+
+        function mergeReplayRect(a, b) {
+            const valid = (rect) => rect
+                && Number.isFinite(Number(rect.x1))
+                && Number.isFinite(Number(rect.y1))
+                && Number.isFinite(Number(rect.x2))
+                && Number.isFinite(Number(rect.y2));
+            if (!valid(a)) return valid(b) ? b : null;
+            if (!valid(b)) return a;
+            return {
+                x1: Math.min(Number(a.x1), Number(b.x1)),
+                y1: Math.min(Number(a.y1), Number(b.y1)),
+                x2: Math.max(Number(a.x2), Number(b.x2)),
+                y2: Math.max(Number(a.y2), Number(b.y2)),
+            };
+        }
+
+        function expandReplayDirtyRect(baseRect, items) {
+            let dirtyRect = baseRect || null;
+            if (Array.isArray(items)) {
+                items.forEach((item) => {
+                    dirtyRect = mergeReplayRect(dirtyRect, getReplayItemRect(item));
+                });
+            }
+            return dirtyRect;
+        }
+
+        function replayRectsOverlap(a, b) {
+            if (!a || !b) return false;
+            return Number(a.x1) < Number(b.x2)
+                && Number(a.x2) > Number(b.x1)
+                && Number(a.y1) < Number(b.y2)
+                && Number(a.y2) > Number(b.y1);
+        }
+
+        function getBitmapCanvasContext(contents) {
+            if (!contents) return null;
+            try {
+                const context = contents._context || contents.context || null;
+                if (!context
+                    || typeof context.save !== 'function'
+                    || typeof context.restore !== 'function'
+                    || typeof context.rect !== 'function'
+                    || typeof context.clip !== 'function') {
+                    return null;
+                }
+                return context;
+            } catch (_) {
+                return null;
+            }
+        }
+
+        function getReplayClipArea(contents, rect) {
+            if (!contents || !rect) return null;
+            const x1 = Math.max(0, Math.floor(Math.min(Number(rect.x1), Number(rect.x2))));
+            const y1 = Math.max(0, Math.floor(Math.min(Number(rect.y1), Number(rect.y2))));
+            let x2 = Math.ceil(Math.max(Number(rect.x1), Number(rect.x2)));
+            let y2 = Math.ceil(Math.max(Number(rect.y1), Number(rect.y2)));
+            if (Number.isFinite(Number(contents.width))) {
+                x2 = Math.min(Number(contents.width), x2);
+            }
+            if (Number.isFinite(Number(contents.height))) {
+                y2 = Math.min(Number(contents.height), y2);
+            }
+            const w = x2 - x1;
+            const h = y2 - y1;
+            if (![x1, y1, w, h].every(Number.isFinite) || w <= 0 || h <= 0) return null;
+            return { x: x1, y: y1, w, h };
+        }
+
+        function supportsBitmapReplayClip(contents) {
+            return !!getBitmapCanvasContext(contents);
+        }
+
+        function withBitmapReplayClip(contents, rect, fn) {
+            if (typeof fn !== 'function') return undefined;
+            const context = getBitmapCanvasContext(contents);
+            const clip = getReplayClipArea(contents, rect);
+            if (!context || !clip) return fn();
+            context.save();
+            try {
+                if (typeof context.beginPath === 'function') context.beginPath();
+                context.rect(clip.x, clip.y, clip.w, clip.h);
+                context.clip();
+                return fn();
+            } finally {
+                context.restore();
+            }
+        }
+
+        function windowEntryBelongsToContents(entry, contents) {
+            if (!entry || !contents) return false;
+            try {
+                if (entry.contentsBitmap) return entry.contentsBitmap === contents;
+            } catch (_) {}
+            return true;
+        }
+
+        function collectWindowTextReplayItems(windowData, currentEntry, contents, dirtyRect, currentOrder) {
+            if (!windowData || !windowData.texts || typeof windowData.texts.forEach !== 'function') return [];
+            if (!dirtyRect) return [];
+            const items = [];
+            try {
+                windowData.texts.forEach((entry) => {
+                    if (!entry || entry === currentEntry || entry._trStale) return;
+                    if (!windowEntryBelongsToContents(entry, contents)) return;
+                    if (!entry.bounds || !replayRectsOverlap(dirtyRect, entry.bounds)) return;
+                    const drawOrder = Number(entry.drawOrder) || (Number(currentOrder) + 0.5);
+                    items.push({ type: 'windowText', drawOrder, entry });
+                });
+            } catch (_) {}
+            return items;
+        }
+
+        function getWindowReplayText(entry) {
+            if (!entry) return '';
+            const status = String(entry.translationStatus || '');
+            const translated = entry.translatedText || '';
+            if (status === 'completed' && translated) {
+                return sanitizeDrawTextOutput(translated, entry.type);
+            }
+            return sanitizeDrawTextOutput(entry.convertedText || entry.visibleText || entry.rawText || '', entry.type);
+        }
+
+        function replayWindowTextEntry(targetWindow, contents, entry) {
+            if (!targetWindow || !contents || !entry || entry._trStale) return;
+            const text = getWindowReplayText(entry);
+            if (!text) return;
+            const position = entry.position || {};
+            const params = entry.originalParams || {};
+            try {
+                if (entry.drawState) applyBitmapDrawState(contents, entry.drawState);
+            } catch (_) {}
+            withWindowContents(targetWindow, contents, () => {
+                const signed = REDRAW_SIGNATURE + text;
+                if (entry.type === 'drawTextEx' && typeof targetWindow.drawTextEx === 'function') {
+                    targetWindow.drawTextEx(signed, position.x, position.y);
+                } else if (typeof targetWindow.drawText === 'function') {
+                    targetWindow.drawText(signed, position.x, position.y, params.maxWidth, params.align);
+                }
+            });
+        }
+
+        function combineReplayItems(bitmapItems, windowItems) {
+            return []
+                .concat(Array.isArray(bitmapItems) ? bitmapItems : [])
+                .concat(Array.isArray(windowItems) ? windowItems : [])
+                .sort((a, b) => (Number(a && a.drawOrder) || 0) - (Number(b && b.drawOrder) || 0));
+        }
+
+        function replayMixedItems(contents, targetWindow, items, replayApi, clipRect = null) {
+            if (!contents || !Array.isArray(items) || !items.length) return;
+            const replay = () => {
+                items.forEach((item) => {
+                    if (!item) return;
+                    if (item.type === 'windowText') {
+                        replayWindowTextEntry(targetWindow, contents, item.entry);
+                    } else if (replayApi && typeof replayApi.replayBitmapItems === 'function') {
+                        replayApi.replayBitmapItems(contents, [item]);
+                    }
+                });
+            };
+            return withBitmapReplayClip(contents, clipRect, replay);
+        }
+
         function withWindowContents(window, contents, fn) {
             if (!window || !contents || typeof fn !== 'function') return undefined;
             if (window.contents === contents) return fn();
@@ -399,6 +621,10 @@
             return false;
         }
 
+        function isCoreRefreshWindowType(windowType) {
+            return /^Window_(?:ActorCommand|BattleActor|BattleEnemy|BattleItem|BattleSkill|BattleStatus|ChoiceList|Command|DebugEdit|DebugRange|EquipCommand|EquipItem|EquipSlot|EquipStatus|EventItem|GameEnd|Gold|HorzCommand|ItemCategory|ItemList|MenuActor|MenuCommand|MenuStatus|NameEdit|NameInput|NumberInput|Options|PartyCommand|SavefileList|ShopBuy|ShopCommand|ShopNumber|ShopSell|ShopStatus|SkillList|SkillStatus|SkillType|Status|StatusBase|StatusEquip|StatusParams|TitleCommand)$/u.test(String(windowType || ''));
+        }
+
         function shouldRefreshWindowForTranslation(window, windowData, textEntry = null) {
             if (!window || typeof window.refresh !== 'function') return false;
             if (window._trTranslationRefreshDepth > 0) return false;
@@ -415,12 +641,7 @@
             if (isTransientRefreshWindow(window, windowType)) {
                 return false;
             }
-            try {
-                if (typeof Window_Selectable !== 'undefined' && window instanceof Window_Selectable) {
-                    return true;
-                }
-            } catch (_) {}
-            return /^Window_(BattleSkill|Skill|Item|Equip|Status|Command|Shop|Menu|ActorCommand|PartyCommand)/.test(windowType);
+            return isCoreRefreshWindowType(windowType);
         }
 
         function refreshWindowForTranslation(window, windowData, textEntry) {
@@ -452,6 +673,7 @@
             entry.timestamp = Date.now();
             entry.drawState = captureBitmapDrawState(window && window.contents);
             entry.contentsBitmap = window && window.contents ? window.contents : (entry.contentsBitmap || null);
+            assignWindowTextDrawOrder(entry.contentsBitmap, entry);
             clearPendingInvalidation(entry);
 
             if (textToTranslate && typeof textToTranslate === 'string') {
@@ -485,6 +707,91 @@
             return entry;
         }
 
+        function recordNativeWindowText(window, windowData, text, x, y, type = null, convertedText = null, originalParams = null, reason = 'native') {
+            if (!windowData) return null;
+            const textToDraw = convertedText || text;
+            const trimmed = String(textToDraw || '').trim();
+            if (!trimmed) return null;
+
+            const textKey = generateKey(type, x, y, windowData.windowType, textToDraw);
+            const existing = windowData.texts.get(textKey);
+            if (existing && existing.rawText === text && existing.convertedText === trimmed) {
+                const refreshed = refreshExistingTextEntry(window, existing, text, x, y, type, convertedText, originalParams);
+                refreshed.isTranslatable = false;
+                refreshed.translationStatus = 'skipped';
+                refreshed.skipReason = reason || 'native';
+                refreshed.translationSource = '';
+                refreshed.placeholderInfo = null;
+                dropPendingRedraw(windowData, refreshed, textKey);
+                trackWindowEntry(windowData, refreshed, 'skipped', {
+                    type: 'translation.skipped',
+                    message: refreshed.skipReason,
+                    details: { reason: refreshed.skipReason, nativeReplay: true },
+                });
+                return refreshed;
+            }
+
+            try {
+                const sameSlotKeys = [];
+                windowData.texts.forEach((entry, existingKey) => {
+                    if (!entry || existingKey === textKey) return;
+                    if (entry.type !== type) return;
+                    const position = entry.position || {};
+                    if (Number(position.x) === Number(x) && Number(position.y) === Number(y)) {
+                        sameSlotKeys.push(existingKey);
+                    }
+                });
+                for (const sameSlotKey of sameSlotKeys) {
+                    const staleEntry = windowData.texts.get(sameSlotKey);
+                    markEntryStale(windowData, sameSlotKey, staleEntry);
+                }
+            } catch (_) {}
+
+            const textEntry = {
+                type,
+                rawText: text,
+                convertedText: trimmed,
+                visibleText: stripRpgmEscapes(convertedText || textToDraw || text),
+                drawState: captureBitmapDrawState(window && window.contents),
+                translatedText: null,
+                translationStatus: 'skipped',
+                translationPromise: null,
+                position: { x, y },
+                originalParams: originalParams || {},
+                timestamp: Date.now(),
+                translationSource: '',
+                placeholderInfo: null,
+                contentsBitmap: window && window.contents ? window.contents : null,
+                drawOrder: 0,
+                bounds: null,
+                isTranslatable: false,
+                skipReason: reason || 'native',
+            };
+            assignWindowTextDrawOrder(textEntry.contentsBitmap, textEntry);
+
+            try {
+                let initialBounds = estimateEntryBounds(window, type, textToDraw, x, y, convertedText || textToDraw);
+                const maxWidth = originalParams && Number.isFinite(originalParams.maxWidth) ? originalParams.maxWidth : null;
+                if (maxWidth) {
+                    initialBounds = expandBoundsForMaxWidth(initialBounds, window, x, maxWidth);
+                }
+                textEntry.bounds = initialBounds;
+            } catch (_) {}
+
+            windowData.texts.set(textKey, textEntry);
+            textEntry.recordId = getWindowRecordId(windowData, textKey);
+            trackWindowEntry(windowData, textEntry, 'skipped', {
+                type: 'translation.skipped',
+                message: textEntry.skipReason,
+                details: { reason: textEntry.skipReason, nativeReplay: true },
+            });
+            try {
+                if (!windowData.pendingRedraws) windowData.pendingRedraws = new Map();
+                windowData.pendingRedraws.delete(textKey);
+            } catch (_) {}
+            return textEntry;
+        }
+
         function addTextToWindowData(window, windowData, text, x, y, type = null, convertedText = null, originalParams = null) {
             const textToTranslate = convertedText || text;
             const textKey = generateKey(type, x, y, windowData.windowType, textToTranslate);
@@ -500,7 +807,18 @@
             ) || onlyNumPunct || /\d+\s*[\u3040-\u30FF\u4E00-\u9FFF]\s*\(\d+\)/u.test(trimmed);
 
             if (!trimmed || looksLikeCounter || translationCache.shouldSkip(trimmed)) {
-                return;
+                if (!trimmed) return null;
+                return recordNativeWindowText(
+                    window,
+                    windowData,
+                    text,
+                    x,
+                    y,
+                    type,
+                    convertedText,
+                    originalParams,
+                    looksLikeCounter ? 'counterLike' : 'cacheSkip'
+                );
             }
 
             const existing = windowData.texts.get(textKey);
@@ -554,8 +872,10 @@
                 translationSource,
                 placeholderInfo,
                 contentsBitmap: window && window.contents ? window.contents : null,
+                drawOrder: 0,
                 bounds: null,
             };
+            assignWindowTextDrawOrder(textEntry.contentsBitmap, textEntry);
 
             const visibleText = stripRpgmEscapes(convertedText || textToTranslate || text);
             try {
@@ -567,25 +887,6 @@
             textEntry.bounds = initialBounds;
             } catch (_) {}
             textEntry.visibleText = visibleText;
-
-            try {
-                const dupKeys = [];
-                windowData.texts.forEach((entry, existingKey) => {
-                    if (!entry || entry === textEntry) return;
-                    if (entry.type !== type) return;
-                    const sameConverted = entry.convertedText === trimmed;
-                    const sameSource = translationSource && entry.translationSource === translationSource;
-                    const sameRaw = entry.rawText === text;
-                    if ((sameConverted || sameSource || sameRaw) &&
-                        (entry.position.x !== x || entry.position.y !== y)) {
-                        dupKeys.push(existingKey);
-                    }
-                });
-                for (const dupKey of dupKeys) {
-                    const staleEntry = windowData.texts.get(dupKey);
-                    markEntryStale(windowData, dupKey, staleEntry);
-                }
-            } catch (_) {}
 
             windowData.texts.set(textKey, textEntry);
             textEntry.recordId = getWindowRecordId(windowData, textKey);
@@ -771,6 +1072,11 @@
                 const storedDrawState = contents ? textEntry.drawState : null;
                 let clearArea = null;
                 let aggregationIncremented = false;
+                let replayApi = null;
+                let replayBefore = [];
+                let replayAfter = [];
+                let replayDirtyRect = null;
+                let replayClipRect = null;
 
                 try {
                     if (contents && storedDrawState) {
@@ -829,14 +1135,67 @@
                             clearH = Math.max(0, Math.min(contents.height - clearY, clearH));
                             clearArea = { x: clearX, y: clearY, w: clearW, h: clearH };
                         }
+                        replayApi = getBitmapReplayApi();
+                        if (replayApi) {
+                            try {
+                                const state = replayApi.ensureBitmapState(contents);
+                                const replayRect = clearArea
+                                    ? createClearRectFromArea(clearArea, replayApi)
+                                    : replayApi.rectFromDimensions(0, 0, contents.width, contents.height);
+                                replayClipRect = replayRect;
+                                const currentOrder = Number(textEntry.drawOrder) || 0;
+                                if (state && replayRect && currentOrder > 0) {
+                                    const bitmapReplayBefore = replayApi.collectReplayItems(state, replayRect, textEntry, order => order < currentOrder);
+                                    const bitmapReplayAfter = replayApi.collectReplayItems(state, replayRect, textEntry, order => order > currentOrder);
+                                    replayDirtyRect = expandReplayDirtyRect(
+                                        replayRect,
+                                        bitmapReplayBefore.concat(bitmapReplayAfter)
+                                    );
+                                    // Clipped replay cannot touch pixels outside the clear rect, so native
+                                    // window text outside that rect should not be drawn a second time.
+                                    const windowReplayRect = supportsBitmapReplayClip(contents)
+                                        ? replayRect
+                                        : replayDirtyRect;
+                                    const windowReplayItems = collectWindowTextReplayItems(
+                                        windowData,
+                                        textEntry,
+                                        contents,
+                                        windowReplayRect,
+                                        currentOrder
+                                    );
+                                    replayBefore = combineReplayItems(
+                                        bitmapReplayBefore,
+                                        windowReplayItems.filter(item => (Number(item.drawOrder) || 0) < currentOrder)
+                                    );
+                                    replayAfter = combineReplayItems(
+                                        bitmapReplayAfter,
+                                        windowReplayItems.filter(item => (Number(item.drawOrder) || 0) > currentOrder)
+                                    );
+                                }
+                            } catch (_) {
+                                replayBefore = [];
+                                replayAfter = [];
+                                replayDirtyRect = null;
+                            }
+                        }
                         if (clearArea) {
                             try {
                                 contents._trAggregationDepth = (contents._trAggregationDepth || 0) + 1;
                                 aggregationIncremented = true;
                             } catch (_) {}
                             try {
-                                withWindowRedrawClear(contents, () => {
+                                const clearAndReplay = () => {
                                     contents.clearRect(clearArea.x, clearArea.y, clearArea.w, clearArea.h);
+                                    if (replayApi && replayBefore.length) {
+                                        replayMixedItems(contents, targetWindow, replayBefore, replayApi, replayClipRect);
+                                    }
+                                };
+                                withWindowRedrawClear(contents, () => {
+                                    if (replayApi) {
+                                        replayApi.withBitmapReplay(contents, clearAndReplay);
+                                    } else {
+                                        clearAndReplay();
+                                    }
                                 });
                             } catch (_) {}
                         } else {
@@ -845,8 +1204,18 @@
                                 aggregationIncremented = true;
                             } catch (_) {}
                             try {
-                                withWindowRedrawClear(contents, () => {
+                                const clearAndReplay = () => {
                                     contents.clear();
+                                    if (replayApi && replayBefore.length) {
+                                        replayMixedItems(contents, targetWindow, replayBefore, replayApi, replayClipRect);
+                                    }
+                                };
+                                withWindowRedrawClear(contents, () => {
+                                    if (replayApi) {
+                                        replayApi.withBitmapReplay(contents, clearAndReplay);
+                                    } else {
+                                        clearAndReplay();
+                                    }
                                 });
                             } catch (_) {}
                         }
@@ -858,28 +1227,45 @@
                 try {
                     contents._trPreferWindowPipeline = true;
                     contents._trWindowPipelineDepth = (contents._trWindowPipelineDepth || 0) + 1;
+                    if (contents && storedDrawState) {
+                        try { applyBitmapDrawState(contents, storedDrawState); } catch (_) {}
+                    }
                     telemetry.logDraw('redraw', translatedText, x, y, {
                         windowType: targetWindow.constructor.name,
-                        clearArea
+                        clearArea,
+                        replayBefore: replayBefore.length,
+                        replayAfter: replayAfter.length,
                     });
                     trackWindowDraw(textEntry, 'redraw', {
                         windowType: targetWindow.constructor.name,
                         method: textEntry.type || '',
                         translationDrawn: translatedText,
+                        replayBefore: replayBefore.length,
+                        replayAfter: replayAfter.length,
                     });
-                    withWindowContents(targetWindow, contents, () => {
-                        if (textEntry.type === 'drawTextEx' && typeof targetWindow.drawTextEx === 'function') {
-                            targetWindow.drawTextEx(signedText, x, y);
-                        } else {
-                            targetWindow.drawText(
-                                signedText,
-                                x,
-                                y,
-                                textEntry.originalParams.maxWidth,
-                                textEntry.originalParams.align
-                            );
+                    const drawAndReplayAfter = () => {
+                        withWindowContents(targetWindow, contents, () => {
+                            if (textEntry.type === 'drawTextEx' && typeof targetWindow.drawTextEx === 'function') {
+                                targetWindow.drawTextEx(signedText, x, y);
+                            } else {
+                                targetWindow.drawText(
+                                    signedText,
+                                    x,
+                                    y,
+                                    textEntry.originalParams.maxWidth,
+                                    textEntry.originalParams.align
+                                );
+                            }
+                        });
+                        if (replayApi && replayAfter.length) {
+                            replayMixedItems(contents, targetWindow, replayAfter, replayApi, replayClipRect);
                         }
-                    });
+                    };
+                    if (replayApi) {
+                        replayApi.withBitmapReplay(contents, drawAndReplayAfter);
+                    } else {
+                        drawAndReplayAfter();
+                    }
                     if (contents && prevDrawState) {
                         applyBitmapDrawState(contents, prevDrawState);
                     }
@@ -1011,6 +1397,19 @@
                 }
 
                 if (!trimmed || looksLikeCounter || translationCache.shouldSkip(trimmed)) {
+                    if (trimmed) {
+                        recordNativeWindowText(
+                            this,
+                            windowData,
+                            textStr,
+                            x,
+                            y,
+                            'drawText',
+                            null,
+                            { maxWidth, align },
+                            looksLikeCounter ? 'counterLike' : 'cacheSkip'
+                        );
+                    }
                     return invokeOriginal();
                 }
 
@@ -1163,6 +1562,19 @@
                 }
 
                 if (!convertedTrimmed || translationCache.shouldSkip(convertedTrimmed)) {
+                    if (convertedTrimmed) {
+                        recordNativeWindowText(
+                            this,
+                            windowData,
+                            textStr,
+                            x,
+                            y,
+                            'drawTextEx',
+                            convertedText,
+                            { maxWidth: Infinity, align: 'left' },
+                            'cacheSkip'
+                        );
+                    }
                     return invokeOriginalDrawTextEx();
                 }
 

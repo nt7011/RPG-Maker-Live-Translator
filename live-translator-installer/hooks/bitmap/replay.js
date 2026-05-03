@@ -283,6 +283,15 @@
                 case 'blt':
                     if (typeof bitmap.blt === 'function') bitmap.blt(...op.args);
                     break;
+                case 'bltImage':
+                    if (typeof bitmap.bltImage === 'function') bitmap.bltImage(...op.args);
+                    break;
+                case 'strokeRect':
+                    if (typeof bitmap.strokeRect === 'function') bitmap.strokeRect(...op.args);
+                    break;
+                case 'drawCircle':
+                    if (typeof bitmap.drawCircle === 'function') bitmap.drawCircle(...op.args);
+                    break;
                 default:
                     break;
                 }
@@ -364,6 +373,19 @@
             }
         };
 
+        try {
+            globalScope.LiveTranslatorBitmapReplay = {
+                __token: 'liveTranslator.bitmapReplay',
+                getBitmapState,
+                ensureBitmapState,
+                nextDrawOrder,
+                collectReplayItems,
+                replayBitmapItems,
+                withBitmapReplay,
+                rectFromDimensions,
+                isValidRect,
+            };
+        } catch (_) {}
 
         // The clear rectangle needs enough vertical padding for outlines and
         // descenders but should stay clipped to bitmap bounds.

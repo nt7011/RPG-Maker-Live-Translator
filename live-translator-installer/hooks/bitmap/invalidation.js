@@ -180,6 +180,26 @@
             return rectFromDimensions(x, y, width, height);
         };
 
+        const getActiveWindowContentsBitmap = (owner, data) => {
+            try {
+                if (owner && owner.contents) return owner.contents;
+            } catch (_) {}
+            try {
+                if (data && data.contentsBitmap) return data.contentsBitmap;
+            } catch (_) {}
+            return null;
+        };
+
+        const windowEntryBelongsToBitmap = (entry, bitmap, owner, data) => {
+            if (!entry || !bitmap) return false;
+            try {
+                if (entry.contentsBitmap) return entry.contentsBitmap === bitmap;
+            } catch (_) {}
+            const activeContents = getActiveWindowContentsBitmap(owner, data);
+            if (activeContents) return activeContents === bitmap;
+            return true;
+        };
+
         // Window hooks maintain their own text registry. When a Bitmap belongs
         // to a Window contents object, low-level bitmap invalidation must also
         // stale overlapping window entries.
@@ -209,6 +229,7 @@
             try {
                 data.texts.forEach((entry, key) => {
                     if (!entry) return;
+                    if (!windowEntryBelongsToBitmap(entry, bitmap, owner, data)) return;
                     const entryRect = deriveWindowEntryRect(entry);
                     if (!targetRect || !entryRect || rectanglesOverlap(targetRect, entryRect)) {
                         removed.push({ key, entry });
@@ -504,7 +525,13 @@
             const height = Number.isFinite(Number(dh)) ? dh : sh;
             return {
                 rect: rectOrFalse(rectFromDimensions(dx, dy, width, height)),
-                options: { skipEntryInvalidation: true },
+                options: {
+                    skipEntryInvalidation: true,
+                    recordOp: {
+                        methodName: 'bltImage',
+                        args: Array.isArray(args) ? args.slice() : [],
+                    },
+                },
             };
         });
 
@@ -512,7 +539,13 @@
             const [x, y, w, h] = args;
             return {
                 rect: rectOrFalse(rectFromDimensions(x, y, w, h)),
-                options: { skipEntryInvalidation: true },
+                options: {
+                    skipEntryInvalidation: true,
+                    recordOp: {
+                        methodName: 'strokeRect',
+                        args: Array.isArray(args) ? args.slice() : [],
+                    },
+                },
             };
         });
 
@@ -521,7 +554,13 @@
             const r = Number.isFinite(Number(radius)) ? Number(radius) : 0;
             return {
                 rect: rectOrFalse(rectFromDimensions(Number(x) - r, Number(y) - r, r * 2, r * 2)),
-                options: { skipEntryInvalidation: true },
+                options: {
+                    skipEntryInvalidation: true,
+                    recordOp: {
+                        methodName: 'drawCircle',
+                        args: Array.isArray(args) ? args.slice() : [],
+                    },
+                },
             };
         });
 
