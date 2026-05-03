@@ -467,8 +467,24 @@
 
     function getCurrentGameMessageLineHeight(windowInstance) {
         if (!windowInstance || !windowInstance.contents) return 32;
+        try {
+            if (typeof windowInstance.lineHeight === 'function') {
+                const nativeLineHeight = Number(windowInstance.lineHeight());
+                if (Number.isFinite(nativeLineHeight) && nativeLineHeight > 0) {
+                    return Math.max(1, Math.ceil(nativeLineHeight));
+                }
+            }
+        } catch (_) {}
         const fontSize = Number(windowInstance.contents.fontSize);
         return Number.isFinite(fontSize) && fontSize > 0 ? fontSize + 8 : 32;
+    }
+
+    function canSoftWrapGameMessageText(contentsHeight, lineHeight) {
+        const height = Number(contentsHeight);
+        const line = Number(lineHeight);
+        if (!Number.isFinite(height) || height <= 0 || height === Number.MAX_SAFE_INTEGER) return true;
+        if (!Number.isFinite(line) || line <= 0) return true;
+        return height >= line * 2;
     }
 
     function resetGameMessageWrapPageState(windowInstance, wrapState) {
@@ -648,6 +664,10 @@
     function appendGameMessageTextRun(windowInstance, wrapState, output, raw) {
         const text = String(raw || '');
         if (!text) return;
+        if (!wrapState.allowSoftWrapLineBreaks) {
+            appendMeasuredGameMessageText(windowInstance, wrapState, output, text);
+            return;
+        }
         const tokenWidth = measureGameMessageTokenWidth(windowInstance, { type: 'text', raw: text });
         if (wrapState.currentX + tokenWidth <= wrapState.contentsWidth) {
             appendMeasuredGameMessageText(windowInstance, wrapState, output, text);
@@ -712,6 +732,10 @@
             hasContentOnLine: false,
             trimLeadingWhitespace: false,
         };
+        wrapState.allowSoftWrapLineBreaks = canSoftWrapGameMessageText(
+            wrapState.contentsHeight,
+            wrapState.lineHeight
+        );
         const output = [];
         const tokens = tokenizeGameMessageText(source);
 
@@ -733,7 +757,9 @@
             if (token.type === 'escape') {
                 if (token.code === 'I') {
                     const iconWidth = measureGameMessageTokenWidth(windowInstance, token);
-                    if (wrapState.hasContentOnLine && wrapState.currentX + iconWidth > wrapState.contentsWidth) {
+                    if (wrapState.allowSoftWrapLineBreaks
+                        && wrapState.hasContentOnLine
+                        && wrapState.currentX + iconWidth > wrapState.contentsWidth) {
                         output.push('\n');
                         commitGameMessageWrapLineBreak(windowInstance, wrapState, true);
                     }
@@ -748,7 +774,9 @@
                     continue;
                 }
                 const spaceWidth = measureGameMessageTokenWidth(windowInstance, token);
-                if (wrapState.hasContentOnLine && wrapState.currentX + spaceWidth > wrapState.contentsWidth) {
+                if (wrapState.allowSoftWrapLineBreaks
+                    && wrapState.hasContentOnLine
+                    && wrapState.currentX + spaceWidth > wrapState.contentsWidth) {
                     output.push('\n');
                     commitGameMessageWrapLineBreak(windowInstance, wrapState, true);
                     continue;

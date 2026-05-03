@@ -406,7 +406,7 @@
             if (isDedicatedMessageWindow(window)) {
                 return false;
             }
-            if (/Window_(Message|Message_Battle|ChoiceList|NameBox)/.test(windowType)) {
+            if (/Window_(Message|Message_Battle|NameBox)/.test(windowType)) {
                 return false;
             }
             if (wasDrawnToDetachedContents(window, textEntry)) {
@@ -754,17 +754,6 @@
                             windowType: targetWindow.constructor.name,
                         });
                     }
-                    return;
-                }
-
-                if (windowData.windowType === 'Window_ChoiceList') {
-                    if (!windowData._choiceSkipLogged) {
-                        dbg('[Choice] Skipping low-level redraw for choice list - handled by makeCommandList hook');
-                        windowData._choiceSkipLogged = true;
-                    }
-                    trackDecision(textEntry.recordId, 'draw.skipped', 'choice list handled by dedicated hook', {
-                        windowType: windowData.windowType || '',
-                    });
                     return;
                 }
 

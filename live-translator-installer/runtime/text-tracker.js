@@ -49,7 +49,6 @@
     const HOOK_LABELS = {
         bitmap: 'Bitmap',
         sprite_text: 'Sprite Text',
-        choice: 'Choice List',
         help_window: 'Help Window',
         drawText: 'Window Draw',
         drawTextEx: 'Window Draw',
@@ -58,7 +57,6 @@
     };
 
     const TRACKABLE_HOOK_CLASSES = {
-        choice: true,
         help: true,
         message: true,
         pixi: true,
@@ -598,7 +596,6 @@
             if (value.includes('sprite')) return 'sprite';
             if (value.includes('pixi')) return 'pixi';
             if (value.includes('bitmap')) return 'bitmap';
-            if (value.includes('choice')) return 'window';
             if (value.includes('message')) return 'window';
             if (value.includes('help')) return 'window';
             return '';
@@ -954,7 +951,6 @@
         const value = String(hook || '').toLowerCase();
         if (value.includes('bitmap')) return 'bitmap';
         if (value.includes('sprite')) return 'sprite';
-        if (value.includes('choice')) return 'choice';
         if (value.includes('help')) return 'help';
         if (value.includes('message')) return 'message';
         if (value.includes('pixi')) return 'pixi';

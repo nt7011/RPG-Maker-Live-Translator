@@ -88,4 +88,6 @@ Extraction follows `settings.json` `translation.disableCjkFilter` and uses the s
 
 3.2 - new: sprite-text-hook - replaces most of the bitmap text handling. new GUI for diagnosis/status. add options: textScaleOthers, originAwareLineBreaks
 
+3.2.3 - retire choice hook now that other hooks are mature
+
 ![License](https://img.shields.io/badge/License-CC%20BY%204.0-blue.svg)

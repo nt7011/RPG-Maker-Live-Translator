@@ -181,7 +181,6 @@
             const windowStateInstaller = resolveWindowStateInstaller();
             const windowDrawInstaller = resolveWindowDrawInstaller();
             const gameMessageInstaller = resolveHookInstaller('gameMessage', 'game-message-hook.js');
-            const choiceListInstaller = resolveHookInstaller('choiceList', 'choice-list-hook.js');
             const helpWindowInstaller = resolveHookInstaller('helpWindow', 'help-window-hook.js');
             const spriteTextInstaller = resolveHookInstaller('spriteText', 'sprite-text-hook.js');
             const bitmapDrawTextInstaller = resolveHookInstaller('bitmapDrawText', 'bitmap-draw-text-hook.js');
@@ -294,12 +293,6 @@
                     category: 'window',
                     module: 'window-draw-hooks.js',
                 }, installWindowDrawHooks);
-                runHookPhase(results, {
-                    name: 'choice-list',
-                    displayName: 'Choice List',
-                    category: 'window',
-                    module: 'choice-list-hook.js',
-                }, () => choiceListInstaller(hookOptions));
                 runHookPhase(results, {
                     name: 'help-window',
                     displayName: 'Help Window',
