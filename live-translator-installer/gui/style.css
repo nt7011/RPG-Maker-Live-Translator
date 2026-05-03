@@ -70,6 +70,45 @@ main {
     margin-bottom: 12px;
 }
 
+.version-panel {
+    padding: 10px 14px;
+}
+
+.version-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 32px;
+    gap: 12px;
+}
+
+.version-indicator {
+    min-width: 0;
+    padding: 6px 10px;
+    overflow-wrap: anywhere;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 650;
+}
+
+.version-update-link {
+    flex: 0 0 auto;
+    min-height: 30px;
+    padding: 5px 10px;
+    border: 1px solid #c08a20;
+    border-radius: 6px;
+    background: #fff8e8;
+    color: #6f4300;
+    font-size: 13px;
+    font-weight: 700;
+    text-decoration: none;
+    white-space: nowrap;
+}
+
+.version-update-link:hover {
+    background: #ffefc7;
+}
+
 button {
     min-height: 36px;
     padding: 0 14px;
@@ -576,6 +615,15 @@ tbody tr:last-child td {
 
     main {
         padding: 12px;
+    }
+
+    .version-row {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .version-update-link {
+        width: fit-content;
     }
 
     .status-grid {

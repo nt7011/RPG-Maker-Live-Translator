@@ -62,6 +62,19 @@ class FakeContents {
     }
 }
 
+function countTestIcons(value) {
+    const matches = String(value || '').match(/(?:\x1b|\\)i\[[^\]]*\]/gi);
+    return matches ? matches.length : 0;
+}
+
+function stripTestEscapes(value) {
+    return String(value || '').replace(/(?:\x1b|\\)(?:[A-Za-z0-9_#]+|[^\s\w])(?:\[[^\]]*\]|<[^>]*>)?/g, '');
+}
+
+function measureTestRichText(value) {
+    return stripTestEscapes(value).length * 10 + countTestIcons(value) * 36;
+}
+
 function createClasses() {
     class Window_Base {
         constructor() {
@@ -94,6 +107,13 @@ function createClasses() {
 
         textWidth(value) {
             return String(value || '').length * 10;
+        }
+
+        textSizeEx(value) {
+            return {
+                width: measureTestRichText(value),
+                height: this.lineHeight(),
+            };
         }
     }
 
@@ -285,7 +305,7 @@ function createInstallContext(translatedText = 'translated text', options = {}) 
         diag() {},
         dbg() {},
         settings: {},
-        stripRpgmEscapes(value) { return String(value || ''); },
+        stripRpgmEscapes(value) { return stripTestEscapes(value); },
         prepareTextForTranslation(value) {
             return {
                 textForTranslation: String(value || ''),
@@ -303,7 +323,29 @@ async function flushPromises() {
     await Promise.resolve();
 }
 
+function createDeferred() {
+    let resolve;
+    let reject;
+    const promise = new Promise((resolvePromise, rejectPromise) => {
+        resolve = resolvePromise;
+        reject = rejectPromise;
+    });
+    return { promise, resolve, reject };
+}
+
 const countOperations = (operations, expected) => operations.filter((item) => item === expected).length;
+
+function enableBackgroundSnapshots(contents) {
+    const context = contents && contents._context;
+    assert.ok(context);
+    context.getImageData = (x, y, width, height) => {
+        contents.operations.push(`snapshot:get:${x},${y},${width},${height}`);
+        return { width, height };
+    };
+    context.putImageData = (imageData, x, y) => {
+        contents.operations.push(`snapshot:put:${x},${y},${imageData.width},${imageData.height}`);
+    };
+}
 
 test('repeated drawTextEx text at different positions remains independently active and redraws', async () => {
     const classes = createClasses();
@@ -327,6 +369,116 @@ test('repeated drawTextEx text at different positions remains independently acti
     ]);
     assert.ok(entries.every((entry) => !entry._trPendingInvalidation && !entry._trStale));
     assert.equal(countOperations(pane.contents.operations, 'drawTextEx:translated repeated text'), 3);
+});
+
+test('async drawTextEx redraw clears instead of restoring captured snapshots', async () => {
+    const classes = createClasses();
+    const module = loadWindowDrawHooks(classes);
+    const context = createInstallContext('translated rich');
+    module.install(context);
+
+    const pane = new classes.Window_CustomPane();
+    enableBackgroundSnapshots(pane.contents);
+
+    pane.drawTextEx('rich source', 20, 8);
+    await flushPromises();
+
+    assert.deepEqual(pane.contents.clearRects, [
+        { x: 20, y: 8, width: 150, height: 36 },
+    ]);
+    assert.ok(pane.contents.operations.includes('snapshot:get:20,8,110,36'));
+    assert.equal(pane.contents.operations.some((item) => item.startsWith('snapshot:put:')), false);
+    assert.ok(pane.drawnTexts.some((item) => item.text === 'translated rich'));
+
+    const redrawEvent = context.telemetryEvents.find((event) => event[0] === 'draw' && event[1] === 'redraw');
+    assert.ok(redrawEvent);
+    const details = redrawEvent[5];
+    assert.equal(details.backgroundSnapshot, false);
+    assert.equal(details.diagnostics.clearMode, 'clearRect');
+    assert.equal(details.diagnostics.snapshot.available, true);
+    assert.equal(details.diagnostics.snapshot.restoreAttempted, true);
+    assert.equal(details.diagnostics.snapshot.restoreSkippedReason, 'drawTextEx');
+    assert.equal(details.diagnostics.snapshot.restoreSucceeded, false);
+});
+
+test('async drawTextEx clear bounds include icon escape width when translation is shorter', async () => {
+    const classes = createClasses();
+    const module = loadWindowDrawHooks(classes);
+    const context = createInstallContext('\\i[7]xy');
+    module.install(context);
+
+    const pane = new classes.Window_CustomPane();
+    pane.drawTextEx('\\i[7]abcdef', 20, 8);
+    await flushPromises();
+
+    assert.deepEqual(pane.contents.clearRects, [
+        { x: 20, y: 8, width: 96, height: 36 },
+    ]);
+    assert.ok(pane.drawnTexts.some((item) => item.text === '\\i[7]xy'));
+
+    const redrawEvent = context.telemetryEvents.find((event) => event[0] === 'draw' && event[1] === 'redraw');
+    assert.ok(redrawEvent);
+    assert.equal(JSON.stringify(redrawEvent[5].diagnostics.originalBounds), JSON.stringify({
+        x1: 20,
+        y1: 8,
+        x2: 116,
+        y2: 44,
+    }));
+});
+
+test('async drawTextEx redraw filters replay ops produced by the original rich text draw', async () => {
+    const classes = createClasses();
+    const replayApi = createReplayApi();
+    classes.Window_Base.prototype.drawTextEx = function(text, x, y) {
+        const value = String(text);
+        if (value === 'rich source') {
+            const state = replayApi.ensureBitmapState(this.contents);
+            state.renderOps.push({
+                methodName: 'blt',
+                rect: replayApi.rectFromDimensions(x, y, 16, 16),
+                drawOrder: replayApi.nextDrawOrder(state),
+                windowDrawTextExReplay: this.contents._trWindowDrawTextExReplayDepth > 0,
+            });
+            state.renderOps.push({
+                methodName: 'bltImage',
+                rect: replayApi.rectFromDimensions(x + 20, y, 80, 36),
+                drawOrder: replayApi.nextDrawOrder(state),
+                windowDrawTextExReplay: this.contents._trWindowDrawTextExReplayDepth > 0,
+            });
+        }
+        this.drawText(value === 'rich source' ? 'nested original' : value, x, y, 160, 'left');
+        this.drawnTexts.push({ text: value, x, y, maxWidth: Infinity, align: 'left' });
+        this.contents.operations.push(`drawTextEx:${value}`);
+        return value.length;
+    };
+
+    const translation = createDeferred();
+    const module = loadWindowDrawHooks(classes, replayApi);
+    const context = createInstallContext('unused', {
+        requestTranslation() {
+            return translation.promise;
+        },
+    });
+    module.install(context);
+
+    const pane = new classes.Window_CustomPane();
+    pane.drawTextEx('rich source', 20, 8);
+    pane.drawTextEx('rich source', 20, 8);
+    translation.resolve('translated rich');
+    await flushPromises();
+
+    assert.equal(countOperations(pane.contents.operations, 'replay:blt'), 0);
+    assert.equal(countOperations(pane.contents.operations, 'replay:bltImage'), 0);
+    assert.ok(pane.contents.operations.includes('drawTextEx:translated rich'));
+    assert.equal(context.windowRegistry.get(pane).texts.size, 1);
+
+    const redrawEvent = context.telemetryEvents.find((event) => event[0] === 'draw' && event[1] === 'redraw');
+    assert.ok(redrawEvent);
+    const diagnostics = redrawEvent[5].diagnostics;
+    assert.equal(diagnostics.replayBeforeFiltered, 2);
+    assert.equal(diagnostics.replayAfterFiltered, 2);
+    assert.equal(diagnostics.replayBeforeItems.count, 0);
+    assert.equal(diagnostics.replayAfterItems.count, 0);
 });
 
 test('async translation clips shared replay instead of redrawing skipped counters outside the clear area', async () => {
@@ -407,6 +559,81 @@ test('async translation still replays skipped counters intersecting the clear ar
         'drawText:translated option',
         'replay:end',
     ]);
+});
+
+test('async left-aligned drawText clears measured text bounds instead of full slot width', async () => {
+    const classes = createClasses();
+    const module = loadWindowDrawHooks(classes);
+    const context = createInstallContext('bb');
+    module.install(context);
+
+    const pane = new classes.Window_CustomPane();
+    pane.contents.width = 500;
+    pane.drawText('aa', 72, 20, 340, 'left');
+    await flushPromises();
+
+    assert.deepEqual(pane.contents.clearRects, [
+        { x: 72, y: 20, width: 20, height: 36 },
+    ]);
+    assert.ok(pane.drawnTexts.some((item) => item.text === 'bb'));
+});
+
+test('async right-aligned drawText clears the aligned text position inside maxWidth', async () => {
+    const classes = createClasses();
+    const module = loadWindowDrawHooks(classes);
+    const context = createInstallContext('bbbbbb');
+    module.install(context);
+
+    const pane = new classes.Window_CustomPane();
+    pane.contents.width = 500;
+    pane.drawText('aaaa', 72, 20, 200, 'right');
+    await flushPromises();
+
+    assert.deepEqual(pane.contents.clearRects, [
+        { x: 212, y: 20, width: 60, height: 36 },
+    ]);
+    assert.ok(pane.drawnTexts.some((item) => item.text === 'bbbbbb'));
+});
+
+test('async redraw restores captured background instead of replaying pre-text pane layers', async () => {
+    const classes = createClasses();
+    const replayApi = createReplayApi();
+    const module = loadWindowDrawHooks(classes, replayApi);
+    const context = createInstallContext('bb');
+    module.install(context);
+
+    const pane = new classes.Window_CustomPane();
+    pane.contents.width = 500;
+    enableBackgroundSnapshots(pane.contents);
+
+    const replayState = replayApi.ensureBitmapState(pane.contents);
+    replayState.renderOps.push({
+        methodName: 'fillRect',
+        rect: replayApi.rectFromDimensions(0, 0, 500, 36),
+        drawOrder: replayApi.nextDrawOrder(replayState),
+    });
+
+    pane.drawText('aa', 72, 5, 340, 'left');
+    pane.drawText('aa', 72, 5, 340, 'left');
+    await flushPromises();
+
+    const snapshotGets = pane.contents.operations.filter((item) => item.startsWith('snapshot:get:'));
+    assert.deepEqual(pane.contents.clearRects, []);
+    assert.equal(snapshotGets.length, 1);
+    assert.ok(pane.contents.operations.includes('snapshot:get:72,5,20,36'));
+    assert.ok(pane.contents.operations.includes('snapshot:put:72,5,20,36'));
+    assert.equal(countOperations(pane.contents.operations, 'replay:fillRect'), 0);
+    assert.ok(pane.drawnTexts.some((item) => item.text === 'bb'));
+
+    const redrawEvent = context.telemetryEvents.find((event) => event[0] === 'draw' && event[1] === 'redraw');
+    assert.ok(redrawEvent);
+    const diagnostics = redrawEvent[5].diagnostics;
+    assert.equal(diagnostics.clearMode, 'snapshot');
+    assert.equal(diagnostics.snapshot.restoreSucceeded, true);
+    assert.equal(JSON.stringify(diagnostics.snapshot.area), JSON.stringify({ x: 72, y: 5, w: 20, h: 36 }));
+    assert.equal(diagnostics.replayBeforeItems.count, 1);
+    assert.equal(diagnostics.replayBeforeItems.methods['op:fillRect'], 1);
+    assert.equal(diagnostics.replayAfterItems.count, 0);
 });
 
 test('async translation still allows refresh on core RPG Maker selectable windows', async () => {

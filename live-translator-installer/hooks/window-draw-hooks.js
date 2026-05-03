@@ -77,6 +77,8 @@
         }
 
         const redrawSettings = { extraPadding: 0, defaultOutline: 0 };
+        const MAX_BACKGROUND_SNAPSHOT_PIXELS = 262144;
+        const REDRAW_DIAGNOSTIC_ITEM_LIMIT = 8;
         const textScaleOthers = typeof resolveTextScalePercent === 'function'
             ? resolveTextScalePercent(settings, 'textScaleOthers', 100)
             : 100;
@@ -212,22 +214,96 @@
             return isValid(a) ? a : (isValid(b) ? b : null);
         }
 
-        function expandBoundsForMaxWidth(bounds, window, x, maxWidth) {
-            if (!bounds || !window) return bounds;
-            if (!maxWidth || !Number.isFinite(maxWidth) || maxWidth <= 0 || maxWidth === Infinity) {
-                return bounds;
-            }
-            const x1 = Number.isFinite(bounds.x1) ? bounds.x1 : x;
-            const x2 = Math.max(Number.isFinite(bounds.x2) ? bounds.x2 : x1, x + maxWidth);
-            return {
-                x1,
-                y1: bounds.y1,
-                x2: x2,
-                y2: bounds.y2,
-            };
+        function roundDiagnosticNumber(value) {
+            const numeric = Number(value);
+            if (!Number.isFinite(numeric)) return null;
+            return Math.round(numeric * 1000) / 1000;
         }
 
-        function estimateEntryBounds(window, type, text, x, y, convertedText) {
+        function cloneDiagnosticRect(rect) {
+            if (!rect) return null;
+            const x1 = roundDiagnosticNumber(rect.x1);
+            const y1 = roundDiagnosticNumber(rect.y1);
+            const x2 = roundDiagnosticNumber(rect.x2);
+            const y2 = roundDiagnosticNumber(rect.y2);
+            if ([x1, y1, x2, y2].some(value => value === null)) return null;
+            return { x1, y1, x2, y2 };
+        }
+
+        function cloneDiagnosticArea(area) {
+            if (!area) return null;
+            const x = roundDiagnosticNumber(area.x);
+            const y = roundDiagnosticNumber(area.y);
+            const w = roundDiagnosticNumber(area.w);
+            const h = roundDiagnosticNumber(area.h);
+            if ([x, y, w, h].some(value => value === null)) return null;
+            return { x, y, w, h };
+        }
+
+        function normalizeDrawTextAlignValue(align) {
+            const value = String(align || '').toLowerCase();
+            if (value === 'right' || value === 'end') return 'right';
+            if (value === 'center' || value === 'centre' || value === 'middle') return 'center';
+            return 'left';
+        }
+
+        function getWindowIconWidth() {
+            try {
+                if (typeof Window_Base !== 'undefined'
+                    && Number.isFinite(Number(Window_Base._iconWidth))
+                    && Number(Window_Base._iconWidth) > 0) {
+                    return Number(Window_Base._iconWidth);
+                }
+            } catch (_) {}
+            try {
+                if (typeof ImageManager !== 'undefined'
+                    && Number.isFinite(Number(ImageManager.iconWidth))
+                    && Number(ImageManager.iconWidth) > 0) {
+                    return Number(ImageManager.iconWidth);
+                }
+            } catch (_) {}
+            return 32;
+        }
+
+        function countDrawTextExIcons(text) {
+            const value = String(text || '');
+            const matches = value.match(/(?:\x1b|\\)i\[[^\]]*\]/gi);
+            return matches ? matches.length : 0;
+        }
+
+        function measurePlainTextWidth(window, contents, text, fallbackLineHeight) {
+            const value = String(text || '');
+            if (!value) return 0;
+            try {
+                if (contents && typeof contents.measureTextWidth === 'function') {
+                    const measured = Number(contents.measureTextWidth(value));
+                    if (Number.isFinite(measured) && measured > 0) return Math.ceil(measured);
+                }
+            } catch (_) {}
+            try {
+                if (typeof window.textWidth === 'function') {
+                    const measured = Number(window.textWidth(value));
+                    if (Number.isFinite(measured) && measured > 0) return Math.ceil(measured);
+                }
+            } catch (_) {}
+            try {
+                if (contents && typeof contents.textWidth === 'function') {
+                    const measured = Number(contents.textWidth(value));
+                    if (Number.isFinite(measured) && measured > 0) return Math.ceil(measured);
+                }
+            } catch (_) {}
+            const fontSize = contents && typeof contents.fontSize === 'number' ? contents.fontSize : fallbackLineHeight;
+            return Math.ceil(value.length * Math.max(6, fontSize * 0.6));
+        }
+
+        function estimateDrawTextExFallbackWidth(window, contents, richText, visibleText, fallbackLineHeight) {
+            const visibleWidth = measurePlainTextWidth(window, contents, visibleText, fallbackLineHeight);
+            const iconCount = countDrawTextExIcons(richText);
+            if (!iconCount) return visibleWidth;
+            return visibleWidth + iconCount * (getWindowIconWidth() + 4);
+        }
+
+        function estimateEntryBounds(window, type, text, x, y, convertedText, originalParams = null) {
             try {
                 const contents = window && window.contents ? window.contents : null;
                 const baseLineHeight = (() => {
@@ -242,38 +318,56 @@
 
                 let width = 0;
                 let height = baseLineHeight;
-                const basis = stripRpgmEscapes(String(convertedText || text || ''));
+                const richText = String(convertedText || text || '');
+                const basis = stripRpgmEscapes(richText);
 
                 try {
                     if (type === 'drawTextEx' && typeof window.textSizeEx === 'function') {
-                        const sz = window.textSizeEx(basis);
-                        width = Math.ceil((sz && sz.width) || 0);
+                        const sz = window.textSizeEx(richText);
+                        width = Math.max(
+                            Math.ceil((sz && sz.width) || 0),
+                            estimateDrawTextExFallbackWidth(window, contents, richText, basis, baseLineHeight)
+                        );
                         if (sz && Number.isFinite(sz.height)) {
                             height = Math.max(height, Math.ceil(sz.height));
                         }
-                    } else if (contents && typeof contents.measureTextWidth === 'function') {
-                        width = Math.ceil(contents.measureTextWidth(basis));
-                    } else if (typeof window.textWidth === 'function') {
-                        width = Math.ceil(window.textWidth(basis));
-                    } else if (contents && typeof contents.textWidth === 'function') {
-                        width = Math.ceil(contents.textWidth(basis));
+                    } else if (type === 'drawTextEx') {
+                        width = estimateDrawTextExFallbackWidth(window, contents, richText, basis, baseLineHeight);
+                    } else {
+                        width = measurePlainTextWidth(window, contents, basis, baseLineHeight);
                     }
                 } catch (_) {}
 
                 if (!width || !Number.isFinite(width)) {
-                    const fontSize = contents && typeof contents.fontSize === 'number' ? contents.fontSize : baseLineHeight;
-                    width = Math.ceil(basis.length * Math.max(6, fontSize * 0.6));
+                    width = type === 'drawTextEx'
+                        ? estimateDrawTextExFallbackWidth(window, contents, richText, basis, baseLineHeight)
+                        : measurePlainTextWidth(window, contents, basis, baseLineHeight);
                 }
                 if (!height || !Number.isFinite(height)) {
                     height = baseLineHeight;
                 }
 
-                const x1 = Number.isFinite(Number(x)) ? Number(x) : 0;
+                let x1 = Number.isFinite(Number(x)) ? Number(x) : 0;
                 const y1 = Number.isFinite(Number(y)) ? Number(y) : 0;
+                let drawWidth = Math.max(0, width);
+
+                if (type === 'drawText' && originalParams) {
+                    const maxWidth = Number(originalParams.maxWidth);
+                    if (Number.isFinite(maxWidth) && maxWidth > 0) {
+                        drawWidth = Math.min(drawWidth, maxWidth);
+                        const align = normalizeDrawTextAlignValue(originalParams.align);
+                        if (align === 'right') {
+                            x1 += maxWidth - drawWidth;
+                        } else if (align === 'center') {
+                            x1 += (maxWidth - drawWidth) / 2;
+                        }
+                    }
+                }
+
                 return {
                     x1,
                     y1,
-                    x2: x1 + Math.max(0, width),
+                    x2: x1 + drawWidth,
                     y2: y1 + Math.max(0, height)
                 };
             } catch (_) {
@@ -465,6 +559,112 @@
             }
         }
 
+        function getBitmapSnapshotContext(contents) {
+            if (!contents) return null;
+            try {
+                const context = contents._context || contents.context || null;
+                if (!context
+                    || typeof context.getImageData !== 'function'
+                    || typeof context.putImageData !== 'function') {
+                    return null;
+                }
+                return context;
+            } catch (_) {
+                return null;
+            }
+        }
+
+        function getEntrySnapshotPadding(contents, entry) {
+            const fromEntry = entry
+                && entry.drawState
+                && Number.isFinite(Number(entry.drawState.outlineWidth))
+                ? Number(entry.drawState.outlineWidth)
+                : NaN;
+            const fromContents = contents && Number.isFinite(Number(contents.outlineWidth))
+                ? Number(contents.outlineWidth)
+                : redrawSettings.defaultOutline;
+            return Math.max(0, Math.ceil(Number.isFinite(fromEntry) ? fromEntry : fromContents));
+        }
+
+        function getSnapshotArea(contents, bounds, padding = 0) {
+            if (!contents || !bounds) return null;
+            const x1 = Math.max(0, Math.floor(Math.min(Number(bounds.x1), Number(bounds.x2)) - padding));
+            const y1 = Math.max(0, Math.floor(Math.min(Number(bounds.y1), Number(bounds.y2)) - padding));
+            let x2 = Math.ceil(Math.max(Number(bounds.x1), Number(bounds.x2)) + padding);
+            let y2 = Math.ceil(Math.max(Number(bounds.y1), Number(bounds.y2)) + padding);
+            if (Number.isFinite(Number(contents.width))) {
+                x2 = Math.min(Number(contents.width), x2);
+            }
+            if (Number.isFinite(Number(contents.height))) {
+                y2 = Math.min(Number(contents.height), y2);
+            }
+            const w = x2 - x1;
+            const h = y2 - y1;
+            if (![x1, y1, w, h].every(Number.isFinite) || w <= 0 || h <= 0) return null;
+            if (w * h > MAX_BACKGROUND_SNAPSHOT_PIXELS) return null;
+            return { x: x1, y: y1, w, h };
+        }
+
+        function captureWindowEntryBackground(contents, entry) {
+            if (!contents || !entry || !entry.bounds) return false;
+            const context = getBitmapSnapshotContext(contents);
+            if (!context) return false;
+            const area = getSnapshotArea(contents, entry.bounds, getEntrySnapshotPadding(contents, entry));
+            if (!area) return false;
+            try {
+                const imageData = context.getImageData(area.x, area.y, area.w, area.h);
+                if (!imageData) return false;
+                entry.backgroundSnapshot = {
+                    contentsBitmap: contents,
+                    x: area.x,
+                    y: area.y,
+                    w: area.w,
+                    h: area.h,
+                    bounds: cloneDiagnosticRect(entry.bounds),
+                    contentsRevision: Number.isFinite(Number(entry.contentsRevision))
+                        ? Number(entry.contentsRevision)
+                        : null,
+                    capturedAt: Date.now(),
+                    imageData,
+                };
+                return true;
+            } catch (_) {
+                entry.backgroundSnapshot = null;
+                return false;
+            }
+        }
+
+        function ensureWindowEntryBackground(contents, entry) {
+            if (!contents || !entry) return false;
+            const snapshot = entry.backgroundSnapshot;
+            if (snapshot && snapshot.contentsBitmap === contents && snapshot.imageData) {
+                return true;
+            }
+            return captureWindowEntryBackground(contents, entry);
+        }
+
+        function shouldUseWindowEntryBackgroundSnapshot(entry) {
+            // drawTextEx commonly redraws rich text over text that may already be
+            // present from an earlier frame. A snapshot taken before the current
+            // draw can therefore contain the original text, so async replacement
+            // must prefer the explicit clear/replay path.
+            return !!(entry && entry.type !== 'drawTextEx');
+        }
+
+        function restoreWindowEntryBackground(contents, entry) {
+            if (!contents || !entry || !entry.backgroundSnapshot) return false;
+            const snapshot = entry.backgroundSnapshot;
+            if (snapshot.contentsBitmap && snapshot.contentsBitmap !== contents) return false;
+            const context = getBitmapSnapshotContext(contents);
+            if (!context || !snapshot.imageData) return false;
+            try {
+                context.putImageData(snapshot.imageData, snapshot.x, snapshot.y);
+                return true;
+            } catch (_) {
+                return false;
+            }
+        }
+
         function getReplayClipArea(contents, rect) {
             if (!contents || !rect) return null;
             const x1 = Math.max(0, Math.floor(Math.min(Number(rect.x1), Number(rect.x2))));
@@ -563,6 +763,111 @@
                 .sort((a, b) => (Number(a && a.drawOrder) || 0) - (Number(b && b.drawOrder) || 0));
         }
 
+        function isDrawTextExInternalReplayItem(item) {
+            return !!(item
+                && item.type === 'renderOp'
+                && item.op
+                && item.op.windowDrawTextExReplay);
+        }
+
+        function filterReplayForWindowEntry(items, entry) {
+            const list = Array.isArray(items) ? items : [];
+            if (!entry || entry.type !== 'drawTextEx') return list;
+            return list.filter(item => !isDrawTextExInternalReplayItem(item));
+        }
+
+        function summarizeReplayItemsForDiagnostics(items, limit = REDRAW_DIAGNOSTIC_ITEM_LIMIT) {
+            const list = Array.isArray(items) ? items : [];
+            const methods = {};
+            let minOrder = null;
+            let maxOrder = null;
+            list.forEach((item) => {
+                const order = Number(item && item.drawOrder);
+                if (Number.isFinite(order)) {
+                    minOrder = minOrder === null ? order : Math.min(minOrder, order);
+                    maxOrder = maxOrder === null ? order : Math.max(maxOrder, order);
+                }
+                let key = item && item.type ? String(item.type) : 'unknown';
+                if (item && item.type === 'renderOp' && item.op && item.op.methodName) {
+                    key = `op:${item.op.methodName}`;
+                } else if (item && item.type === 'windowText' && item.entry && item.entry.type) {
+                    key = `window:${item.entry.type}`;
+                }
+                methods[key] = (methods[key] || 0) + 1;
+            });
+            return {
+                count: list.length,
+                omitted: Math.max(0, list.length - limit),
+                orderMin: minOrder,
+                orderMax: maxOrder,
+                methods,
+                sample: list.slice(0, limit).map((item) => {
+                    if (!item) return { type: 'null' };
+                    const base = {
+                        type: item.type || 'unknown',
+                        drawOrder: Number(item.drawOrder) || 0,
+                    };
+                    if (item.type === 'renderOp') {
+                        const op = item.op || {};
+                        return Object.assign(base, {
+                            methodName: op.methodName || '',
+                            rect: cloneDiagnosticRect(op.rect),
+                            nativeTextKey: op.nativeTextKey || '',
+                            textPreview: op.textPreview ? preview(op.textPreview, 40) : '',
+                            ownerType: op.ownerType || '',
+                            windowDrawTextExReplay: !!op.windowDrawTextExReplay,
+                            argsCount: Array.isArray(op.args) ? op.args.length : 0,
+                            ageMs: Number.isFinite(Number(op.recordedAt)) ? Math.max(0, Date.now() - Number(op.recordedAt)) : null,
+                        });
+                    }
+                    if (item.type === 'windowText') {
+                        const entry = item.entry || {};
+                        return Object.assign(base, {
+                            methodName: entry.type || '',
+                            rect: cloneDiagnosticRect(entry.bounds),
+                            recordId: entry.recordId || '',
+                            status: entry.translationStatus || '',
+                            textPreview: preview(entry.visibleText || entry.convertedText || entry.rawText || '', 40),
+                        });
+                    }
+                    return base;
+                }),
+            };
+        }
+
+        function summarizeReplayStateForDiagnostics(state) {
+            if (!state) return null;
+            return {
+                drawOrderCounter: Number(state.drawOrderCounter) || 0,
+                renderOps: Array.isArray(state.renderOps) ? state.renderOps.length : 0,
+                entries: state.entries && typeof state.entries.size === 'number' ? state.entries.size : 0,
+                nativeTextOps: state.nativeTextOps && typeof state.nativeTextOps.size === 'number' ? state.nativeTextOps.size : 0,
+                fragments: Array.isArray(state.fragments) ? state.fragments.length : 0,
+            };
+        }
+
+        function getSnapshotDiagnostics(entry, contents) {
+            const snapshot = entry && entry.backgroundSnapshot ? entry.backgroundSnapshot : null;
+            if (!snapshot) {
+                return {
+                    available: false,
+                    bitmapMatches: false,
+                    area: null,
+                    boundsAtCapture: null,
+                    contentsRevisionAtCapture: null,
+                    ageMs: null,
+                };
+            }
+            return {
+                available: true,
+                bitmapMatches: !!(contents && snapshot.contentsBitmap === contents),
+                area: cloneDiagnosticArea(snapshot),
+                boundsAtCapture: snapshot.bounds || null,
+                contentsRevisionAtCapture: snapshot.contentsRevision,
+                ageMs: Number.isFinite(Number(snapshot.capturedAt)) ? Math.max(0, Date.now() - Number(snapshot.capturedAt)) : null,
+            };
+        }
+
         function replayMixedItems(contents, targetWindow, items, replayApi, clipRect = null) {
             if (!contents || !Array.isArray(items) || !items.length) return;
             const replay = () => {
@@ -587,6 +892,17 @@
                 return fn();
             } finally {
                 window.contents = previousContents;
+            }
+        }
+
+        function withWindowDrawTextExReplayScope(contents, fn) {
+            if (typeof fn !== 'function') return undefined;
+            if (!contents) return fn();
+            contents._trWindowDrawTextExReplayDepth = (contents._trWindowDrawTextExReplayDepth || 0) + 1;
+            try {
+                return fn();
+            } finally {
+                contents._trWindowDrawTextExReplayDepth = Math.max(0, (contents._trWindowDrawTextExReplayDepth || 1) - 1);
             }
         }
 
@@ -673,6 +989,12 @@
             entry.timestamp = Date.now();
             entry.drawState = captureBitmapDrawState(window && window.contents);
             entry.contentsBitmap = window && window.contents ? window.contents : (entry.contentsBitmap || null);
+            if (windowRegistry && window) {
+                try {
+                    const data = windowRegistry.get(window);
+                    entry.contentsRevision = data ? (data.contentsRevision || 0) : entry.contentsRevision;
+                } catch (_) {}
+            }
             assignWindowTextDrawOrder(entry.contentsBitmap, entry);
             clearPendingInvalidation(entry);
 
@@ -693,15 +1015,11 @@
                     textToTranslate,
                     x,
                     y,
-                    convertedText || textToTranslate
+                    convertedText || textToTranslate,
+                    entry.originalParams
                 );
-                const maxWidth = entry.originalParams && Number.isFinite(entry.originalParams.maxWidth)
-                    ? entry.originalParams.maxWidth
-                    : null;
-                if (maxWidth) {
-                    refreshedBounds = expandBoundsForMaxWidth(refreshedBounds, window, x, maxWidth);
-                }
                 entry.bounds = refreshedBounds;
+                ensureWindowEntryBackground(entry.contentsBitmap, entry);
             } catch (_) {}
 
             return entry;
@@ -762,6 +1080,7 @@
                 translationSource: '',
                 placeholderInfo: null,
                 contentsBitmap: window && window.contents ? window.contents : null,
+                contentsRevision: windowData.contentsRevision || 0,
                 drawOrder: 0,
                 bounds: null,
                 isTranslatable: false,
@@ -770,11 +1089,7 @@
             assignWindowTextDrawOrder(textEntry.contentsBitmap, textEntry);
 
             try {
-                let initialBounds = estimateEntryBounds(window, type, textToDraw, x, y, convertedText || textToDraw);
-                const maxWidth = originalParams && Number.isFinite(originalParams.maxWidth) ? originalParams.maxWidth : null;
-                if (maxWidth) {
-                    initialBounds = expandBoundsForMaxWidth(initialBounds, window, x, maxWidth);
-                }
+                const initialBounds = estimateEntryBounds(window, type, textToDraw, x, y, convertedText || textToDraw, originalParams);
                 textEntry.bounds = initialBounds;
             } catch (_) {}
 
@@ -872,6 +1187,7 @@
                 translationSource,
                 placeholderInfo,
                 contentsBitmap: window && window.contents ? window.contents : null,
+                contentsRevision: windowData.contentsRevision || 0,
                 drawOrder: 0,
                 bounds: null,
             };
@@ -879,12 +1195,9 @@
 
             const visibleText = stripRpgmEscapes(convertedText || textToTranslate || text);
             try {
-            let initialBounds = estimateEntryBounds(window, type, textToTranslate, x, y, convertedText || textToTranslate);
-            const maxWidth = originalParams && Number.isFinite(originalParams.maxWidth) ? originalParams.maxWidth : null;
-            if (maxWidth) {
-                initialBounds = expandBoundsForMaxWidth(initialBounds, window, x, maxWidth);
-            }
-            textEntry.bounds = initialBounds;
+                const initialBounds = estimateEntryBounds(window, type, textToTranslate, x, y, convertedText || textToTranslate, originalParams);
+                textEntry.bounds = initialBounds;
+                captureWindowEntryBackground(textEntry.contentsBitmap, textEntry);
             } catch (_) {}
             textEntry.visibleText = visibleText;
 
@@ -1075,8 +1388,24 @@
                 let replayApi = null;
                 let replayBefore = [];
                 let replayAfter = [];
+                let replayBeforeFiltered = 0;
+                let replayAfterFiltered = 0;
                 let replayDirtyRect = null;
                 let replayClipRect = null;
+                let usedBackgroundSnapshot = false;
+                let snapshotRestoreAttempted = false;
+                let snapshotRestoreSkippedReason = '';
+                let clearMode = 'none';
+                let originalBounds = null;
+                let translatedBounds = null;
+                let mergedBounds = null;
+                let calcTextHeight = null;
+                let replayRectForDiagnostics = null;
+                let windowReplayRectForDiagnostics = null;
+                let replayStateDiagnostics = null;
+                let currentDrawOrder = Number(textEntry.drawOrder) || 0;
+                let supportsReplayClip = false;
+                let replayCollectError = false;
 
                 try {
                     if (contents && storedDrawState) {
@@ -1091,24 +1420,20 @@
                                 : redrawSettings.defaultOutline
                         );
                         let bounds = textEntry.bounds || { x1: x, y1: y, x2: x, y2: y };
+                        originalBounds = cloneDiagnosticRect(bounds);
                         try {
-                            const translatedBounds = withWindowContents(targetWindow, contents, () => estimateEntryBounds(
+                            translatedBounds = withWindowContents(targetWindow, contents, () => estimateEntryBounds(
                                 targetWindow,
                                 textEntry.type,
                                 translatedText,
                                 x,
                                 y,
-                                translatedText
+                                translatedText,
+                                textEntry.originalParams
                             ));
                             bounds = mergeBounds(bounds, translatedBounds) || bounds;
                         } catch (_) {}
-                        const maxWidth = textEntry.originalParams
-                            && Number.isFinite(textEntry.originalParams.maxWidth)
-                            ? textEntry.originalParams.maxWidth
-                            : null;
-                        if (maxWidth) {
-                            bounds = expandBoundsForMaxWidth(bounds, targetWindow, x, maxWidth);
-                        }
+                        mergedBounds = cloneDiagnosticRect(bounds);
                         let clearX = Math.min(bounds.x1, bounds.x2);
                         let clearY = Math.min(bounds.y1, bounds.y2);
                         let clearW = Math.abs(bounds.x2 - bounds.x1);
@@ -1120,6 +1445,7 @@
                                     return targetWindow.calcTextHeight(textState, true);
                                 });
                                 if (Number.isFinite(calcHeight) && calcHeight > 0) {
+                                    calcTextHeight = calcHeight;
                                     clearH = Math.max(clearH, calcHeight);
                                 }
                             }
@@ -1142,40 +1468,51 @@
                                 const replayRect = clearArea
                                     ? createClearRectFromArea(clearArea, replayApi)
                                     : replayApi.rectFromDimensions(0, 0, contents.width, contents.height);
+                                replayRectForDiagnostics = cloneDiagnosticRect(replayRect);
                                 replayClipRect = replayRect;
-                                const currentOrder = Number(textEntry.drawOrder) || 0;
-                                if (state && replayRect && currentOrder > 0) {
-                                    const bitmapReplayBefore = replayApi.collectReplayItems(state, replayRect, textEntry, order => order < currentOrder);
-                                    const bitmapReplayAfter = replayApi.collectReplayItems(state, replayRect, textEntry, order => order > currentOrder);
+                                replayStateDiagnostics = summarizeReplayStateForDiagnostics(state);
+                                currentDrawOrder = Number(textEntry.drawOrder) || 0;
+                                if (state && replayRect && currentDrawOrder > 0) {
+                                    const bitmapReplayBefore = replayApi.collectReplayItems(state, replayRect, textEntry, order => order < currentDrawOrder);
+                                    const bitmapReplayAfter = replayApi.collectReplayItems(state, replayRect, textEntry, order => order > currentDrawOrder);
                                     replayDirtyRect = expandReplayDirtyRect(
                                         replayRect,
                                         bitmapReplayBefore.concat(bitmapReplayAfter)
                                     );
                                     // Clipped replay cannot touch pixels outside the clear rect, so native
                                     // window text outside that rect should not be drawn a second time.
-                                    const windowReplayRect = supportsBitmapReplayClip(contents)
+                                    supportsReplayClip = supportsBitmapReplayClip(contents);
+                                    const windowReplayRect = supportsReplayClip
                                         ? replayRect
                                         : replayDirtyRect;
+                                    windowReplayRectForDiagnostics = cloneDiagnosticRect(windowReplayRect);
                                     const windowReplayItems = collectWindowTextReplayItems(
                                         windowData,
                                         textEntry,
                                         contents,
                                         windowReplayRect,
-                                        currentOrder
+                                        currentDrawOrder
                                     );
-                                    replayBefore = combineReplayItems(
+                                    const replayBeforeCandidate = combineReplayItems(
                                         bitmapReplayBefore,
-                                        windowReplayItems.filter(item => (Number(item.drawOrder) || 0) < currentOrder)
+                                        windowReplayItems.filter(item => (Number(item.drawOrder) || 0) < currentDrawOrder)
                                     );
-                                    replayAfter = combineReplayItems(
+                                    replayBefore = filterReplayForWindowEntry(replayBeforeCandidate, textEntry);
+                                    replayBeforeFiltered = Math.max(0, replayBeforeCandidate.length - replayBefore.length);
+                                    const replayAfterCandidate = combineReplayItems(
                                         bitmapReplayAfter,
-                                        windowReplayItems.filter(item => (Number(item.drawOrder) || 0) > currentOrder)
+                                        windowReplayItems.filter(item => (Number(item.drawOrder) || 0) > currentDrawOrder)
                                     );
+                                    replayAfter = filterReplayForWindowEntry(replayAfterCandidate, textEntry);
+                                    replayAfterFiltered = Math.max(0, replayAfterCandidate.length - replayAfter.length);
                                 }
                             } catch (_) {
                                 replayBefore = [];
                                 replayAfter = [];
+                                replayBeforeFiltered = 0;
+                                replayAfterFiltered = 0;
                                 replayDirtyRect = null;
+                                replayCollectError = true;
                             }
                         }
                         if (clearArea) {
@@ -1185,6 +1522,17 @@
                             } catch (_) {}
                             try {
                                 const clearAndReplay = () => {
+                                    snapshotRestoreAttempted = !!(textEntry && textEntry.backgroundSnapshot);
+                                    const allowBackgroundSnapshot = shouldUseWindowEntryBackgroundSnapshot(textEntry);
+                                    if (!allowBackgroundSnapshot && snapshotRestoreAttempted) {
+                                        snapshotRestoreSkippedReason = 'drawTextEx';
+                                    }
+                                    if (allowBackgroundSnapshot && restoreWindowEntryBackground(contents, textEntry)) {
+                                        usedBackgroundSnapshot = true;
+                                        clearMode = 'snapshot';
+                                        return;
+                                    }
+                                    clearMode = 'clearRect';
                                     contents.clearRect(clearArea.x, clearArea.y, clearArea.w, clearArea.h);
                                     if (replayApi && replayBefore.length) {
                                         replayMixedItems(contents, targetWindow, replayBefore, replayApi, replayClipRect);
@@ -1205,6 +1553,7 @@
                             } catch (_) {}
                             try {
                                 const clearAndReplay = () => {
+                                    clearMode = 'clear';
                                     contents.clear();
                                     if (replayApi && replayBefore.length) {
                                         replayMixedItems(contents, targetWindow, replayBefore, replayApi, replayClipRect);
@@ -1230,19 +1579,61 @@
                     if (contents && storedDrawState) {
                         try { applyBitmapDrawState(contents, storedDrawState); } catch (_) {}
                     }
-                    telemetry.logDraw('redraw', translatedText, x, y, {
-                        windowType: targetWindow.constructor.name,
-                        clearArea,
-                        replayBefore: replayBefore.length,
-                        replayAfter: replayAfter.length,
-                    });
-                    trackWindowDraw(textEntry, 'redraw', {
+                    const redrawDiagnostics = {
+                        clearMode,
+                        clearArea: cloneDiagnosticArea(clearArea),
+                        originalBounds,
+                        translatedBounds: cloneDiagnosticRect(translatedBounds),
+                        mergedBounds,
+                        calcTextHeight: roundDiagnosticNumber(calcTextHeight),
+                        replayRect: replayRectForDiagnostics,
+                        replayDirtyRect: cloneDiagnosticRect(replayDirtyRect),
+                        replayClipRect: cloneDiagnosticRect(replayClipRect),
+                        windowReplayRect: windowReplayRectForDiagnostics,
+                        supportsReplayClip,
+                        replayCollectError,
+                        drawOrder: {
+                            current: currentDrawOrder,
+                            state: replayStateDiagnostics,
+                        },
+                        snapshot: Object.assign(getSnapshotDiagnostics(textEntry, contents), {
+                            restoreAttempted: snapshotRestoreAttempted,
+                            restoreSkippedReason: snapshotRestoreSkippedReason,
+                            restoreSucceeded: usedBackgroundSnapshot,
+                            contentsRevisionAtRedraw: windowData.contentsRevision || 0,
+                        }),
+                        replayBeforeItems: summarizeReplayItemsForDiagnostics(replayBefore),
+                        replayAfterItems: summarizeReplayItemsForDiagnostics(replayAfter),
+                        replayBeforeFiltered,
+                        replayAfterFiltered,
+                        text: {
+                            rawLength: String(textEntry.rawText || '').length,
+                            convertedLength: String(textEntry.convertedText || '').length,
+                            visibleLength: String(textEntry.visibleText || '').length,
+                            translatedLength: String(translatedText || '').length,
+                            rawHasEscapes: /(?:\x1b|\\)/.test(String(textEntry.rawText || textEntry.convertedText || '')),
+                            translatedHasEscapes: /(?:\x1b|\\)/.test(String(translatedText || '')),
+                        },
+                        contents: {
+                            width: Number(contents && contents.width) || 0,
+                            height: Number(contents && contents.height) || 0,
+                            sameAsEntry: !!(contents && textEntry.contentsBitmap === contents),
+                            revisionAtEntry: Number.isFinite(Number(textEntry.contentsRevision)) ? Number(textEntry.contentsRevision) : null,
+                            revisionAtRedraw: windowData.contentsRevision || 0,
+                        },
+                    };
+                    const redrawDetails = {
                         windowType: targetWindow.constructor.name,
                         method: textEntry.type || '',
-                        translationDrawn: translatedText,
-                        replayBefore: replayBefore.length,
+                        clearArea,
+                        backgroundSnapshot: usedBackgroundSnapshot,
+                        replayBefore: usedBackgroundSnapshot ? 0 : replayBefore.length,
                         replayAfter: replayAfter.length,
-                    });
+                        translationDrawn: translatedText,
+                        diagnostics: redrawDiagnostics,
+                    };
+                    telemetry.logDraw('redraw', translatedText, x, y, redrawDetails);
+                    trackWindowDraw(textEntry, 'redraw', redrawDetails);
                     const drawAndReplayAfter = () => {
                         withWindowContents(targetWindow, contents, () => {
                             if (textEntry.type === 'drawTextEx' && typeof targetWindow.drawTextEx === 'function') {
@@ -1351,6 +1742,14 @@
                     const cleanText = textStr.substring(REDRAW_SIGNATURE.length);
                     telemetry.logDraw('bypass', cleanText, x, y, { windowType: this.constructor.name });
                     return invokeOriginal(cleanText, { scaleText: true });
+                }
+
+                if (contents && contents._trWindowDrawTextExReplayDepth > 0) {
+                    telemetry.logDraw('bypass', textStr, x, y, {
+                        windowType: this.constructor.name,
+                        method: 'drawTextEx-nested',
+                    });
+                    return invokeOriginal();
                 }
 
                 const trimmed = textStr.trim();
@@ -1507,7 +1906,7 @@
                             this._trBypassCreateTextState = (this._trBypassCreateTextState || 0) + 1;
                         }
                         try {
-                            return originalDrawTextEx.call(this, value, x, y);
+                            return withWindowDrawTextExReplayScope(contents, () => originalDrawTextEx.call(this, value, x, y));
                         } finally {
                             if (options && options.bypassCreateTextState) {
                                 this._trBypassCreateTextState = Math.max(0, (this._trBypassCreateTextState || 1) - 1);

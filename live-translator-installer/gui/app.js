@@ -6,12 +6,26 @@
     const refs = {};
     const PAST_TEXT_DISPLAY_LIMIT = 100;
     const UNTRACKABLE_TEXT_DISPLAY_LIMIT = 100;
+    const VERSION_CHECK_URL = 'https://nt7011.github.io/info/translator-version.json';
+    const UPDATE_PAGE_URL = 'https://nt7011.github.io/';
+    const VERSION_CHECK_INTERVAL_MS = 2 * 60 * 60 * 1000;
+    const VERSION_CHECK_TIMEOUT_MS = 8000;
+    const VERSION_CHECK_MAX_BYTES = 16 * 1024;
+    const VERSION_CHECK_MAX_REDIRECTS = 5;
     const state = {
         startedAt: Date.now(),
         heartbeatTimer: null,
+        updateCheckTimer: null,
         supportPath: '',
         gameRoot: '',
         translationCacheFile: '',
+        installedVersion: '',
+        latestVersion: '',
+        checkUpdates: true,
+        updateCheckStatus: 'loading',
+        updateCheckMessage: 'Checking installation',
+        updateCheckError: '',
+        updateCheckInFlight: false,
         activeTexts: [],
         formerlyActiveTexts: [],
         untrackableTexts: [],
@@ -31,6 +45,9 @@
 
     let fs = null;
     let path = null;
+    let https = null;
+    let dns = null;
+    let net = null;
 
     function initRefs() {
         for (const element of document.querySelectorAll('[id]')) {
@@ -49,6 +66,9 @@
         if (!req) return false;
         fs = req('fs');
         path = req('path');
+        https = req('https');
+        dns = req('dns');
+        net = req('net');
         try {
             state.gameRoot = getQueryValue('gameRoot') || (typeof process !== 'undefined' && typeof process.cwd === 'function'
                 ? process.cwd()
@@ -125,6 +145,456 @@
     function readJsonFile(filePath) {
         const text = fs.readFileSync(filePath, 'utf8').replace(/^\uFEFF/u, '');
         return JSON.parse(text);
+    }
+
+    function normalizeVersionString(value) {
+        if (typeof value !== 'string' && typeof value !== 'number') return '';
+        const version = String(value).trim();
+        if (!version || version.length > 64) return '';
+        if (!/^[0-9A-Za-z][0-9A-Za-z._+-]*$/u.test(version)) return '';
+        return version;
+    }
+
+    function parseVersionPayload(text) {
+        const payload = JSON.parse(String(text || '').replace(/^\uFEFF/u, ''));
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+            throw new Error('version payload must be a JSON object');
+        }
+        const version = normalizeVersionString(payload.version);
+        if (!version) {
+            throw new Error('version payload missing a valid "version" string');
+        }
+        return { version };
+    }
+
+    function setVersionStatus(status, message, error = '') {
+        state.updateCheckStatus = status;
+        state.updateCheckMessage = message;
+        state.updateCheckError = error;
+    }
+
+    function toneForVersionStatus() {
+        if (state.updateCheckStatus === 'latest') return 'ok';
+        if (state.updateCheckStatus === 'update'
+            || state.updateCheckStatus === 'error'
+            || state.updateCheckStatus === 'missing') return 'warn';
+        return 'neutral';
+    }
+
+    function renderVersionPanel() {
+        const indicator = refs['version-indicator'];
+        if (indicator) {
+            const versionLabel = state.installedVersion ? `Version ${state.installedVersion}` : 'Version unknown';
+            indicator.className = `version-indicator ${toneForVersionStatus()}`;
+            indicator.textContent = `${versionLabel}: ${state.updateCheckMessage || 'Checking installation'}`;
+            indicator.title = state.updateCheckError || '';
+        }
+
+        const link = refs['version-update-link'];
+        if (link) {
+            link.href = UPDATE_PAGE_URL;
+            link.hidden = state.updateCheckStatus !== 'update';
+            link.textContent = state.latestVersion ? `Update to ${state.latestVersion}` : 'Open installer';
+            link.title = 'Open the RPG Maker Live Translator installer page';
+        }
+    }
+
+    function readInstalledVersion() {
+        if (!fs || !path || !state.supportPath) return '';
+        const versionFile = path.join(state.supportPath, 'version.json');
+        if (!isFile(versionFile)) return '';
+        try {
+            const payload = readJsonFile(versionFile);
+            return normalizeVersionString(payload && payload.version);
+        } catch (err) {
+            addLog('warn', `version.json read failed: ${formatError(err)}`);
+            return '';
+        }
+    }
+
+    function readCheckUpdatesSetting() {
+        if (!fs || !path || !state.supportPath) return true;
+        const settingsFile = path.join(state.supportPath, 'settings.json');
+        if (!isFile(settingsFile)) return true;
+        try {
+            const settings = readJsonFile(settingsFile);
+            if (!settings || typeof settings !== 'object') return true;
+            if (!Object.prototype.hasOwnProperty.call(settings, 'checkUpdates')) return true;
+            if (settings.checkUpdates === false) return false;
+            if (settings.checkUpdates === true) return true;
+            addLog('warn', 'settings.json "checkUpdates" should be a boolean. Defaulting to true.');
+            return true;
+        } catch (err) {
+            addLog('warn', `settings.json read failed for update checks: ${formatError(err)}`);
+            return true;
+        }
+    }
+
+    function refreshVersionSettings() {
+        state.installedVersion = readInstalledVersion();
+        state.latestVersion = '';
+        state.checkUpdates = readCheckUpdatesSetting();
+        state.updateCheckError = '';
+
+        if (!state.installedVersion) {
+            setVersionStatus('missing', 'Installed version unavailable');
+            renderVersionPanel();
+            return;
+        }
+
+        if (!state.checkUpdates) {
+            setVersionStatus('disabled', 'Update checks disabled');
+            renderVersionPanel();
+            return;
+        }
+
+        setVersionStatus('idle', 'Ready to check updates');
+        renderVersionPanel();
+    }
+
+    async function runUpdateCheck() {
+        if (state.updateCheckInFlight || !state.checkUpdates || !state.installedVersion) return;
+
+        state.updateCheckInFlight = true;
+        setVersionStatus('checking', 'Checking for updates');
+        renderVersionPanel();
+
+        try {
+            const remote = await fetchRemoteVersion();
+            const wasSameUpdate = state.updateCheckStatus === 'update' && state.latestVersion === remote.version;
+            state.latestVersion = remote.version;
+            if (state.latestVersion === state.installedVersion) {
+                setVersionStatus('latest', 'Current release');
+            } else {
+                setVersionStatus('update', `Update available (${state.latestVersion})`);
+                if (!wasSameUpdate) {
+                    addLog('warn', `Update available: installed ${state.installedVersion}, latest ${state.latestVersion}.`);
+                }
+            }
+        } catch (err) {
+            state.latestVersion = '';
+            setVersionStatus('error', 'Update check failed', formatError(err));
+            addLog('warn', `Update check failed: ${formatError(err)}`);
+        } finally {
+            state.updateCheckInFlight = false;
+            renderVersionPanel();
+        }
+    }
+
+    function startUpdateChecker() {
+        refreshVersionSettings();
+        if (!state.checkUpdates || !state.installedVersion) return;
+        runUpdateCheck();
+        state.updateCheckTimer = setInterval(runUpdateCheck, VERSION_CHECK_INTERVAL_MS);
+    }
+
+    function stopUpdateChecker() {
+        if (state.updateCheckTimer) clearInterval(state.updateCheckTimer);
+        state.updateCheckTimer = null;
+    }
+
+    async function fetchRemoteVersion() {
+        const text = await fetchRemoteText(VERSION_CHECK_URL);
+        return parseVersionPayload(text);
+    }
+
+    function fetchRemoteText(url) {
+        if (https && dns && net) return fetchRemoteTextWithNode(url, 0);
+        return fetchRemoteTextWithBrowser(url);
+    }
+
+    function fetchRemoteTextWithNode(rawUrl, redirectCount) {
+        return new Promise((resolve, reject) => {
+            let url;
+            try {
+                url = new URL(rawUrl);
+                validateVersionCheckUrl(url);
+            } catch (err) {
+                reject(err);
+                return;
+            }
+
+            let finished = false;
+            function finish(err, value) {
+                if (finished) return;
+                finished = true;
+                if (err) reject(err);
+                else resolve(value);
+            }
+
+            const request = https.request(url, {
+                method: 'GET',
+                timeout: VERSION_CHECK_TIMEOUT_MS,
+                lookup: safeDnsLookup,
+                headers: {
+                    Accept: 'application/json, text/plain;q=0.8, */*;q=0.1',
+                    'Cache-Control': 'no-cache',
+                    Pragma: 'no-cache',
+                },
+            }, (response) => {
+                const status = Number(response.statusCode) || 0;
+                if (isRedirectStatus(status) && response.headers && response.headers.location) {
+                    response.resume();
+                    if (redirectCount >= VERSION_CHECK_MAX_REDIRECTS) {
+                        finish(new Error('too many update check redirects'));
+                        return;
+                    }
+                    let nextUrl;
+                    try {
+                        nextUrl = new URL(String(response.headers.location), url.href);
+                        validateVersionCheckUrl(nextUrl);
+                    } catch (err) {
+                        finish(err);
+                        return;
+                    }
+                    fetchRemoteTextWithNode(nextUrl.href, redirectCount + 1).then(
+                        (value) => finish(null, value),
+                        finish
+                    );
+                    return;
+                }
+
+                if (status < 200 || status >= 300) {
+                    response.resume();
+                    finish(new Error(`HTTP ${status}`));
+                    return;
+                }
+
+                const chunks = [];
+                let total = 0;
+                response.setEncoding('utf8');
+                response.on('data', (chunk) => {
+                    total += getTextByteLength(chunk);
+                    if (total > VERSION_CHECK_MAX_BYTES) {
+                        response.destroy();
+                        finish(new Error('version response too large'));
+                        return;
+                    }
+                    chunks.push(String(chunk));
+                });
+                response.on('end', () => finish(null, chunks.join('')));
+                response.on('error', finish);
+            });
+
+            request.on('timeout', () => request.destroy(new Error('update check timed out')));
+            request.on('error', finish);
+            request.end();
+        });
+    }
+
+    async function fetchRemoteTextWithBrowser(rawUrl) {
+        if (typeof fetch !== 'function') {
+            throw new Error('no network API available');
+        }
+
+        const url = new URL(rawUrl);
+        validateVersionCheckUrl(url);
+
+        const controller = typeof AbortController === 'function' ? new AbortController() : null;
+        const timer = controller
+            ? setTimeout(() => controller.abort(), VERSION_CHECK_TIMEOUT_MS)
+            : null;
+        try {
+            const response = await fetch(url.href, {
+                method: 'GET',
+                cache: 'no-store',
+                credentials: 'omit',
+                redirect: 'follow',
+                referrerPolicy: 'no-referrer',
+                signal: controller ? controller.signal : undefined,
+            });
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            if (response.url) validateVersionCheckUrl(new URL(response.url));
+            return await readLimitedResponseText(response);
+        } finally {
+            if (timer) clearTimeout(timer);
+        }
+    }
+
+    async function readLimitedResponseText(response) {
+        if (response.body
+            && typeof response.body.getReader === 'function'
+            && typeof TextDecoder === 'function') {
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder('utf-8');
+            const chunks = [];
+            let total = 0;
+            try {
+                while (true) {
+                    const result = await reader.read();
+                    if (result.done) break;
+                    const value = result.value || new Uint8Array(0);
+                    total += Number(value.byteLength || value.length || 0);
+                    if (total > VERSION_CHECK_MAX_BYTES) {
+                        if (typeof reader.cancel === 'function') reader.cancel();
+                        throw new Error('version response too large');
+                    }
+                    chunks.push(decoder.decode(value, { stream: true }));
+                }
+                chunks.push(decoder.decode());
+                return chunks.join('');
+            } finally {
+                if (reader.releaseLock) reader.releaseLock();
+            }
+        }
+
+        const text = await response.text();
+        if (getTextByteLength(text) > VERSION_CHECK_MAX_BYTES) {
+            throw new Error('version response too large');
+        }
+        return text;
+    }
+
+    function isRedirectStatus(status) {
+        return status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
+    }
+
+    function validateVersionCheckUrl(url) {
+        if (!url || url.protocol !== 'https:') {
+            throw new Error('update checks require HTTPS');
+        }
+        if (url.username || url.password) {
+            throw new Error('update check URL credentials are not allowed');
+        }
+        if (isUnsafeHostname(url.hostname)) {
+            throw new Error('update check target is not allowed');
+        }
+    }
+
+    function safeDnsLookup(hostname, options, callback) {
+        const cb = typeof options === 'function' ? options : callback;
+        const requestOptions = typeof options === 'object' && options ? options : {};
+        dns.lookup(hostname, Object.assign({}, requestOptions, { all: true }), (err, addresses) => {
+            if (err) {
+                cb(err);
+                return;
+            }
+            const list = Array.isArray(addresses) ? addresses : [addresses];
+            const allowed = list.filter((entry) => entry && !isUnsafeIpAddress(entry.address || entry));
+            if (!allowed.length || allowed.length !== list.length) {
+                cb(new Error('update check DNS target is not allowed'));
+                return;
+            }
+            if (requestOptions.all) {
+                cb(null, allowed);
+                return;
+            }
+            cb(null, allowed[0].address, allowed[0].family);
+        });
+    }
+
+    function isUnsafeHostname(hostname) {
+        const host = normalizeHostname(hostname);
+        if (!host) return true;
+        if (host === 'localhost' || host.endsWith('.localhost') || host === 'local' || host.endsWith('.local')) {
+            return true;
+        }
+        if (!net || typeof net.isIP !== 'function') return false;
+        return isUnsafeIpAddress(host);
+    }
+
+    function normalizeHostname(hostname) {
+        return String(hostname || '')
+            .trim()
+            .replace(/^\[/u, '')
+            .replace(/\]$/u, '')
+            .replace(/\.$/u, '')
+            .toLowerCase();
+    }
+
+    function isUnsafeIpAddress(address) {
+        if (!net || typeof net.isIP !== 'function') return false;
+        const value = normalizeHostname(address);
+        const family = net.isIP(value);
+        if (family === 4) return isUnsafeIpv4(value);
+        if (family === 6) return isUnsafeIpv6(value);
+        return false;
+    }
+
+    function isUnsafeIpv4(address) {
+        const parts = String(address).split('.').map((part) => Number(part));
+        if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+            return true;
+        }
+        const [a, b, c] = parts;
+        return a === 0
+            || a === 10
+            || a === 127
+            || a >= 224
+            || (a === 100 && b >= 64 && b <= 127)
+            || (a === 169 && b === 254)
+            || (a === 172 && b >= 16 && b <= 31)
+            || (a === 192 && b === 168)
+            || (a === 192 && b === 0 && c === 0)
+            || (a === 192 && b === 0 && c === 2)
+            || (a === 192 && b === 88 && c === 99)
+            || (a === 198 && (b === 18 || b === 19))
+            || (a === 198 && b === 51 && c === 100)
+            || (a === 203 && b === 0 && c === 113);
+    }
+
+    function isUnsafeIpv6(address) {
+        const segments = expandIpv6Address(address);
+        if (!segments) return true;
+        const allZero = segments.every((part) => part === 0);
+        const loopback = segments.slice(0, 7).every((part) => part === 0) && segments[7] === 1;
+        if (allZero || loopback) return true;
+
+        if (segments.slice(0, 5).every((part) => part === 0)
+            && (segments[5] === 0 || segments[5] === 0xffff)) {
+            const mapped = [
+                (segments[6] >> 8) & 255,
+                segments[6] & 255,
+                (segments[7] >> 8) & 255,
+                segments[7] & 255,
+            ].join('.');
+            return isUnsafeIpv4(mapped);
+        }
+
+        const first = segments[0];
+        return (first & 0xfe00) === 0xfc00
+            || (first & 0xffc0) === 0xfe80
+            || (first & 0xff00) === 0xff00
+            || (first === 0x2001 && segments[1] === 0x0db8);
+    }
+
+    function expandIpv6Address(address) {
+        let value = normalizeHostname(address).split('%')[0];
+        const dotted = value.match(/(^|:)(\d{1,3}(?:\.\d{1,3}){3})$/u);
+        if (dotted) {
+            const ipv4 = dotted[2].split('.').map((part) => Number(part));
+            if (ipv4.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return null;
+            const high = ((ipv4[0] << 8) | ipv4[1]).toString(16);
+            const low = ((ipv4[2] << 8) | ipv4[3]).toString(16);
+            value = value.slice(0, value.length - dotted[2].length) + high + ':' + low;
+        }
+
+        const doubleColonMatches = value.match(/::/gu);
+        if (doubleColonMatches && doubleColonMatches.length > 1) return null;
+        const sides = value.split('::');
+        const left = sides[0] ? sides[0].split(':') : [];
+        const right = sides.length > 1 && sides[1] ? sides[1].split(':') : [];
+        const fill = sides.length > 1 ? 8 - left.length - right.length : 0;
+        if (fill < 0) return null;
+        const parts = left.concat(Array(fill).fill('0'), right);
+        if (parts.length !== 8) return null;
+        const segments = parts.map((part) => {
+            if (!/^[0-9a-f]{1,4}$/iu.test(part)) return NaN;
+            return parseInt(part, 16);
+        });
+        return segments.every((part) => Number.isInteger(part) && part >= 0 && part <= 0xffff)
+            ? segments
+            : null;
+    }
+
+    function getTextByteLength(value) {
+        const text = String(value || '');
+        if (typeof Buffer !== 'undefined' && Buffer && typeof Buffer.byteLength === 'function') {
+            return Buffer.byteLength(text, 'utf8');
+        }
+        return text.length;
     }
 
     function refreshConfigSummary() {
@@ -1067,10 +1537,14 @@
         initRefs();
         bindEvents();
         notifyTrackerGuiState(true);
-        window.addEventListener('beforeunload', () => notifyTrackerGuiState(false));
+        window.addEventListener('beforeunload', () => {
+            notifyTrackerGuiState(false);
+            stopUpdateChecker();
+        });
         const nodeReady = initNode();
         refreshRuntimeContext();
         refreshConfigSummary();
+        startUpdateChecker();
         refreshRuntimeFeed();
         renderStatus();
         renderHookResults();
@@ -1079,6 +1553,15 @@
         installGameCloseWatcher();
         addLog('info', nodeReady ? 'GUI monitor loaded.' : 'GUI monitor loaded without Node APIs.');
         if (!state.hookResults.length) addLog('info', 'Runtime feed is not connected.');
+    }
+
+    if (globalThis.__LiveTranslatorGuiExposeTestApi === true) {
+        globalThis.LiveTranslatorGuiTestApi = {
+            normalizeVersionString,
+            parseVersionPayload,
+            validateVersionCheckUrl,
+            isUnsafeIpAddress,
+        };
     }
 
     boot();

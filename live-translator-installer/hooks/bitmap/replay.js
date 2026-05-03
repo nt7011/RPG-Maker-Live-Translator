@@ -103,6 +103,8 @@
                 rect,
                 drawOrder: nextDrawOrder(state),
                 recordedAt: Date.now(),
+                windowDrawTextExReplay: !!(op.windowDrawTextExReplay
+                    || (bitmap && bitmap._trWindowDrawTextExReplayDepth > 0)),
             };
             state.renderOps.push(record);
             perf.count('bitmap.renderOp.recorded');

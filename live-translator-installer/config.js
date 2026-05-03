@@ -112,6 +112,7 @@
 
     function validateTextScaleSettings(settings, logger) {
         if (!settings || typeof settings !== 'object') return;
+        validateBooleanSetting(settings.checkUpdates, 'checkUpdates', logger);
         validateTextScaleSetting(settings.textScaleOthers, 'textScaleOthers', logger);
 
         const gameMessage = settings.gameMessage;

@@ -503,7 +503,10 @@
         };
 
         const recordPaintOp = (bitmap, methodName, args, rect, options = {}) => {
-            const state = getBitmapState(bitmap);
+            let state = getBitmapState(bitmap);
+            if (!state && isBitmapOwned(bitmap)) {
+                state = ensureBitmapState(bitmap);
+            }
             if (!state) {
                 markBitmapOwnersDirty(bitmap, methodName || 'mutation');
                 return;
