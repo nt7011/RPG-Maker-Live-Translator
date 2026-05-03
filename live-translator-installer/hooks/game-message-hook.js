@@ -59,54 +59,6 @@
         return null;
     }
 
-    function getExplicitGameMessageForWindow(windowInstance) {
-        try {
-            if (windowInstance
-                && windowInstance._gameMessage
-                && typeof windowInstance._gameMessage.allText === 'function') {
-                return windowInstance._gameMessage;
-            }
-        } catch (_) {}
-        return null;
-    }
-
-    function getGlobalGameMessage() {
-        try {
-            if (typeof $gameMessage !== 'undefined'
-                && $gameMessage
-                && typeof $gameMessage.allText === 'function') {
-                return $gameMessage;
-            }
-        } catch (_) {}
-        return null;
-    }
-
-    function usesWindowSpecificGameMessage(windowInstance) {
-        const globalGameMessage = getGlobalGameMessage();
-        const explicitGameMessage = getExplicitGameMessageForWindow(windowInstance);
-        if (explicitGameMessage && explicitGameMessage !== globalGameMessage) return true;
-        try {
-            const trackedSource = windowInstance
-                && windowInstance._trGameMessageSource
-                && typeof windowInstance._trGameMessageSource.allText === 'function'
-                    ? windowInstance._trGameMessageSource
-                    : null;
-            if (trackedSource && trackedSource !== globalGameMessage) return true;
-        } catch (_) {}
-        return false;
-    }
-
-    function refreshWindowSpecificMessagePlacement(windowInstance) {
-        // Independent Game_Message windows may compute side-by-side layout in updatePlacement().
-        // Global message windows skip this during async redraw to avoid snapping custom placement.
-        if (!usesWindowSpecificGameMessage(windowInstance)
-            || !windowInstance
-            || typeof windowInstance.updatePlacement !== 'function') {
-            return;
-        }
-        windowInstance.updatePlacement();
-    }
-
     function isMessageWindowLike(windowInstance) {
         if (!windowInstance) return false;
         if (windowInstance._trHasDedicatedTextHook) return true;
@@ -953,7 +905,9 @@
             const textState = createNativeGameMessageTextState(windowInstance, text, overrides);
             windowInstance._textState = textState;
             windowInstance.newPage(textState);
-            refreshWindowSpecificMessagePlacement(windowInstance);
+            if (typeof windowInstance.updatePlacement === 'function') {
+                windowInstance.updatePlacement();
+            }
             if (typeof windowInstance.updateBackground === 'function') {
                 windowInstance.updateBackground();
             }
