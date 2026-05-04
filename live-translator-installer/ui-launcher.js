@@ -14,6 +14,11 @@
         ? globalThis.LiveTranslatorGuiState
         : { translatorOpen: false, updatedAt: Date.now() };
     globalThis.LiveTranslatorGuiState = guiState;
+    const testOptions = globalThis.__LiveTranslatorUiLauncherTestOptions && typeof globalThis.__LiveTranslatorUiLauncherTestOptions === 'object'
+        ? globalThis.__LiveTranslatorUiLauncherTestOptions
+        : {};
+    const OPEN_CALLBACK_TIMEOUT_MS = normalizePositiveInteger(testOptions.openCallbackTimeoutMs, 4000);
+    const DEFAULT_LAUNCH_RETRY_MS = normalizePositiveInteger(testOptions.defaultLaunchRetryMs, 1000);
 
     const windows = {
         precacher: createUiWindow({
@@ -90,7 +95,9 @@
 
     function isClosedWindow(win) {
         try {
-            return !win || win.closed === true;
+            return !win
+                || win.closed === true
+                || (win.window && win.window.closed === true);
         } catch (_) {
             return true;
         }
@@ -111,14 +118,64 @@
         const uiUrl = createUiUrl(config.file, config.query);
         let openedWindow = null;
         let opening = false;
+        let openingTimeout = null;
+        let openedOnce = false;
 
         function markOpen(open) {
+            if (open) openedOnce = true;
             if (config.id === 'translator') setTranslatorOpen(open);
+        }
+
+        function isKnownOpenFromGuiState() {
+            return config.id === 'translator'
+                && guiState
+                && guiState.translatorOpen === true;
+        }
+
+        function hasOpenedOnce() {
+            return openedOnce || isKnownOpenFromGuiState();
+        }
+
+        function clearOpeningTimeout() {
+            if (!openingTimeout) return;
+            try { clearTimeout(openingTimeout); } catch (_) {}
+            openingTimeout = null;
+        }
+
+        function beginOpeningTimeout() {
+            clearOpeningTimeout();
+            openingTimeout = setTimeout(() => {
+                openingTimeout = null;
+                if (!opening) return;
+                opening = false;
+                if (hasOpenedOnce()) return;
+                markOpen(false);
+                try {
+                    console.warn(`${config.errorPrefix} Window open callback timed out; allowing another launch attempt.`);
+                } catch (_) {}
+            }, OPEN_CALLBACK_TIMEOUT_MS);
+        }
+
+        function isKnownClosedFromGuiState() {
+            return config.id === 'translator'
+                && openedWindow
+                && guiState
+                && guiState.translatorOpen === false;
         }
 
         function focusExistingWindow() {
             try {
-                if (isClosedWindow(openedWindow)) {
+                if (!openedWindow) {
+                    if (isKnownOpenFromGuiState()) {
+                        clearOpeningTimeout();
+                        opening = false;
+                        openedOnce = true;
+                        return true;
+                    }
+                    markOpen(false);
+                    return false;
+                }
+                if (isClosedWindow(openedWindow) || isKnownClosedFromGuiState()) {
                     openedWindow = null;
                     markOpen(false);
                     return false;
@@ -135,6 +192,7 @@
         }
 
         function rememberOpenedWindow(opened) {
+            clearOpeningTimeout();
             opening = false;
             openedWindow = opened || null;
             applyWindowGeometry(openedWindow, resolveWindowGeometry(config));
@@ -154,6 +212,7 @@
             if (focusExistingWindow() || opening) return;
 
             opening = true;
+            beginOpeningTimeout();
             const shouldFocus = options.focus !== false;
             const geometry = resolveWindowGeometry(config);
             const windowOptions = {
@@ -164,11 +223,20 @@
             if (geometry.position) windowOptions.position = geometry.position;
 
             if (globalThis.nw && nw.Window && typeof nw.Window.open === 'function') {
-                nw.Window.open(uiUrl, windowOptions, rememberOpenedWindow);
+                try {
+                    const opened = nw.Window.open(uiUrl, windowOptions, rememberOpenedWindow);
+                    if (opened) rememberOpenedWindow(opened);
+                } catch (err) {
+                    clearOpeningTimeout();
+                    opening = false;
+                    markOpen(false);
+                    throw err;
+                }
                 return;
             }
 
             openedWindow = window.open(uiUrl, config.title, buildWindowFeatures(geometry));
+            clearOpeningTimeout();
             applyWindowGeometry(openedWindow, geometry);
             opening = false;
             markOpen(!isClosedWindow(openedWindow));
@@ -178,6 +246,7 @@
             const win = openedWindow;
             openedWindow = null;
             opening = false;
+            clearOpeningTimeout();
             markOpen(false);
             try {
                 if (isClosedWindow(win)) return;
@@ -186,6 +255,10 @@
         }
 
         function isOpen() {
+            if (!openedWindow && isKnownOpenFromGuiState()) {
+                openedOnce = true;
+                return true;
+            }
             if (isClosedWindow(openedWindow)) {
                 openedWindow = null;
                 markOpen(false);
@@ -202,6 +275,13 @@
             closeWithGame: !!config.closeWithGame,
             matchHotkey: config.matchHotkey,
             isOpen,
+            isOpening() {
+                if (opening && hasOpenedOnce()) opening = false;
+                return opening;
+            },
+            openedOnce() {
+                return hasOpenedOnce();
+            },
             open,
             close,
         };
@@ -425,14 +505,27 @@
     }
 
     function launchDefaultWindows() {
+        const defaultEntries = Object.values(windows).filter((entry) => entry.defaultOpen);
         const launch = () => {
-            for (const entry of Object.values(windows)) {
-                if (!entry.defaultOpen) continue;
+            let pending = false;
+            for (const entry of defaultEntries) {
+                if (typeof entry.openedOnce === 'function' && entry.openedOnce()) continue;
+                if (typeof entry.isOpening === 'function' && entry.isOpening()) {
+                    pending = true;
+                    continue;
+                }
                 try {
                     entry.open({ focus: true });
                 } catch (err) {
                     try { console.warn(`[LiveTranslatorUiLauncher] Default ${entry.id} launch failed:`, err); } catch (_) {}
                 }
+                if (typeof entry.openedOnce === 'function' && !entry.openedOnce()) {
+                    pending = true;
+                }
+            }
+
+            if (pending && defaultEntries.some((entry) => typeof entry.openedOnce !== 'function' || !entry.openedOnce())) {
+                setTimeout(launch, DEFAULT_LAUNCH_RETRY_MS);
             }
         };
 

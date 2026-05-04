@@ -202,6 +202,86 @@ function installSpriteText(runtime, translation = 'ID card') {
     });
 }
 
+function installSpriteTextWithOptions(runtime, options = {}) {
+    const completed = options.completed || new Map();
+    const requests = [];
+    runtime.module.install({
+        logger: {
+            warn() {},
+            error() {},
+        },
+        diag() {},
+        preview(value) {
+            return String(value ?? '');
+        },
+        stripRpgmEscapes(value) {
+            return String(value ?? '');
+        },
+        prepareTextForTranslation(value) {
+            return { textForTranslation: String(value ?? '') };
+        },
+        restoreControlCodes(value) {
+            return value;
+        },
+        captureBitmapDrawState(bitmap) {
+            return {
+                fontFace: bitmap.fontFace,
+                fontSize: bitmap.fontSize,
+                fontBold: bitmap.fontBold,
+                fontItalic: bitmap.fontItalic,
+                textColor: bitmap.textColor,
+                outlineColor: bitmap.outlineColor,
+                outlineWidth: bitmap.outlineWidth,
+            };
+        },
+        applyBitmapDrawState(bitmap, state) {
+            if (!bitmap || !state) return;
+            Object.assign(bitmap, state);
+        },
+        translationCache: {
+            completed,
+            shouldSkip() {
+                return false;
+            },
+            requestTranslation(value) {
+                const normalized = String(value ?? '').trim();
+                requests.push(normalized);
+                return Promise.resolve(completed.get(normalized) || normalized);
+            },
+        },
+        settings: {},
+        textTracker: options.textTracker || null,
+    });
+    return { requests };
+}
+
+function addGlyph(runtime, parent, text, x) {
+    const bitmap = new runtime.Bitmap(24, 32);
+    const sprite = new runtime.Sprite();
+    sprite.x = x;
+    parent.addChild(sprite);
+    sprite.bitmap = bitmap;
+    runtime.sandbox.LiveTranslatorSpriteTextHook.recordBitmapDrawText({
+        bitmap,
+        text,
+        x: 0,
+        y: 0,
+        maxWidth: 24,
+        lineHeight: 32,
+        align: 'left',
+        drawState: {
+            fontFace: 'GameFont',
+            fontSize: 24,
+            fontBold: false,
+            fontItalic: false,
+            textColor: '#ffffff',
+            outlineColor: 'rgba(0, 0, 0, 0.5)',
+            outlineWidth: 4,
+        },
+    });
+    return sprite;
+}
+
 test('sprite overlay replays image paint drawn before first text draw', () => {
     const runtime = loadSpriteTextHook();
     installSpriteText(runtime, 'ID card');
@@ -246,4 +326,57 @@ test('sprite overlay replays image paint drawn before first text draw', () => {
     );
     assert.equal(overlay.bitmap.operations[0].sourceName, 'item-icon');
     assert.equal(overlay.bitmap.operations[1].text, 'ID card');
+});
+
+test('sprite run supersedes an earlier same-slot prefix when a longer run appears', () => {
+    const runtime = loadSpriteTextHook();
+    const trackerEvents = [];
+    const { requests } = installSpriteTextWithOptions(runtime, {
+        completed: new Map(),
+        textTracker: {
+            isEnabled() {
+                return true;
+            },
+            detect(payload) {
+                trackerEvents.push({ type: 'detect', text: payload && payload.original });
+            },
+            upsert(payload) {
+                trackerEvents.push({ type: 'upsert', text: payload && payload.original });
+            },
+            disappear(id, reason, details) {
+                trackerEvents.push({ type: 'disappear', reason, text: details && details.supersededByText });
+            },
+            decision() {},
+            complete() {},
+            draw() {},
+            skip() {},
+            fail() {},
+        },
+    });
+
+    const parent = new runtime.Sprite();
+    addGlyph(runtime, parent, 'B', 0);
+    addGlyph(runtime, parent, 'a', 12);
+    runtime.sandbox.LiveTranslatorSpriteTextHook.flushFrame('prefix');
+
+    addGlyph(runtime, parent, 'd', 24);
+    addGlyph(runtime, parent, 'S', 36);
+    addGlyph(runtime, parent, 't', 48);
+    addGlyph(runtime, parent, 'a', 60);
+    addGlyph(runtime, parent, 't', 72);
+    addGlyph(runtime, parent, 'u', 84);
+    addGlyph(runtime, parent, 's', 96);
+    runtime.sandbox.LiveTranslatorSpriteTextHook.flushFrame('complete');
+
+    assert.deepEqual(requests, ['Ba', 'BadStatus']);
+    assert.deepEqual(
+        trackerEvents.filter((event) => event.type === 'detect').map((event) => event.text),
+        ['Ba', 'BadStatus']
+    );
+    assert.ok(
+        trackerEvents.some((event) => event.type === 'disappear'
+            && event.reason === 'sprite-run-superseded'
+            && event.text === 'BadStatus'),
+        'expected previous prefix record to be marked as superseded by the longer run'
+    );
 });

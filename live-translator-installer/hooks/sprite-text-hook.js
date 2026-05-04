@@ -1513,11 +1513,19 @@
             if (!state) {
                 state = {
                     runs: new Map(),
+                    slots: new Map(),
                 };
                 parentRunStates.set(parent, state);
             }
             if (!state.runs || typeof state.runs.set !== 'function') state.runs = new Map();
+            if (!state.slots || typeof state.slots.set !== 'function') state.slots = new Map();
             return state.runs;
+        };
+
+        const getParentRunSlotMap = (parent) => {
+            getParentRunMap(parent);
+            const state = parentRunStates.get(parent);
+            return state && state.slots && typeof state.slots.set === 'function' ? state.slots : null;
         };
 
         const collectGlyphCandidates = (parent) => {
@@ -1683,6 +1691,154 @@
             return groups;
         };
 
+        const parentRunLayerKey = (group) => {
+            const first = Array.isArray(group) && group.length ? group[0] : null;
+            const sprite = first && first.sprite ? first.sprite : null;
+            const z = sprite && Number.isFinite(Number(sprite.z)) ? Math.round(Number(sprite.z)) : 0;
+            const zIndex = sprite && Number.isFinite(Number(sprite.zIndex)) ? Math.round(Number(sprite.zIndex)) : 0;
+            return `${z}:${zIndex}`;
+        };
+
+        const parentRunBucket = (value, size) => {
+            const safeSize = Math.max(1, Number(size) || 1);
+            const safeValue = Number.isFinite(Number(value)) ? Number(value) : 0;
+            return Math.round(safeValue / safeSize);
+        };
+
+        const createParentRunSlotKey = (group, bounds) => {
+            const first = Array.isArray(group) && group.length ? group[0] : null;
+            const lineHeight = Math.max(1, Number(first && first.lineHeight) || Number(bounds && (bounds.y2 - bounds.y1)) || 24);
+            const xBucketSize = Math.max(8, Math.ceil(lineHeight * 0.5));
+            const yBucketSize = Math.max(12, Math.ceil(lineHeight * 0.85));
+            const centerY = rectCenterY(bounds);
+            return [
+                first && first.fontSignature ? first.fontSignature : '',
+                parentRunLayerKey(group),
+                parentRunBucket(bounds && bounds.x1, xBucketSize),
+                parentRunBucket(centerY, yBucketSize),
+            ].join('|');
+        };
+
+        const parentRunSlotTolerance = (run) => {
+            const lineHeight = Math.max(
+                1,
+                Number(run && run.lineHeight) || Number(run && run.bounds && (run.bounds.y2 - run.bounds.y1)) || 24
+            );
+            return {
+                x: Math.max(8, Math.ceil(lineHeight * 0.5)),
+                y: Math.max(12, Math.ceil(lineHeight * 0.85)),
+            };
+        };
+
+        const areParentRunSlotsCompatible = (a, b) => {
+            if (!a || !b || a === b || a.parent !== b.parent) return false;
+            if (a.fontSignature !== b.fontSignature) return false;
+            if (a.layerKey !== b.layerKey) return false;
+            if (!isValidRect(a.bounds) || !isValidRect(b.bounds)) return false;
+            const aTolerance = parentRunSlotTolerance(a);
+            const bTolerance = parentRunSlotTolerance(b);
+            const xLimit = Math.max(aTolerance.x, bTolerance.x);
+            const yLimit = Math.max(aTolerance.y, bTolerance.y);
+            return Math.abs(a.bounds.x1 - b.bounds.x1) <= xLimit
+                && Math.abs(rectCenterY(a.bounds) - rectCenterY(b.bounds)) <= yLimit;
+        };
+
+        const isParentRunTextExtension = (previous, next) => {
+            const oldText = String(previous && previous.trimmedText || '');
+            const newText = String(next && next.trimmedText || '');
+            return !!oldText && newText.length > oldText.length && newText.indexOf(oldText) === 0;
+        };
+
+        const clearParentRunSlot = (run) => {
+            if (!run || !run.parent || !run.slotKey) return;
+            const slotMap = getParentRunSlotMap(run.parent);
+            if (slotMap && slotMap.get(run.slotKey) === run) slotMap.delete(run.slotKey);
+        };
+
+        const findParentRunSlotMatch = (run) => {
+            if (!run || !run.parent) return null;
+            const slotMap = getParentRunSlotMap(run.parent);
+            if (!slotMap) return null;
+            const exact = run.slotKey ? slotMap.get(run.slotKey) : null;
+            if (exact && exact !== run && !exact.stale) return { key: run.slotKey, run: exact };
+            for (const [key, candidate] of slotMap.entries()) {
+                if (!candidate || candidate === run || candidate.stale) {
+                    slotMap.delete(key);
+                    continue;
+                }
+                if (areParentRunSlotsCompatible(candidate, run)) return { key, run: candidate };
+            }
+            return null;
+        };
+
+        const isActiveParentRunSlot = (run) => {
+            if (!run || run.stale || !run.parent || !run.slotKey) return false;
+            const slotMap = getParentRunSlotMap(run.parent);
+            return !!(slotMap && slotMap.get(run.slotKey) === run);
+        };
+
+        const supersedeParentRun = (previous, next, reason = 'sprite-run-superseded') => {
+            if (!previous || previous.stale || !next || previous === next) return;
+            previous.supersededBy = next.id || '';
+            previous.supersededByRecordId = next.recordId || '';
+            previous.supersededByText = next.trimmedText || '';
+            previous.status = 'superseded';
+            if (previous._trTrackerVisible !== false) {
+                trackDecision(previous.recordId, 'sprite.run_superseded', 'prefix-extension', {
+                    mode: 'sprite-run',
+                    slotKey: next.slotKey || previous.slotKey || '',
+                    supersededBy: next.recordId || next.id || '',
+                    supersededByText: next.trimmedText || '',
+                });
+            }
+            safePerf.count('spriteText2.run.superseded');
+            removeParentRun(previous, reason, {
+                slotKey: next.slotKey || previous.slotKey || '',
+                supersededBy: next.recordId || next.id || '',
+                supersededByText: next.trimmedText || '',
+            });
+        };
+
+        const replaceParentRunSlot = (previous, next, reason = 'sprite-run-slot-replaced') => {
+            if (!previous || previous.stale || !next || previous === next) return;
+            previous.replacedBy = next.id || '';
+            previous.replacedByRecordId = next.recordId || '';
+            if (previous._trTrackerVisible !== false) {
+                trackDecision(previous.recordId, 'sprite.run_slot_replaced', '', {
+                    mode: 'sprite-run',
+                    slotKey: next.slotKey || previous.slotKey || '',
+                    replacedBy: next.recordId || next.id || '',
+                    replacedByText: next.trimmedText || '',
+                });
+            }
+            safePerf.count('spriteText2.run.slotReplaced');
+            removeParentRun(previous, reason, {
+                slotKey: next.slotKey || previous.slotKey || '',
+                replacedBy: next.recordId || next.id || '',
+                replacedByText: next.trimmedText || '',
+            });
+        };
+
+        const registerParentRunSlot = (run) => {
+            if (!run || run.stale || !run.parent || !run.slotKey) return false;
+            const slotMap = getParentRunSlotMap(run.parent);
+            if (!slotMap) return false;
+            const match = findParentRunSlotMatch(run);
+            if (match && match.run && match.run !== run) {
+                if (isParentRunTextExtension(match.run, run)) {
+                    supersedeParentRun(match.run, run);
+                } else if (isParentRunTextExtension(run, match.run)) {
+                    supersedeParentRun(run, match.run);
+                    return false;
+                } else {
+                    replaceParentRunSlot(match.run, run);
+                }
+                if (match.key) slotMap.delete(match.key);
+            }
+            slotMap.set(run.slotKey, run);
+            return true;
+        };
+
         const createOrUpdateParentRun = (parent, group, runMap) => {
             const rawText = group.map((item) => item.rawText).join('');
             const trimmedText = sanitizeVisibleText(rawText);
@@ -1696,12 +1852,20 @@
                 y2: Math.max(acc.y2, item.y + item.height),
             }), { x1: Infinity, y1: Infinity, x2: -Infinity, y2: -Infinity });
             if (!isValidRect(bounds)) return null;
+            const fontSignature = group[0] ? group[0].fontSignature : '';
+            const layerKey = parentRunLayerKey(group);
+            const slotKey = createParentRunSlotKey(group, bounds);
             if (existing && existing.rawText === rawText) {
+                if (existing.slotKey && existing.slotKey !== slotKey) clearParentRunSlot(existing);
                 existing.group = group;
                 existing.bounds = bounds;
+                existing.fontSignature = fontSignature;
+                existing.layerKey = layerKey;
+                existing.slotKey = slotKey;
                 existing.lastSeenAt = Date.now();
                 claimGlyphGroupForRun(group, existing);
-                trackedParentRuns.add(existing);
+                registerParentRunSlot(existing);
+                if (!existing.stale) trackedParentRuns.add(existing);
                 return existing;
             }
             if (existing) removeParentRun(existing, 'replaced');
@@ -1718,6 +1882,9 @@
                 translationSource,
                 normalizedSource: String(translationSource || '').trim(),
                 bounds,
+                fontSignature,
+                layerKey,
+                slotKey,
                 drawState: group[0] ? group[0].drawState : null,
                 lineHeight: Math.max(...group.map((item) => Number(item.lineHeight) || 0), 1),
                 status: 'pending',
@@ -1727,39 +1894,12 @@
                 recordId: `sprite-run:${key}:${trimmedText}`,
                 createdAt: Date.now(),
                 lastSeenAt: Date.now(),
+                _trTrackerVisible: false,
             };
             runMap.set(key, run);
             claimGlyphGroupForRun(group, run);
-            if (telemetry && typeof telemetry.logTextDetected === 'function') {
-                telemetry.logTextDetected('sprite_text', run.trimmedText, bounds.x1, bounds.y1, {
-                    mode: 'sprite-run',
-                    glyphs: group.length,
-                });
-            }
-            if (hasTextTracker()) {
-                textTracker.detect({
-                    id: run.recordId,
-                    hook: 'sprite_text',
-                    hookLabel: 'Sprite Text',
-                    surfaceType: 'sprite',
-                    status: 'pending',
-                    rawText: run.rawText,
-                    visibleText: run.trimmedText,
-                    original: run.trimmedText,
-                    translationSource: run.translationSource,
-                    normalizedSource: run.normalizedSource,
-                    x: Math.round(bounds.x1),
-                    y: Math.round(bounds.y1),
-                    bounds,
-                    ownerType: parent && parent.constructor ? parent.constructor.name : 'Sprite',
-                    metadata: {
-                        mode: 'sprite-run',
-                        glyphs: group.length,
-                    },
-                });
-                run._trTrackerVisible = true;
-            }
             trackedParentRuns.add(run);
+            registerParentRunSlot(run);
             diag(`[sprite-text/register] mode=sprite-run id=${run.id} text="${preview(run.trimmedText)}" glyphs=${group.length} rect=${formatRect(bounds)}`);
             return run;
         };
@@ -1769,6 +1909,7 @@
             markRecordDisappeared(run.recordId, reason, {
                 mode: 'sprite-run',
                 glyphs: run.group ? run.group.length : 0,
+                slotKey: run.slotKey || '',
             });
             run._trTrackerVisible = false;
         };
@@ -1780,7 +1921,15 @@
                 hideRunLiveRecord(run, 'sprite-run-invisible');
                 return;
             }
-            textTracker.upsert({
+            if (telemetry && typeof telemetry.logTextDetected === 'function' && !run._trTelemetryDetected) {
+                telemetry.logTextDetected('sprite_text', run.trimmedText, run.bounds.x1, run.bounds.y1, {
+                    mode: 'sprite-run',
+                    glyphs: run.group ? run.group.length : 0,
+                    slotKey: run.slotKey || '',
+                });
+                run._trTelemetryDetected = true;
+            }
+            const payload = {
                 id: run.recordId,
                 hook: 'sprite_text',
                 hookLabel: 'Sprite Text',
@@ -1801,13 +1950,20 @@
                 metadata: {
                     mode: 'sprite-run',
                     glyphs: run.group ? run.group.length : 0,
+                    slotKey: run.slotKey || '',
                 },
-            });
+            };
+            if (run._trTrackerVisible !== true && typeof textTracker.detect === 'function') {
+                textTracker.detect(payload);
+            } else {
+                textTracker.upsert(payload);
+            }
             run._trTrackerVisible = true;
         };
 
         const activateParentRun = (run) => {
             if (!run || run.stale || run.status !== 'pending') return;
+            if (!isActiveParentRunSlot(run)) return;
             const skipInfo = describeTranslationSkip(run.normalizedSource);
             if (skipInfo.skip) {
                 run.status = 'skipped';
@@ -1816,6 +1972,7 @@
                     textTracker.skip(run.recordId, skipInfo.reason || 'translation filter', Object.assign({
                         mode: 'sprite-run',
                         glyphs: run.group ? run.group.length : 0,
+                        slotKey: run.slotKey || '',
                     }, skipInfo.details || {}));
                 }
                 return;
@@ -1825,6 +1982,7 @@
                     trackDecision(run.recordId, 'translation.cache_hit', '', {
                         mode: 'sprite-run',
                         glyphs: run.group ? run.group.length : 0,
+                        slotKey: run.slotKey || '',
                     });
                     completeParentRun(run, translationCache.completed.get(run.normalizedSource), 'cache', run.id);
                     return;
@@ -1834,9 +1992,12 @@
             updateRunLiveRecord(run);
             const expectedId = run.id;
             safePerf.count('spriteText2.run.translation.request');
+            // TODO(translation-pipe): pass a cancellation handle here once requests can be aborted,
+            // so superseded sprite-run prefixes can be stopped instead of only ignored.
             translationCache.requestTranslation(run.translationSource, {
                 recordId: run.recordId,
                 hook: 'sprite_text',
+                slotKey: run.slotKey || '',
             })
                 .then((translated) => completeParentRun(run, translated, 'async', expectedId))
                 .catch((error) => {
@@ -1844,7 +2005,10 @@
                     run.status = 'error';
                     updateRunLiveRecord(run);
                     if (hasTextTracker() && run._trTrackerVisible !== false) {
-                        textTracker.fail(run.recordId, error && error.message ? error.message : String(error || 'translation error'));
+                        textTracker.fail(run.recordId, error && error.message ? error.message : String(error || 'translation error'), {
+                            mode: 'sprite-run',
+                            slotKey: run.slotKey || '',
+                        });
                     }
                     logger.warn('[sprite-text/run-translation-error]', error);
                 });
@@ -1852,6 +2016,7 @@
 
         const completeParentRun = (run, translated, source, expectedId) => {
             if (!run || run.stale || run.id !== expectedId) return;
+            if (!isActiveParentRunSlot(run)) return;
             if (!run.parent || run.parent._destroyed || !run.group || !run.group.every((item) => item.sprite && isChildInParent(item.sprite, run.parent))) {
                 removeParentRun(run, 'source-gone');
                 return;
@@ -1882,7 +2047,12 @@
             if (!restoredTrimmed || restoredTrimmed === run.trimmedText) {
                 run.status = 'skipped';
                 updateRunLiveRecord(run);
-                if (hasTextTracker() && run._trTrackerVisible !== false) textTracker.skip(run.recordId, 'translated text matched original');
+                if (hasTextTracker() && run._trTrackerVisible !== false) {
+                    textTracker.skip(run.recordId, 'translated text matched original', {
+                        mode: 'sprite-run',
+                        slotKey: run.slotKey || '',
+                    });
+                }
                 return;
             }
             run.status = 'completed';
@@ -1894,6 +2064,7 @@
                 textTracker.complete(run.recordId, restored, {
                     source: source || 'unknown',
                     mode: 'sprite-run',
+                    slotKey: run.slotKey || '',
                     translationReceived: translated,
                 });
             }
@@ -1930,8 +2101,15 @@
             });
         };
 
-        const removeParentRun = (run, reason = 'remove') => {
+        const removeParentRun = (run, reason = 'remove', details = null) => {
             if (!run || run.stale) return;
+            const state = run.parent ? parentRunStates.get(run.parent) : null;
+            if (state && state.slots && run.slotKey && state.slots.get(run.slotKey) === run) {
+                state.slots.delete(run.slotKey);
+            }
+            if (state && state.runs && run.key && state.runs.get(run.key) === run) {
+                state.runs.delete(run.key);
+            }
             run.stale = true;
             trackedParentRuns.delete(run);
             const overlay = run.overlaySprite;
@@ -1940,10 +2118,11 @@
             }
             restoreRunSources(run);
             if (hasTextTracker() && run._trTrackerVisible !== false) {
-                markRecordDisappeared(run.recordId, reason || 'remove', {
+                markRecordDisappeared(run.recordId, reason || 'remove', Object.assign({
                     mode: 'sprite-run',
                     glyphs: run.group ? run.group.length : 0,
-                });
+                    slotKey: run.slotKey || '',
+                }, details || {}));
             }
             activeParents.delete(run.parent);
             safePerf.top('spriteText2.run.removeReason', reason || 'unknown');
@@ -1951,6 +2130,7 @@
 
         const renderParentRunOverlay = (run, source = 'translation') => {
             if (!run || run.stale || run.status !== 'completed' || !run.translatedText || !run.parent) return;
+            if (!isActiveParentRunSlot(run)) return;
             const measured = measureTextWidth(null, sanitizeVisibleText(run.translatedText), 0);
             const outline = run.drawState && Number.isFinite(Number(run.drawState.outlineWidth))
                 ? Math.max(2, Number(run.drawState.outlineWidth) + 2)
@@ -2031,6 +2211,7 @@
                             mode: 'sprite-run',
                             source,
                             glyphs: run.group ? run.group.length : 0,
+                            slotKey: run.slotKey || '',
                             translationDrawn: run.translatedText || '',
                         });
                     }
@@ -2043,6 +2224,10 @@
 
         const syncParentRun = (run) => {
             if (!run || run.stale || !run.overlaySprite || !run.parent || run.parent._destroyed) return false;
+            if (!isActiveParentRunSlot(run)) {
+                removeParentRun(run, 'sprite-run-slot-inactive');
+                return false;
+            }
             if (!run.group || !run.group.every((item) => item.sprite && isChildInParent(item.sprite, run.parent) && !item.sprite._destroyed)) {
                 removeParentRun(run, 'source-gone');
                 return false;
@@ -2086,10 +2271,15 @@
             const runMap = getParentRunMap(parent);
             if (!runMap) return;
             const nextKeys = new Set();
+            const processedRuns = [];
             groups.forEach((group) => {
                 const run = createOrUpdateParentRun(parent, group, runMap);
                 if (!run) return;
                 nextKeys.add(run.key);
+                processedRuns.push(run);
+            });
+            processedRuns.forEach((run) => {
+                if (!run || run.stale || !isActiveParentRunSlot(run)) return;
                 updateRunLiveRecord(run);
                 activateParentRun(run);
                 if (run.status === 'completed' && run.translatedText) {

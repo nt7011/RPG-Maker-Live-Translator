@@ -49,6 +49,9 @@ To suppress specific source strings before any precache/cache/provider translati
 
 Rules are checked against the trimmed translation source. They use JavaScript regular expressions in Unicode mode by default. To opt into flags, use slash form such as `"/^SYSTEM:/i"` or `"/^SYSTEM$/m"`. Supported optional flags are `i` (case-insensitive), `m` (make `^`/`$` match line starts/ends), and `s` (make `.` match newlines).
 
+## Translator GUI
+The translator monitor opens automatically when the game starts. If you close it, press `Ctrl+Shift+Enter` in the game window or run `LiveTranslatorGui.open()` from DevTools.
+
 ## Precacher GUI (Beta)
 After installing the plugin, press `Ctrl+Shift+P` in the game window or run `LiveTranslatorPrecacher.open()` from DevTools.
 Extraction follows `settings.json` `translation.disableCjkFilter` and uses the same CJK gate as live translation.
@@ -89,5 +92,7 @@ Extraction follows `settings.json` `translation.disableCjkFilter` and uses the s
 3.2 - new: sprite-text-hook - replaces most of the bitmap text handling. new GUI for diagnosis/status. add options: textScaleOthers, originAwareLineBreaks
 
 3.2.6 - text async redraw background clear correctness
+
+3.2.7 - performance improvement (handles slow revealing sprite text better)
 
 ![License](https://img.shields.io/badge/License-CC%20BY%204.0-blue.svg)
