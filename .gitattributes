@@ -1,0 +1,12 @@
+# Store text files with LF endings and check them out as LF.
+* text=auto eol=lf
+
+# Keep binary assets untouched.
+*.bmp binary
+*.gif binary
+*.ico binary
+*.jpg binary
+*.jpeg binary
+*.png binary
+*.webp binary
+*.zip binary

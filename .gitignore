@@ -1,0 +1,12 @@
+experimentation*/
+live-translator-installer/settings.json
+live-translator-installer/diagnostics.log
+live-translator-installer/precache.log
+live-translator-installer/translation-cache.log
+reminder_*
+.codex
+
+live-translator-installer/precacher/precache.json
+live-translator-installer/precacher/precache-rejected.json
+
+docs/live-translator-perf*
