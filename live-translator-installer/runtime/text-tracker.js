@@ -566,8 +566,9 @@
             const source = context && typeof context === 'object' ? context : {};
             const hook = source.hook ? String(source.hook) : '';
             const text = firstString(source.normalizedSource, normalizedText);
+            const normalizedStatus = normalizeStatus(status);
             const patch = {
-                status: normalizeStatus(status),
+                status: normalizedStatus,
                 translationSource: text,
                 normalizedSource: text,
             };
@@ -575,9 +576,9 @@
                 patch.original = text;
                 patch.visibleText = text;
             }
-            if (translated) {
+            if (translated && normalizedStatus !== 'failed') {
                 patch.translation = translated;
-                if (normalizeStatus(status) === 'completed') {
+                if (normalizedStatus === 'completed') {
                     patch.translationReceived = translated;
                 }
             }

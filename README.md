@@ -95,4 +95,6 @@ Extraction follows `settings.json` `translation.disableCjkFilter` and uses the s
 
 3.2.7 - performance improvement (handles slow revealing sprite text better)
 
+3.2.8 - errorneous translation abort hotfix
+
 ![License](https://img.shields.io/badge/License-CC%20BY%204.0-blue.svg)

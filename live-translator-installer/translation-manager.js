@@ -1318,9 +1318,12 @@
                 try {
                     result = await translateTextStream(normalized, options);
                 } catch (err) {
-                    if (isAbortErrorLike(err)) throw err;
                     const message = err && err.message ? err.message : String(err);
-                    return retryNonStreamTranslation(`Stream request failed (${message}) for`);
+                    return retryNonStreamTranslation(
+                        isAbortErrorLike(err)
+                            ? `Stream request aborted (${message}) for`
+                            : `Stream request failed (${message}) for`
+                    );
                 }
                 const end = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now();
                 const timing = Math.round(end - start);
