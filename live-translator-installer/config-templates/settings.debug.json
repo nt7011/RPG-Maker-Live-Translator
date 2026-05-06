@@ -1,5 +1,6 @@
 {
     "checkUpdates": true,
+    "disableGuiAutoLaunch": false,
     "logging": {
         "enabled": false,
         "suppressExact": []

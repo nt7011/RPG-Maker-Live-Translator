@@ -97,4 +97,6 @@ Extraction follows `settings.json` `translation.disableCjkFilter` and uses the s
 
 3.2.8 - errorneous translation abort hotfix
 
+3.2.9 - add an option to disable GUI auto startup
+
 ![License](https://img.shields.io/badge/License-CC%20BY%204.0-blue.svg)
