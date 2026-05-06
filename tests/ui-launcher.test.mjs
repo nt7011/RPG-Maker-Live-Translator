@@ -75,7 +75,7 @@ function createNwWindow() {
     };
 }
 
-function loadLauncher({ nwOpen }) {
+function loadLauncher({ nwOpen, settings = {} }) {
     const timers = createTimers();
     const events = {};
     const currentScript = {
@@ -117,6 +117,7 @@ function loadLauncher({ nwOpen }) {
             openCallbackTimeoutMs: 10,
             defaultLaunchRetryMs: 5,
         },
+        LiveTranslatorSettings: settings,
     };
     sandbox.window = sandbox;
     sandbox.globalThis = sandbox;
@@ -205,5 +206,41 @@ test('stale closed GUI handles do not block reopening', () => {
 
     assert.equal(attempts, 2);
     assert.equal(openedWindows.length, 2);
+    assert.equal(sandbox.LiveTranslatorGuiState.translatorOpen, true);
+});
+
+test('disableGuiAutoLaunch suppresses startup launch but preserves hotkey opening', () => {
+    let attempts = 0;
+    const openedWindows = [];
+    const { sandbox, timers, events } = loadLauncher({
+        settings: { disableGuiAutoLaunch: true },
+        nwOpen(_url, _options, callback) {
+            attempts += 1;
+            const win = createNwWindow();
+            openedWindows.push(win);
+            callback(win);
+            return undefined;
+        },
+    });
+
+    timers.tick(20);
+    assert.equal(attempts, 0);
+    assert.equal(sandbox.LiveTranslatorGuiState.translatorOpen, false);
+
+    let prevented = false;
+    events.keydown({
+        ctrlKey: true,
+        shiftKey: true,
+        key: 'Enter',
+        code: 'Enter',
+        target: { tagName: 'body' },
+        preventDefault() {
+            prevented = true;
+        },
+    });
+
+    assert.equal(prevented, true);
+    assert.equal(attempts, 1);
+    assert.equal(openedWindows.length, 1);
     assert.equal(sandbox.LiveTranslatorGuiState.translatorOpen, true);
 });

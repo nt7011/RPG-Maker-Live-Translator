@@ -19,6 +19,9 @@
         : {};
     const OPEN_CALLBACK_TIMEOUT_MS = normalizePositiveInteger(testOptions.openCallbackTimeoutMs, 4000);
     const DEFAULT_LAUNCH_RETRY_MS = normalizePositiveInteger(testOptions.defaultLaunchRetryMs, 1000);
+    const settings = globalThis.LiveTranslatorSettings && typeof globalThis.LiveTranslatorSettings === 'object'
+        ? globalThis.LiveTranslatorSettings
+        : {};
 
     const windows = {
         precacher: createUiWindow({
@@ -48,7 +51,7 @@
             },
             errorPrefix: '[LiveTranslatorGui]',
             closeWithGame: true,
-            defaultOpen: true,
+            defaultOpen: settings.disableGuiAutoLaunch !== true,
             query: { closeWithGame: '1' },
             matchHotkey: (event) => {
                 const key = String(event.key || '').toLowerCase();
