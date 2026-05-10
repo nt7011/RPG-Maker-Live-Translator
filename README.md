@@ -99,4 +99,6 @@ Extraction follows `settings.json` `translation.disableCjkFilter` and uses the s
 
 3.2.9 - add an option to disable GUI auto startup
 
+3.2.10 - hotfix against a severely broken plugin
+
 ![License](https://img.shields.io/badge/License-CC%20BY%204.0-blue.svg)
