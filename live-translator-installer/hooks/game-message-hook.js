@@ -1341,6 +1341,39 @@
             windowInstance._trStreamPreviewBlocked = false;
         };
 
+        const clearWindowMessageSession = (windowInstance) => {
+            if (!windowInstance) return null;
+            const state = getMessageState(windowInstance);
+            const shouldAdvanceSession = !!(
+                state.isActive
+                || windowInstance._trSessionId != null
+                || windowInstance._trMsgStartSession != null
+                || windowInstance._trCurrentMessagePayload
+                || windowInstance._trMessageTrackerRecordId
+            );
+            state.currentText = '';
+            state.isActive = false;
+            state.lastUpdate = Date.now();
+            if (shouldAdvanceSession) state.session++;
+            disposeGameMessageTextScaleScope(windowInstance);
+            windowInstance._trStartedThisSession = false;
+            windowInstance._trSentTranslateThisSession = false;
+            windowInstance._trMsgStartSession = null;
+            windowInstance._trCurrentMessagePayload = null;
+            windowInstance._trMsgStartX = undefined;
+            windowInstance._trMsgStartY = undefined;
+            windowInstance._trSessionId = null;
+            windowInstance._trPendingRedraw = null;
+            windowInstance._trWrappedMessageText = null;
+            windowInstance._trMessageTrackerPayload = null;
+            windowInstance._trMessageTrackerSessionId = null;
+            windowInstance._trMessageTrackerSeenVisible = false;
+            windowInstance._trMessageTrackerOnScreen = false;
+            windowInstance._trMessageTrackerScreenState = null;
+            resetStreamState(windowInstance, true);
+            return state;
+        };
+
         const logMppMessageExOp3StreamBypass = () => {
             if (mppMessageExOp3StreamBypassLogged) return;
             mppMessageExOp3StreamBypassLogged = true;
@@ -1371,28 +1404,17 @@
         const resetWindowMessageState = (windowInstance) => {
             if (!windowInstance) return null;
             staleMessageRecord(windowInstance, 'message-cleared');
-            const state = getMessageState(windowInstance);
-            state.currentText = '';
-            state.isActive = false;
-            state.lastUpdate = Date.now();
-            state.session++;
-            disposeGameMessageTextScaleScope(windowInstance);
-            windowInstance._trStartedThisSession = false;
-            windowInstance._trSentTranslateThisSession = false;
-            windowInstance._trMsgStartSession = null;
-            windowInstance._trCurrentMessagePayload = null;
-            windowInstance._trMsgStartX = undefined;
-            windowInstance._trMsgStartY = undefined;
-            windowInstance._trSessionId = null;
-            windowInstance._trPendingRedraw = null;
-            windowInstance._trWrappedMessageText = null;
-            windowInstance._trMessageTrackerPayload = null;
-            windowInstance._trMessageTrackerSessionId = null;
-            windowInstance._trMessageTrackerSeenVisible = false;
-            windowInstance._trMessageTrackerOnScreen = false;
-            windowInstance._trMessageTrackerScreenState = null;
-            resetStreamState(windowInstance, true);
-            return state;
+            return clearWindowMessageSession(windowInstance);
+        };
+
+        const resetWindowMessageStateAfterGameClear = (windowInstance) => {
+            if (!windowInstance) return null;
+            const screenState = getMessageScreenState(windowInstance);
+            if (screenState === 'visible') {
+                updateMessageRecordVisibility(windowInstance, screenState);
+                return getMessageState(windowInstance);
+            }
+            return resetWindowMessageState(windowInstance);
         };
 
         const isSessionCurrent = (windowInstance, sessionId) => {
@@ -1554,14 +1576,21 @@
                     screenState,
                     hasPendingText,
                 });
+                clearWindowMessageSession(windowInstance);
             };
             ['close', 'hide', 'destroy'].forEach((methodName) => {
                 const current = Ctor.prototype[methodName];
                 if (typeof current !== 'function' || current.__trGameMessageLifecycleWrapped) return;
                 const originalLifecycle = current;
                 Ctor.prototype[methodName] = function(...args) {
-                    staleMessageRecord(this, `message-window-${methodName}`);
-                    return originalLifecycle.apply(this, args);
+                    if (methodName === 'destroy') {
+                        staleMessageRecord(this, `message-window-${methodName}`);
+                        clearWindowMessageSession(this);
+                        return originalLifecycle.apply(this, args);
+                    }
+                    const result = originalLifecycle.apply(this, args);
+                    staleMessageRecordIfOffscreen(this, `message-window-${methodName}`);
+                    return result;
                 };
                 Ctor.prototype[methodName].__trOriginal = originalLifecycle;
                 Ctor.prototype[methodName].__trGameMessageLifecycleWrapped = true;
@@ -1934,7 +1963,7 @@
                 const windows = collectWindowsForGameMessage(this);
                 let diagnosticState = null;
                 windows.forEach((windowInstance) => {
-                    diagnosticState = resetWindowMessageState(windowInstance) || diagnosticState;
+                    diagnosticState = resetWindowMessageStateAfterGameClear(windowInstance) || diagnosticState;
                 });
                 if (!diagnosticState) {
                     fallbackMessageState.currentText = '';

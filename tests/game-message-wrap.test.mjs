@@ -213,6 +213,68 @@ function createInstallContext() {
     };
 }
 
+function createTextTrackerRecorder() {
+    const calls = {
+        detect: [],
+        update: [],
+        disappear: [],
+        stale: [],
+        complete: [],
+        draw: [],
+    };
+    return {
+        calls,
+        tracker: {
+            isEnabled() { return true; },
+            detect(input) {
+                calls.detect.push(input);
+                return input && input.id ? input.id : '';
+            },
+            update(id, patch, decision) {
+                calls.update.push({ id, patch, decision });
+                return null;
+            },
+            disappear(id, reason, details) {
+                calls.disappear.push({ id, reason, details });
+                return null;
+            },
+            stale(id, reason, details) {
+                calls.stale.push({ id, reason, details });
+                return null;
+            },
+            complete(id, translation, details) {
+                calls.complete.push({ id, translation, details });
+                return null;
+            },
+            draw(id, event, details) {
+                calls.draw.push({ id, event, details });
+                return null;
+            },
+        },
+    };
+}
+
+function attachTrackedMessageRecord(messageWindow, id = 'message:window:1') {
+    messageWindow._trMessageTrackerRecordId = id;
+    messageWindow._trMessageTrackerPayload = {
+        visible: 'source text',
+        resolved: 'source text',
+        translationSource: 'source text',
+        normalizedTranslationSource: 'source text',
+    };
+    messageWindow._trMessageTrackerSessionId = 1;
+    messageWindow._trMessageTrackerSeenVisible = true;
+    messageWindow._trMessageTrackerOnScreen = true;
+    messageWindow._trMessageTrackerScreenState = 'visible';
+    messageWindow._trGameMessageState = {
+        currentText: 'source text',
+        isActive: true,
+        lastUpdate: Date.now(),
+        session: 1,
+        source: null,
+    };
+}
+
 function installGameMessageHook(options = {}) {
     const MessageWindowClass = options.MessageWindowClass || createFakeMessageWindowClass();
     const context = options.context || createInstallContext();
@@ -295,6 +357,105 @@ test('game message streaming still previews when no incompatible message plugin 
     assert.equal(messageWindow._trStreamPreviewBlocked, false);
     assert.equal(messageWindow._trStreamText, 'partial text');
     assert.equal(messageWindow._trStreamDirty, true);
+});
+
+test('message window close does not archive a record while the window is still visible', () => {
+    const recorder = createTextTrackerRecorder();
+    const context = createInstallContext();
+    context.textTracker = recorder.tracker;
+    const { MessageWindowClass } = installGameMessageHook({ context });
+    const messageWindow = new MessageWindowClass({ width: 200, height: 72 });
+    attachTrackedMessageRecord(messageWindow);
+
+    messageWindow.close();
+
+    assert.equal(recorder.calls.disappear.length, 0);
+    assert.equal(recorder.calls.stale.length, 0);
+    assert.equal(messageWindow._trMessageTrackerRecordId, 'message:window:1');
+});
+
+test('message window close archives a record once the close makes it offscreen', () => {
+    const MessageWindowClass = createFakeMessageWindowClass();
+    MessageWindowClass.prototype.close = function() {
+        this.openness = 0;
+    };
+    const recorder = createTextTrackerRecorder();
+    const context = createInstallContext();
+    context.textTracker = recorder.tracker;
+    const { MessageWindowClass: InstalledClass } = installGameMessageHook({
+        MessageWindowClass,
+        context,
+    });
+    const messageWindow = new InstalledClass({ width: 200, height: 72 });
+    attachTrackedMessageRecord(messageWindow);
+
+    messageWindow.close();
+
+    assert.equal(recorder.calls.disappear.length, 1);
+    assert.equal(recorder.calls.disappear[0].reason, 'message-window-close');
+    assert.equal(recorder.calls.disappear[0].details.screenState, 'closed');
+    assert.equal(messageWindow._trMessageTrackerRecordId, null);
+});
+
+test('Game_Message.clear keeps a visible message session drawable', async () => {
+    class FakeGameMessage {
+        constructor(text) {
+            this._text = text;
+        }
+
+        allText() {
+            return this._text;
+        }
+
+        hasText() {
+            return !!this._text;
+        }
+
+        clear() {
+            this._text = '';
+        }
+    }
+
+    let resolveTranslation;
+    const gameMessage = new FakeGameMessage('source text');
+    const recorder = createTextTrackerRecorder();
+    const context = createInstallContext();
+    context.textTracker = recorder.tracker;
+    context.translationCache = {
+        completed: new Map(),
+        shouldSkip() { return false; },
+        requestTranslation() {
+            return new Promise((resolve) => {
+                resolveTranslation = resolve;
+            });
+        },
+    };
+    const { MessageWindowClass } = installGameMessageHook({
+        context,
+        globals: {
+            Game_Message: FakeGameMessage,
+            $gameMessage: gameMessage,
+        },
+    });
+    const messageWindow = new MessageWindowClass({ width: 200, height: 72 });
+    messageWindow._gameMessage = gameMessage;
+    context.registeredWindows.add(messageWindow);
+    activateMessageSession(messageWindow, 1);
+
+    messageWindow.processCompleteMessage('source text', 1);
+    gameMessage.clear();
+
+    assert.equal(recorder.calls.disappear.length, 0);
+    assert.equal(messageWindow._trGameMessageState.isActive, true);
+    assert.equal(messageWindow._trGameMessageState.session, 1);
+
+    resolveTranslation('translated text');
+    await Promise.resolve();
+    await Promise.resolve();
+
+    assert.equal(messageWindow.drawnText, 'translated text');
+    assert.equal(recorder.calls.complete.length, 1);
+    assert.equal(recorder.calls.draw.length, 1);
 });
 
 test('MPP_MessageEX_Op3 bypasses game message stream preview and uses one final redraw', async () => {
