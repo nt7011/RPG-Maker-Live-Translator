@@ -134,7 +134,7 @@ function createFakeMessageWindowClass() {
     };
 }
 
-function loadGameMessageHook(MessageWindowClass) {
+function loadGameMessageHook(MessageWindowClass, globals = {}) {
     const modules = {};
     const sandbox = {
         console,
@@ -153,6 +153,7 @@ function loadGameMessageHook(MessageWindowClass) {
         LiveTranslatorDefine(name, value) {
             modules[name] = value;
         },
+        ...globals,
     };
     sandbox.globalThis = sandbox;
     vm.createContext(sandbox);
@@ -212,12 +213,26 @@ function createInstallContext() {
     };
 }
 
-function installGameMessageHook() {
-    const MessageWindowClass = createFakeMessageWindowClass();
+function installGameMessageHook(options = {}) {
+    const MessageWindowClass = options.MessageWindowClass || createFakeMessageWindowClass();
+    const context = options.context || createInstallContext();
+    const result = loadGameMessageHook(MessageWindowClass, options.globals).install(context);
     return {
-        helpers: loadGameMessageHook(MessageWindowClass).install(createInstallContext()).helpers,
+        result,
+        helpers: result.helpers,
         MessageWindowClass,
     };
+}
+
+function activateMessageSession(messageWindow, session = 1) {
+    messageWindow._trGameMessageState = {
+        currentText: '',
+        isActive: true,
+        lastUpdate: Date.now(),
+        session,
+        source: null,
+    };
+    messageWindow._trMessageSession = session;
 }
 
 test('game message redraw does not synthesize soft wraps in one-line windows', () => {
@@ -251,4 +266,80 @@ test('game message redraw preserves authored hard breaks in one-line windows', (
     assert.equal(messageWindow._trWrappedMessageText, 'AB\nCD');
     assert.equal(messageWindow.pause, true);
     assert.equal(messageWindow.drawnText, 'AB');
+});
+
+test('game message streaming still previews when no incompatible message plugin is present', () => {
+    const calls = { stream: 0, nonStream: 0 };
+    const context = createInstallContext();
+    context.translationCache = {
+        completed: new Map(),
+        shouldSkip() { return false; },
+        requestTranslation() {
+            calls.nonStream += 1;
+            return Promise.resolve('final text');
+        },
+        requestTranslationStream(_value, options = {}) {
+            calls.stream += 1;
+            if (typeof options.onDelta === 'function') options.onDelta('partial text');
+            return Promise.resolve('final text');
+        },
+    };
+    const { MessageWindowClass } = installGameMessageHook({ context });
+    const messageWindow = new MessageWindowClass({ width: 200, height: 72 });
+    activateMessageSession(messageWindow, 1);
+
+    messageWindow.processCompleteMessage('source text', 1);
+
+    assert.equal(calls.stream, 1);
+    assert.equal(calls.nonStream, 0);
+    assert.equal(messageWindow._trStreamPreviewBlocked, false);
+    assert.equal(messageWindow._trStreamText, 'partial text');
+    assert.equal(messageWindow._trStreamDirty, true);
+});
+
+test('MPP_MessageEX_Op3 bypasses game message stream preview and uses one final redraw', async () => {
+    const MessageWindowClass = createFakeMessageWindowClass();
+    MessageWindowClass.prototype.accumulateLine = function() {};
+    MessageWindowClass.prototype.updateAccumulation = function() { return false; };
+    MessageWindowClass.prototype.createAccumulatedBitmap = function() {};
+
+    const calls = { stream: 0, nonStream: 0, delta: 0 };
+    const context = createInstallContext();
+    context.translationCache = {
+        completed: new Map(),
+        shouldSkip() { return false; },
+        requestTranslation() {
+            calls.nonStream += 1;
+            return Promise.resolve('final text');
+        },
+        requestTranslationStream(_value, options = {}) {
+            calls.stream += 1;
+            if (typeof options.onDelta === 'function') {
+                calls.delta += 1;
+                options.onDelta('partial text');
+            }
+            return Promise.resolve('final text');
+        },
+    };
+    const { MessageWindowClass: InstalledClass } = installGameMessageHook({
+        MessageWindowClass,
+        context,
+        globals: {
+            PluginManager: { _scripts: ['MPP_MessageEX_Op3'] },
+            $plugins: [{ name: 'MPP_MessageEX_Op3', status: true }],
+        },
+    });
+    const messageWindow = new InstalledClass({ width: 200, height: 72 });
+    activateMessageSession(messageWindow, 1);
+
+    messageWindow.processCompleteMessage('source text', 1);
+    await Promise.resolve();
+
+    assert.equal(calls.stream, 0);
+    assert.equal(calls.nonStream, 1);
+    assert.equal(calls.delta, 0);
+    assert.equal(messageWindow._trStreamPreviewBlocked, true);
+    assert.equal(messageWindow._trStreamLoopActive, false);
+    assert.equal(messageWindow._trStreamText, '');
+    assert.equal(messageWindow.drawnText, 'final text');
 });

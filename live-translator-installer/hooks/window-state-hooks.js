@@ -444,10 +444,16 @@
                         && this._trStreamSessionId === this._trSessionId
                         && typeof this._trStreamText === 'string'
                         && this._trStreamText
+                        && !this._trStreamPreviewBlocked
                         && this.visible
                         && this.isOpen()
-                        && this.contents) {
-                        redraw(this, this._trStreamText, { streaming: true });
+                        && this.contents
+                        && (this._trStreamDirty || this._trStreamDrawnText !== this._trStreamText)) {
+                        const streamText = this._trStreamText;
+                        if (redraw(this, streamText, { streaming: true })) {
+                            this._trStreamDirty = false;
+                            this._trStreamDrawnText = streamText;
+                        }
                     }
 
                     const pending = this._trPendingRedraw;
