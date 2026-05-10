@@ -274,6 +274,59 @@
         return /\bAbortError\b/i.test(message) || /\baborted\b/i.test(message);
     };
 
+    function isEnabledRpgMakerPlugin(pluginName) {
+        const targetName = String(pluginName || '').toLowerCase();
+        if (!targetName) return false;
+
+        const isEnabledEntry = (entry) => {
+            if (!entry) return false;
+            const name = String(entry.name || entry.pluginName || '').toLowerCase();
+            if (name !== targetName) return false;
+            return entry.status !== false && String(entry.status).toLowerCase() !== 'false';
+        };
+
+        try {
+            const pluginList = globalScope && Array.isArray(globalScope.$plugins)
+                ? globalScope.$plugins
+                : (typeof $plugins !== 'undefined' && Array.isArray($plugins) ? $plugins : null);
+            if (pluginList && pluginList.some(isEnabledEntry)) return true;
+        } catch (_) {}
+
+        try {
+            const manager = globalScope && globalScope.PluginManager
+                ? globalScope.PluginManager
+                : (typeof PluginManager !== 'undefined' ? PluginManager : null);
+            const scripts = manager && Array.isArray(manager._scripts) ? manager._scripts : null;
+            if (scripts && scripts.some((name) => String(name || '').toLowerCase() === targetName)) {
+                return true;
+            }
+        } catch (_) {}
+
+        return false;
+    }
+
+    function hasMppMessageExOp3Surface(windowInstance) {
+        const targets = [];
+        if (windowInstance) targets.push(windowInstance);
+        try {
+            if (typeof Window_Message !== 'undefined' && Window_Message && Window_Message.prototype) {
+                targets.push(Window_Message.prototype);
+            }
+        } catch (_) {}
+
+        return targets.some((target) => {
+            if (!target) return false;
+            return typeof target.accumulateLine === 'function'
+                && typeof target.updateAccumulation === 'function'
+                && typeof target.createAccumulatedBitmap === 'function';
+        });
+    }
+
+    function shouldBypassGameMessageStreaming(windowInstance) {
+        return hasMppMessageExOp3Surface(windowInstance)
+            || isEnabledRpgMakerPlugin('MPP_MessageEX_Op3');
+    }
+
     function resolveGameMessageTextScale(config) {
         const fallback = 100;
         if (!config || typeof config !== 'object') return fallback;
@@ -810,6 +863,29 @@
         return true;
     }
 
+    function markGameMessageReplayTextState(textState) {
+        try {
+            if (textState && typeof textState === 'object') {
+                textState._trGameMessageReplayBypass = true;
+            }
+        } catch (_) {}
+        return textState;
+    }
+
+    function isGameMessageReplayTextState(textState) {
+        return !!(textState && textState._trGameMessageReplayBypass);
+    }
+
+    function isNativeGameMessageWaiting(windowInstance) {
+        if (!windowInstance) return false;
+        try {
+            if (typeof windowInstance.isWaiting === 'function') {
+                return !!windowInstance.isWaiting();
+            }
+        } catch (_) {}
+        return !!(windowInstance.pause || windowInstance._waitCount > 0);
+    }
+
     function drawMessageFaceIfReady(windowInstance) {
         if (!windowInstance || !windowInstance._faceBitmap) return false;
         try {
@@ -841,13 +917,13 @@
                     textState.startY = coords.y;
                 }
             }
-            return textState;
+            return markGameMessageReplayTextState(textState);
         }
 
-        return {
+        return markGameMessageReplayTextState({
             index: 0,
             text: wrappedText,
-        };
+        });
     }
 
     function flushNativeGameMessageText(windowInstance) {
@@ -858,6 +934,7 @@
         windowInstance.pause = false;
         windowInstance._waitCount = 0;
         windowInstance._showFast = true;
+        windowInstance._lineShowFast = true;
         const previousBypass = windowInstance._trBypassProcessCharacter || 0;
         windowInstance._trBypassProcessCharacter = previousBypass + 1;
         try {
@@ -865,10 +942,20 @@
                 if (typeof windowInstance.needsNewPage === 'function' && windowInstance.needsNewPage(textState)) {
                     windowInstance.newPage(textState);
                     windowInstance._showFast = true;
+                    windowInstance._lineShowFast = true;
                     drawMessageFaceIfReady(windowInstance);
                 }
+                const previousIndex = Number(textState.index);
                 windowInstance.processCharacter(textState);
-                if (windowInstance.pause || windowInstance._waitCount > 0) {
+                if (isNativeGameMessageWaiting(windowInstance)) {
+                    break;
+                }
+                const nextIndex = Number(textState.index);
+                if (Number.isFinite(previousIndex)
+                    && Number.isFinite(nextIndex)
+                    && nextIndex === previousIndex
+                    && windowInstance._textState === textState
+                    && !windowInstance.isEndOfText(textState)) {
                     break;
                 }
             }
@@ -877,9 +964,7 @@
             if (typeof windowInstance.flushTextState === 'function') {
                 windowInstance.flushTextState(textState);
             }
-            const isWaiting = typeof windowInstance.isWaiting === 'function'
-                ? windowInstance.isWaiting()
-                : (windowInstance.pause || windowInstance._waitCount > 0);
+            const isWaiting = isNativeGameMessageWaiting(windowInstance);
             if (windowInstance._textState && windowInstance.isEndOfText(textState) && !isWaiting) {
                 windowInstance.onEndOfText();
             }
@@ -1035,6 +1120,7 @@
             session: 0,
             source: null,
         };
+        let mppMessageExOp3StreamBypassLogged = false;
         const hasTextTracker = () => textTracker
             && typeof textTracker.detect === 'function'
             && (typeof textTracker.isEnabled !== 'function' || textTracker.isEnabled());
@@ -1250,6 +1336,52 @@
             windowInstance._trStreamSessionId = null;
             windowInstance._trStreamLoopActive = false;
             windowInstance._trStreamDeferredLogged = false;
+            windowInstance._trStreamDirty = false;
+            windowInstance._trStreamDrawnText = '';
+            windowInstance._trStreamPreviewBlocked = false;
+        };
+
+        const clearWindowMessageSession = (windowInstance) => {
+            if (!windowInstance) return null;
+            const state = getMessageState(windowInstance);
+            const shouldAdvanceSession = !!(
+                state.isActive
+                || windowInstance._trSessionId != null
+                || windowInstance._trMsgStartSession != null
+                || windowInstance._trCurrentMessagePayload
+                || windowInstance._trMessageTrackerRecordId
+            );
+            state.currentText = '';
+            state.isActive = false;
+            state.lastUpdate = Date.now();
+            if (shouldAdvanceSession) state.session++;
+            disposeGameMessageTextScaleScope(windowInstance);
+            windowInstance._trStartedThisSession = false;
+            windowInstance._trSentTranslateThisSession = false;
+            windowInstance._trMsgStartSession = null;
+            windowInstance._trCurrentMessagePayload = null;
+            windowInstance._trMsgStartX = undefined;
+            windowInstance._trMsgStartY = undefined;
+            windowInstance._trSessionId = null;
+            windowInstance._trPendingRedraw = null;
+            windowInstance._trWrappedMessageText = null;
+            windowInstance._trMessageTrackerPayload = null;
+            windowInstance._trMessageTrackerSessionId = null;
+            windowInstance._trMessageTrackerSeenVisible = false;
+            windowInstance._trMessageTrackerOnScreen = false;
+            windowInstance._trMessageTrackerScreenState = null;
+            resetStreamState(windowInstance, true);
+            return state;
+        };
+
+        const logMppMessageExOp3StreamBypass = () => {
+            if (mppMessageExOp3StreamBypassLogged) return;
+            mppMessageExOp3StreamBypassLogged = true;
+            const message = '[GameMessage] MPP_MessageEX_Op3 detected; using non-stream Game_Message translation to avoid accumulated-window redraw corruption.';
+            diag(message);
+            try {
+                if (logger && typeof logger.warn === 'function') logger.warn(message);
+            } catch (_) {}
         };
 
         const beginWindowMessageSession = (windowInstance, options = {}) => {
@@ -1272,28 +1404,17 @@
         const resetWindowMessageState = (windowInstance) => {
             if (!windowInstance) return null;
             staleMessageRecord(windowInstance, 'message-cleared');
-            const state = getMessageState(windowInstance);
-            state.currentText = '';
-            state.isActive = false;
-            state.lastUpdate = Date.now();
-            state.session++;
-            disposeGameMessageTextScaleScope(windowInstance);
-            windowInstance._trStartedThisSession = false;
-            windowInstance._trSentTranslateThisSession = false;
-            windowInstance._trMsgStartSession = null;
-            windowInstance._trCurrentMessagePayload = null;
-            windowInstance._trMsgStartX = undefined;
-            windowInstance._trMsgStartY = undefined;
-            windowInstance._trSessionId = null;
-            windowInstance._trPendingRedraw = null;
-            windowInstance._trWrappedMessageText = null;
-            windowInstance._trMessageTrackerPayload = null;
-            windowInstance._trMessageTrackerSessionId = null;
-            windowInstance._trMessageTrackerSeenVisible = false;
-            windowInstance._trMessageTrackerOnScreen = false;
-            windowInstance._trMessageTrackerScreenState = null;
-            resetStreamState(windowInstance, true);
-            return state;
+            return clearWindowMessageSession(windowInstance);
+        };
+
+        const resetWindowMessageStateAfterGameClear = (windowInstance) => {
+            if (!windowInstance) return null;
+            const screenState = getMessageScreenState(windowInstance);
+            if (screenState === 'visible') {
+                updateMessageRecordVisibility(windowInstance, screenState);
+                return getMessageState(windowInstance);
+            }
+            return resetWindowMessageState(windowInstance);
         };
 
         const isSessionCurrent = (windowInstance, sessionId) => {
@@ -1455,14 +1576,21 @@
                     screenState,
                     hasPendingText,
                 });
+                clearWindowMessageSession(windowInstance);
             };
             ['close', 'hide', 'destroy'].forEach((methodName) => {
                 const current = Ctor.prototype[methodName];
                 if (typeof current !== 'function' || current.__trGameMessageLifecycleWrapped) return;
                 const originalLifecycle = current;
                 Ctor.prototype[methodName] = function(...args) {
-                    staleMessageRecord(this, `message-window-${methodName}`);
-                    return originalLifecycle.apply(this, args);
+                    if (methodName === 'destroy') {
+                        staleMessageRecord(this, `message-window-${methodName}`);
+                        clearWindowMessageSession(this);
+                        return originalLifecycle.apply(this, args);
+                    }
+                    const result = originalLifecycle.apply(this, args);
+                    staleMessageRecordIfOffscreen(this, `message-window-${methodName}`);
+                    return result;
                 };
                 Ctor.prototype[methodName].__trOriginal = originalLifecycle;
                 Ctor.prototype[methodName].__trGameMessageLifecycleWrapped = true;
@@ -1583,6 +1711,9 @@
                 if (this._trBypassProcessCharacter && this._trBypassProcessCharacter > 0) {
                     return originalProcessCharacter.call(this, textState);
                 }
+                if (isGameMessageReplayTextState(textState)) {
+                    return originalProcessCharacter.call(this, textState);
+                }
 
                 const state = getMessageState(this);
                 // If startMessage already handled this session, skip accumulation to avoid truncation issues
@@ -1678,17 +1809,29 @@
             } catch (_) {}
             this._trStreamAbort = null;
             this._trStreamText = '';
-            this._trStreamSessionId = sessionId;
+            this._trStreamSessionId = null;
             this._trStreamLoopActive = false;
             this._trStreamDeferredLogged = false;
+            this._trStreamDirty = false;
+            this._trStreamDrawnText = '';
+
+            const bypassMessageStreaming = shouldBypassGameMessageStreaming(this);
+            this._trStreamPreviewBlocked = bypassMessageStreaming;
+            if (bypassMessageStreaming) {
+                logMppMessageExOp3StreamBypass();
+            } else {
+                this._trStreamSessionId = sessionId;
+            }
 
             const stopStreamLoop = (preserveText = true) => {
                 if (this._trStreamSessionId !== sessionId) return;
                 this._trStreamLoopActive = false;
                 this._trStreamSessionId = null;
                 this._trStreamDeferredLogged = false;
+                this._trStreamDirty = false;
                 if (!preserveText) {
                     this._trStreamText = '';
+                    this._trStreamDrawnText = '';
                 }
             };
 
@@ -1699,6 +1842,7 @@
             };
 
             const applyStreamDelta = (partial) => {
+                if (this._trStreamPreviewBlocked || shouldBypassGameMessageStreaming(this)) return;
                 if (!isSessionCurrent(this, sessionId)) return;
                 if (typeof partial !== 'string' || !partial) return;
                 const restored = restoreMessageTextStreaming(partial, payload);
@@ -1706,6 +1850,7 @@
                 const restoredVisible = stripRpgmEscapes(restored || '').trim();
                 if (!restoredVisible) return;
                 this._trStreamText = restored;
+                this._trStreamDirty = true;
                 // Stream preview diagnostics are disabled because they are too noisy.
                 // if (hasTextTracker() && recordId) {
                 //     textTracker.update(recordId, {
@@ -1720,7 +1865,8 @@
                 }
             };
 
-            const requestStream = translationCache
+            const requestStream = !bypassMessageStreaming
+                && translationCache
                 && typeof translationCache.requestTranslationStream === 'function'
                     ? translationCache.requestTranslationStream
                     : null;
@@ -1817,7 +1963,7 @@
                 const windows = collectWindowsForGameMessage(this);
                 let diagnosticState = null;
                 windows.forEach((windowInstance) => {
-                    diagnosticState = resetWindowMessageState(windowInstance) || diagnosticState;
+                    diagnosticState = resetWindowMessageStateAfterGameClear(windowInstance) || diagnosticState;
                 });
                 if (!diagnosticState) {
                     fallbackMessageState.currentText = '';
