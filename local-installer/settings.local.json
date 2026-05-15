@@ -33,6 +33,9 @@
         "textScale": 90,
         "originAwareLineBreaks": true
     },
+    "diagnostics": {
+        "performanceMode": true
+    },
     "textScaleOthers": 90,
     "diskCache": {
         "enabled": true,
