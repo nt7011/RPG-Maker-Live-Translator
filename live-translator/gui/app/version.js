@@ -12,7 +12,7 @@ function parseUpdateVersion(value) {
     const version = String(value).trim();
     if (!version || version.length > 64) return null;
 
-    const match = version.match(/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:b([1-9][0-9]*))?$/u);
+    const match = version.match(/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:b(0|[1-9][0-9]*))?$/u);
     if (!match) return null;
 
     const major = parseSafeVersionNumber(match[1]);
@@ -98,9 +98,17 @@ function hasHigherIneligibleBeta(installed, recommendations) {
     return Boolean(installed && beta && !beta.stable && compareParsedUpdateVersions(installed, beta) < 0);
 }
 
+function isCurrentRecommendedBeta(installed, recommendations) {
+    const beta = recommendations && recommendations.recommendedBeta;
+    return Boolean(installed && beta && !beta.stable
+        && isSameUpdateBase(installed, beta)
+        && compareParsedUpdateVersions(installed, beta) === 0);
+}
+
 function getNoUpdateMessage(installed, recommendations) {
     const stable = recommendations && recommendations.recommended;
     if (!installed) return 'No eligible update available';
+    if (isCurrentRecommendedBeta(installed, recommendations)) return 'Current release';
     if (hasHigherIneligibleBeta(installed, recommendations)) return 'No eligible update available';
     if (stable && compareParsedUpdateVersions(installed, stable) > 0) return 'Newer than current release';
     return 'Current release';
