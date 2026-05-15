@@ -1,0 +1,1439 @@
+{
+  "schemaVersion": 4,
+  "eventCommands": {
+    "0": {
+      "label": "End",
+      "classification": "terminal",
+      "native": true,
+      "category": "control",
+      "scanBehavior": "frame-end",
+      "summary": "End of an event command list or nested branch list."
+    },
+    "101": {
+      "label": "Show Text",
+      "classification": "linear",
+      "native": true,
+      "category": "message",
+      "scanBehavior": "message",
+      "summary": "Opens the message window and displays text."
+    },
+    "102": {
+      "label": "Show Choices",
+      "classification": "branching",
+      "native": true,
+      "category": "message",
+      "scanBehavior": "barrier",
+      "summary": "Displays choices and branches based on player selection."
+    },
+    "103": {
+      "label": "Input Number",
+      "classification": "linear",
+      "native": true,
+      "category": "message",
+      "scanBehavior": "advance",
+      "summary": "Waits for player numeric input.",
+      "stalenessRisk": "state"
+    },
+    "104": {
+      "label": "Select Item",
+      "classification": "linear",
+      "native": true,
+      "category": "message",
+      "scanBehavior": "advance",
+      "summary": "Waits for player item selection.",
+      "stalenessRisk": "state"
+    },
+    "105": {
+      "label": "Show Scrolling Text",
+      "classification": "linear",
+      "native": true,
+      "category": "message",
+      "scanBehavior": "advance",
+      "summary": "Displays scrolling text outside the normal Show Text block."
+    },
+    "108": {
+      "label": "Comment",
+      "classification": "linear",
+      "native": true,
+      "category": "flow",
+      "scanBehavior": "advance",
+      "summary": "Editor comment; no runtime text to translate here."
+    },
+    "111": {
+      "label": "Conditional Branch",
+      "classification": "branching",
+      "native": true,
+      "category": "flow",
+      "scanBehavior": "barrier",
+      "summary": "Branches based on a condition."
+    },
+    "112": {
+      "label": "Loop",
+      "classification": "branching",
+      "native": true,
+      "category": "flow",
+      "scanBehavior": "barrier",
+      "summary": "Starts a loop block."
+    },
+    "113": {
+      "label": "Break Loop",
+      "classification": "branching",
+      "native": true,
+      "category": "flow",
+      "scanBehavior": "barrier",
+      "summary": "Breaks out of the enclosing loop."
+    },
+    "115": {
+      "label": "Exit Event Processing",
+      "classification": "terminal",
+      "native": true,
+      "category": "flow",
+      "scanBehavior": "barrier",
+      "summary": "Stops the current event command list."
+    },
+    "117": {
+      "label": "Common Event",
+      "classification": "nesting",
+      "native": true,
+      "category": "flow",
+      "scanBehavior": "nested-list",
+      "summary": "Runs another event command list."
+    },
+    "118": {
+      "label": "Label",
+      "classification": "linear",
+      "native": true,
+      "category": "flow",
+      "scanBehavior": "advance",
+      "summary": "Marks a jump target."
+    },
+    "119": {
+      "label": "Jump to Label",
+      "classification": "branching",
+      "native": true,
+      "category": "flow",
+      "scanBehavior": "barrier",
+      "summary": "Jumps to a label."
+    },
+    "121": {
+      "label": "Control Switches",
+      "classification": "linear",
+      "native": true,
+      "category": "game-progression",
+      "scanBehavior": "advance",
+      "summary": "Changes switch values.",
+      "stalenessRisk": "state"
+    },
+    "122": {
+      "label": "Control Variables",
+      "classification": "linear",
+      "native": true,
+      "category": "game-progression",
+      "scanBehavior": "advance",
+      "summary": "Changes variable values.",
+      "stalenessRisk": "state"
+    },
+    "123": {
+      "label": "Control Self Switch",
+      "classification": "linear",
+      "native": true,
+      "category": "game-progression",
+      "scanBehavior": "advance",
+      "summary": "Changes an event self switch.",
+      "stalenessRisk": "state"
+    },
+    "124": {
+      "label": "Control Timer",
+      "classification": "linear",
+      "native": true,
+      "category": "game-progression",
+      "scanBehavior": "advance",
+      "summary": "Starts or stops the timer.",
+      "stalenessRisk": "state"
+    },
+    "125": {
+      "label": "Change Gold",
+      "classification": "linear",
+      "native": true,
+      "category": "party",
+      "scanBehavior": "advance",
+      "summary": "Changes party gold.",
+      "stalenessRisk": "state"
+    },
+    "126": {
+      "label": "Change Items",
+      "classification": "linear",
+      "native": true,
+      "category": "party",
+      "scanBehavior": "advance",
+      "summary": "Changes party items.",
+      "stalenessRisk": "state"
+    },
+    "127": {
+      "label": "Change Weapons",
+      "classification": "linear",
+      "native": true,
+      "category": "party",
+      "scanBehavior": "advance",
+      "summary": "Changes party weapons.",
+      "stalenessRisk": "state"
+    },
+    "128": {
+      "label": "Change Armor",
+      "classification": "linear",
+      "native": true,
+      "category": "party",
+      "scanBehavior": "advance",
+      "summary": "Changes party armor.",
+      "stalenessRisk": "state"
+    },
+    "129": {
+      "label": "Change Party Members",
+      "classification": "linear",
+      "native": true,
+      "category": "party",
+      "scanBehavior": "advance",
+      "summary": "Changes party membership.",
+      "stalenessRisk": "state"
+    },
+    "132": {
+      "label": "Change Battle BGM",
+      "classification": "linear",
+      "native": true,
+      "category": "system",
+      "scanBehavior": "advance",
+      "summary": "Changes the battle BGM setting.",
+      "stalenessRisk": "state"
+    },
+    "133": {
+      "label": "Change Victory ME",
+      "classification": "linear",
+      "native": true,
+      "category": "system",
+      "scanBehavior": "advance",
+      "summary": "Changes the victory ME setting.",
+      "stalenessRisk": "state"
+    },
+    "134": {
+      "label": "Change Save Access",
+      "classification": "linear",
+      "native": true,
+      "category": "system",
+      "scanBehavior": "advance",
+      "summary": "Enables or disables saving.",
+      "stalenessRisk": "state"
+    },
+    "135": {
+      "label": "Change Menu Access",
+      "classification": "linear",
+      "native": true,
+      "category": "system",
+      "scanBehavior": "advance",
+      "summary": "Enables or disables menu access.",
+      "stalenessRisk": "state"
+    },
+    "136": {
+      "label": "Enable/Disable Encounters",
+      "classification": "linear",
+      "native": true,
+      "category": "system",
+      "scanBehavior": "advance",
+      "summary": "Enables or disables random encounters.",
+      "stalenessRisk": "state"
+    },
+    "137": {
+      "label": "Change Formation Access",
+      "classification": "linear",
+      "native": true,
+      "category": "system",
+      "scanBehavior": "advance",
+      "summary": "Enables or disables party formation changes.",
+      "stalenessRisk": "state"
+    },
+    "138": {
+      "label": "Change Window Color",
+      "classification": "linear",
+      "native": true,
+      "category": "system",
+      "scanBehavior": "advance",
+      "summary": "Changes the window color setting.",
+      "stalenessRisk": "state"
+    },
+    "139": {
+      "label": "Change Defeat ME",
+      "classification": "linear",
+      "native": true,
+      "category": "system",
+      "scanBehavior": "advance",
+      "summary": "Changes the defeat ME setting.",
+      "stalenessRisk": "state"
+    },
+    "140": {
+      "label": "Change Vehicle BGM",
+      "classification": "linear",
+      "native": true,
+      "category": "system",
+      "scanBehavior": "advance",
+      "summary": "Changes vehicle BGM settings.",
+      "stalenessRisk": "state"
+    },
+    "201": {
+      "label": "Transfer Player",
+      "classification": "linear",
+      "native": true,
+      "category": "movement",
+      "scanBehavior": "barrier",
+      "summary": "Transfers the player to another map location. Foresight stops here because the map load can replace event context.",
+      "stalenessRisk": "state"
+    },
+    "202": {
+      "label": "Set Vehicle Location",
+      "classification": "linear",
+      "native": true,
+      "category": "movement",
+      "scanBehavior": "advance",
+      "summary": "Moves a vehicle to another location.",
+      "stalenessRisk": "state"
+    },
+    "203": {
+      "label": "Set Event Location",
+      "classification": "linear",
+      "native": true,
+      "category": "movement",
+      "scanBehavior": "advance",
+      "summary": "Moves an event to another location.",
+      "stalenessRisk": "state"
+    },
+    "204": {
+      "label": "Scroll Map",
+      "classification": "linear",
+      "native": true,
+      "category": "movement",
+      "scanBehavior": "advance",
+      "summary": "Scrolls the map display."
+    },
+    "205": {
+      "label": "Set Movement Route",
+      "classification": "linear",
+      "native": true,
+      "category": "movement",
+      "scanBehavior": "movement-route",
+      "summary": "Forces a character to move along a route; route commands are checked separately.",
+      "stalenessRisk": "state"
+    },
+    "206": {
+      "label": "Get On/Off Vehicle",
+      "classification": "linear",
+      "native": true,
+      "category": "movement",
+      "scanBehavior": "advance",
+      "summary": "Changes player vehicle state.",
+      "stalenessRisk": "state"
+    },
+    "211": {
+      "label": "Change Transparency",
+      "classification": "linear",
+      "native": true,
+      "category": "character",
+      "scanBehavior": "advance",
+      "summary": "Changes whether the player is displayed."
+    },
+    "212": {
+      "label": "Show Animation",
+      "classification": "linear",
+      "native": true,
+      "category": "character",
+      "scanBehavior": "advance",
+      "summary": "Shows an animation."
+    },
+    "213": {
+      "label": "Show Balloon Icon",
+      "classification": "linear",
+      "native": true,
+      "category": "character",
+      "scanBehavior": "advance",
+      "summary": "Shows a balloon icon."
+    },
+    "214": {
+      "label": "Erase Event",
+      "classification": "linear",
+      "native": true,
+      "category": "character",
+      "scanBehavior": "advance",
+      "summary": "Temporarily erases the running event.",
+      "stalenessRisk": "state"
+    },
+    "216": {
+      "label": "Change Player Followers",
+      "classification": "linear",
+      "native": true,
+      "category": "character",
+      "scanBehavior": "advance",
+      "summary": "Shows or hides player followers."
+    },
+    "217": {
+      "label": "Gather Followers",
+      "classification": "linear",
+      "native": true,
+      "category": "character",
+      "scanBehavior": "advance",
+      "summary": "Gathers followers to the player."
+    },
+    "221": {
+      "label": "Fadeout Screen",
+      "classification": "linear",
+      "native": true,
+      "category": "screen",
+      "scanBehavior": "advance",
+      "summary": "Fades out the screen."
+    },
+    "222": {
+      "label": "Fadein Screen",
+      "classification": "linear",
+      "native": true,
+      "category": "screen",
+      "scanBehavior": "advance",
+      "summary": "Fades in the screen."
+    },
+    "223": {
+      "label": "Tint Screen",
+      "classification": "linear",
+      "native": true,
+      "category": "screen",
+      "scanBehavior": "advance",
+      "summary": "Tints the screen."
+    },
+    "224": {
+      "label": "Flash Screen",
+      "classification": "linear",
+      "native": true,
+      "category": "screen",
+      "scanBehavior": "advance",
+      "summary": "Flashes the screen."
+    },
+    "225": {
+      "label": "Shake Screen",
+      "classification": "linear",
+      "native": true,
+      "category": "screen",
+      "scanBehavior": "advance",
+      "summary": "Shakes the screen."
+    },
+    "230": {
+      "label": "Wait",
+      "classification": "linear",
+      "native": true,
+      "category": "timing",
+      "scanBehavior": "advance",
+      "summary": "Waits for a number of frames."
+    },
+    "231": {
+      "label": "Show Picture",
+      "classification": "linear",
+      "native": true,
+      "category": "picture",
+      "scanBehavior": "advance",
+      "summary": "Shows a picture."
+    },
+    "232": {
+      "label": "Move Picture",
+      "classification": "linear",
+      "native": true,
+      "category": "picture",
+      "scanBehavior": "advance",
+      "summary": "Moves a picture."
+    },
+    "233": {
+      "label": "Rotate Picture",
+      "classification": "linear",
+      "native": true,
+      "category": "picture",
+      "scanBehavior": "advance",
+      "summary": "Rotates a picture."
+    },
+    "234": {
+      "label": "Tint Picture",
+      "classification": "linear",
+      "native": true,
+      "category": "picture",
+      "scanBehavior": "advance",
+      "summary": "Tints a picture."
+    },
+    "235": {
+      "label": "Erase Picture",
+      "classification": "linear",
+      "native": true,
+      "category": "picture",
+      "scanBehavior": "advance",
+      "summary": "Erases a picture."
+    },
+    "236": {
+      "label": "Set Weather Effect",
+      "classification": "linear",
+      "native": true,
+      "category": "screen",
+      "scanBehavior": "advance",
+      "summary": "Changes the weather effect."
+    },
+    "241": {
+      "label": "Play BGM (background music)",
+      "classification": "linear",
+      "native": true,
+      "category": "audio-video",
+      "scanBehavior": "advance",
+      "summary": "Plays BGM."
+    },
+    "242": {
+      "label": "Fadeout BGM (background music)",
+      "classification": "linear",
+      "native": true,
+      "category": "audio-video",
+      "scanBehavior": "advance",
+      "summary": "Fades out BGM."
+    },
+    "243": {
+      "label": "Save BGM (background music)",
+      "classification": "linear",
+      "native": true,
+      "category": "audio-video",
+      "scanBehavior": "advance",
+      "summary": "Saves current BGM."
+    },
+    "244": {
+      "label": "Replay BGM (background music)",
+      "classification": "linear",
+      "native": true,
+      "category": "audio-video",
+      "scanBehavior": "advance",
+      "summary": "Replays saved BGM."
+    },
+    "245": {
+      "label": "Play BGS (background sound)",
+      "classification": "linear",
+      "native": true,
+      "category": "audio-video",
+      "scanBehavior": "advance",
+      "summary": "Plays BGS."
+    },
+    "246": {
+      "label": "Fadeout BGS (background sound)",
+      "classification": "linear",
+      "native": true,
+      "category": "audio-video",
+      "scanBehavior": "advance",
+      "summary": "Fades out BGS."
+    },
+    "247": {
+      "label": "Save BGS (background sound)",
+      "classification": "linear",
+      "native": true,
+      "category": "audio-video",
+      "scanBehavior": "advance",
+      "summary": "Saves current BGS."
+    },
+    "248": {
+      "label": "Replay BGS (background sound)",
+      "classification": "linear",
+      "native": true,
+      "category": "audio-video",
+      "scanBehavior": "advance",
+      "summary": "Replays saved BGS."
+    },
+    "249": {
+      "label": "Play ME (music effect)",
+      "classification": "linear",
+      "native": true,
+      "category": "audio-video",
+      "scanBehavior": "advance",
+      "summary": "Plays ME."
+    },
+    "250": {
+      "label": "Play SE (sound effect)",
+      "classification": "linear",
+      "native": true,
+      "category": "audio-video",
+      "scanBehavior": "advance",
+      "summary": "Plays SE."
+    },
+    "251": {
+      "label": "Stop SE (sound effect)",
+      "classification": "linear",
+      "native": true,
+      "category": "audio-video",
+      "scanBehavior": "advance",
+      "summary": "Stops SE."
+    },
+    "261": {
+      "label": "Play Movie",
+      "classification": "linear",
+      "native": true,
+      "category": "audio-video",
+      "scanBehavior": "advance",
+      "summary": "Plays a movie."
+    },
+    "281": {
+      "label": "Change Map Name Display",
+      "classification": "linear",
+      "native": true,
+      "category": "map",
+      "scanBehavior": "advance",
+      "summary": "Changes map name display setting.",
+      "stalenessRisk": "state"
+    },
+    "282": {
+      "label": "Change Tileset",
+      "classification": "linear",
+      "native": true,
+      "category": "map",
+      "scanBehavior": "advance",
+      "summary": "Changes the current tileset.",
+      "stalenessRisk": "state"
+    },
+    "283": {
+      "label": "Change Battle Background",
+      "classification": "linear",
+      "native": true,
+      "category": "map",
+      "scanBehavior": "advance",
+      "summary": "Changes battle background images.",
+      "stalenessRisk": "state"
+    },
+    "284": {
+      "label": "Change Parallax",
+      "classification": "linear",
+      "native": true,
+      "category": "map",
+      "scanBehavior": "advance",
+      "summary": "Changes parallax background settings.",
+      "stalenessRisk": "state"
+    },
+    "285": {
+      "label": "Get Location Info",
+      "classification": "linear",
+      "native": true,
+      "category": "map",
+      "scanBehavior": "advance",
+      "summary": "Stores map/location information in variables.",
+      "stalenessRisk": "state"
+    },
+    "301": {
+      "label": "Battle Processing",
+      "classification": "branching",
+      "native": true,
+      "category": "scene-control",
+      "scanBehavior": "barrier",
+      "summary": "Starts a battle and may branch by result."
+    },
+    "302": {
+      "label": "Shop Processing",
+      "classification": "linear",
+      "native": true,
+      "category": "scene-control",
+      "scanBehavior": "advance",
+      "summary": "Opens a shop scene.",
+      "stalenessRisk": "state"
+    },
+    "303": {
+      "label": "Name Input Processing",
+      "classification": "linear",
+      "native": true,
+      "category": "scene-control",
+      "scanBehavior": "advance",
+      "summary": "Opens name input.",
+      "stalenessRisk": "state"
+    },
+    "311": {
+      "label": "Change HP (health points)",
+      "classification": "linear",
+      "native": true,
+      "category": "actor",
+      "scanBehavior": "advance",
+      "summary": "Changes actor HP.",
+      "stalenessRisk": "state"
+    },
+    "312": {
+      "label": "Change MP (magic points)",
+      "classification": "linear",
+      "native": true,
+      "category": "actor",
+      "scanBehavior": "advance",
+      "summary": "Changes actor MP.",
+      "stalenessRisk": "state"
+    },
+    "313": {
+      "label": "Change State",
+      "classification": "linear",
+      "native": true,
+      "category": "actor",
+      "scanBehavior": "advance",
+      "summary": "Changes actor states.",
+      "stalenessRisk": "state"
+    },
+    "314": {
+      "label": "Recover All",
+      "classification": "linear",
+      "native": true,
+      "category": "actor",
+      "scanBehavior": "advance",
+      "summary": "Fully recovers actors.",
+      "stalenessRisk": "state"
+    },
+    "315": {
+      "label": "Change EXP (experience)",
+      "classification": "linear",
+      "native": true,
+      "category": "actor",
+      "scanBehavior": "advance",
+      "summary": "Changes actor EXP.",
+      "stalenessRisk": "state"
+    },
+    "316": {
+      "label": "Change Level",
+      "classification": "linear",
+      "native": true,
+      "category": "actor",
+      "scanBehavior": "advance",
+      "summary": "Changes actor levels.",
+      "stalenessRisk": "state"
+    },
+    "317": {
+      "label": "Change Parameter",
+      "classification": "linear",
+      "native": true,
+      "category": "actor",
+      "scanBehavior": "advance",
+      "summary": "Changes actor parameters.",
+      "stalenessRisk": "state"
+    },
+    "318": {
+      "label": "Change Skill",
+      "classification": "linear",
+      "native": true,
+      "category": "actor",
+      "scanBehavior": "advance",
+      "summary": "Changes actor skills.",
+      "stalenessRisk": "state"
+    },
+    "319": {
+      "label": "Change Equipment",
+      "classification": "linear",
+      "native": true,
+      "category": "actor",
+      "scanBehavior": "advance",
+      "summary": "Changes actor equipment.",
+      "stalenessRisk": "state"
+    },
+    "320": {
+      "label": "Change Name",
+      "classification": "linear",
+      "native": true,
+      "category": "actor",
+      "scanBehavior": "advance",
+      "summary": "Changes actor name.",
+      "stalenessRisk": "state"
+    },
+    "321": {
+      "label": "Change Class",
+      "classification": "linear",
+      "native": true,
+      "category": "actor",
+      "scanBehavior": "advance",
+      "summary": "Changes actor class.",
+      "stalenessRisk": "state"
+    },
+    "322": {
+      "label": "Change Actor Images",
+      "classification": "linear",
+      "native": true,
+      "category": "system",
+      "scanBehavior": "advance",
+      "summary": "Changes actor images.",
+      "stalenessRisk": "state"
+    },
+    "323": {
+      "label": "Change Vehicle Image",
+      "classification": "linear",
+      "native": true,
+      "category": "system",
+      "scanBehavior": "advance",
+      "summary": "Changes vehicle image.",
+      "stalenessRisk": "state"
+    },
+    "324": {
+      "label": "Change Nickname",
+      "classification": "linear",
+      "native": true,
+      "category": "actor",
+      "scanBehavior": "advance",
+      "summary": "Changes actor nickname.",
+      "stalenessRisk": "state"
+    },
+    "325": {
+      "label": "Change Profile",
+      "classification": "linear",
+      "native": true,
+      "category": "actor",
+      "scanBehavior": "advance",
+      "summary": "Changes actor profile.",
+      "stalenessRisk": "state"
+    },
+    "326": {
+      "label": "Change TP (tactical points)",
+      "classification": "linear",
+      "native": true,
+      "category": "actor",
+      "scanBehavior": "advance",
+      "summary": "Changes actor TP.",
+      "stalenessRisk": "state"
+    },
+    "331": {
+      "label": "Change Enemy HP (health points)",
+      "classification": "linear",
+      "native": true,
+      "category": "battle",
+      "scanBehavior": "advance",
+      "summary": "Changes enemy HP.",
+      "stalenessRisk": "state"
+    },
+    "332": {
+      "label": "Change Enemy MP (magic points)",
+      "classification": "linear",
+      "native": true,
+      "category": "battle",
+      "scanBehavior": "advance",
+      "summary": "Changes enemy MP.",
+      "stalenessRisk": "state"
+    },
+    "333": {
+      "label": "Change Enemy State",
+      "classification": "linear",
+      "native": true,
+      "category": "battle",
+      "scanBehavior": "advance",
+      "summary": "Changes enemy states.",
+      "stalenessRisk": "state"
+    },
+    "334": {
+      "label": "Enemy Recover All",
+      "classification": "linear",
+      "native": true,
+      "category": "battle",
+      "scanBehavior": "advance",
+      "summary": "Fully recovers enemies.",
+      "stalenessRisk": "state"
+    },
+    "335": {
+      "label": "Enemy Appearance",
+      "classification": "linear",
+      "native": true,
+      "category": "battle",
+      "scanBehavior": "advance",
+      "summary": "Makes an enemy appear.",
+      "stalenessRisk": "state"
+    },
+    "336": {
+      "label": "Enemy Transform",
+      "classification": "linear",
+      "native": true,
+      "category": "battle",
+      "scanBehavior": "advance",
+      "summary": "Transforms an enemy.",
+      "stalenessRisk": "state"
+    },
+    "337": {
+      "label": "Show Battle Animation",
+      "classification": "linear",
+      "native": true,
+      "category": "battle",
+      "scanBehavior": "advance",
+      "summary": "Shows a battle animation.",
+      "stalenessRisk": "state"
+    },
+    "339": {
+      "label": "Force Action",
+      "classification": "linear",
+      "native": true,
+      "category": "battle",
+      "scanBehavior": "advance",
+      "summary": "Forces a battler action.",
+      "stalenessRisk": "state"
+    },
+    "340": {
+      "label": "Abort Battle",
+      "classification": "terminal",
+      "native": true,
+      "category": "battle",
+      "scanBehavior": "barrier",
+      "summary": "Aborts the current battle."
+    },
+    "342": {
+      "label": "Change Enemy TP (tactical points)",
+      "classification": "linear",
+      "native": true,
+      "category": "battle",
+      "scanBehavior": "advance",
+      "summary": "Changes enemy TP.",
+      "stalenessRisk": "state"
+    },
+    "351": {
+      "label": "Open Menu Screen",
+      "classification": "linear",
+      "native": true,
+      "category": "scene-control",
+      "scanBehavior": "advance",
+      "summary": "Opens the menu screen."
+    },
+    "352": {
+      "label": "Open Save Screen",
+      "classification": "linear",
+      "native": true,
+      "category": "scene-control",
+      "scanBehavior": "advance",
+      "summary": "Opens the save screen."
+    },
+    "353": {
+      "label": "Game Over",
+      "classification": "terminal",
+      "native": true,
+      "category": "scene-control",
+      "scanBehavior": "barrier",
+      "summary": "Moves to the game over scene."
+    },
+    "354": {
+      "label": "Return to Title Screen",
+      "classification": "terminal",
+      "native": true,
+      "category": "scene-control",
+      "scanBehavior": "barrier",
+      "summary": "Returns to title."
+    },
+    "355": {
+      "label": "Script (runs JavaScript)",
+      "classification": "external",
+      "native": true,
+      "category": "advanced",
+      "scanBehavior": "advance",
+      "summary": "Runs JavaScript.",
+      "stalenessRisk": "external"
+    },
+    "356": {
+      "label": "Plugin Command (runs MV plugin code)",
+      "classification": "external",
+      "native": false,
+      "category": "advanced",
+      "scanBehavior": "advance",
+      "summary": "Runs an MV plugin command.",
+      "stalenessRisk": "external"
+    },
+    "357": {
+      "label": "Plugin Command (runs MZ plugin code)",
+      "classification": "external",
+      "native": false,
+      "category": "advanced",
+      "scanBehavior": "advance",
+      "summary": "Runs an MZ plugin command.",
+      "stalenessRisk": "external"
+    },
+    "401": {
+      "label": "Show Text Line",
+      "classification": "continuation",
+      "native": true,
+      "category": "message",
+      "scanBehavior": "message-line",
+      "summary": "Continuation line for Show Text."
+    },
+    "402": {
+      "label": "Choice Branch",
+      "classification": "branching",
+      "native": true,
+      "category": "message",
+      "scanBehavior": "barrier",
+      "summary": "Choice branch body."
+    },
+    "403": {
+      "label": "Choice Cancel Branch",
+      "classification": "branching",
+      "native": true,
+      "category": "message",
+      "scanBehavior": "barrier",
+      "summary": "Choice cancel branch body."
+    },
+    "404": {
+      "label": "End Choices",
+      "classification": "branching",
+      "native": true,
+      "category": "message",
+      "scanBehavior": "barrier",
+      "summary": "End of choice branches."
+    },
+    "405": {
+      "label": "Show Scrolling Text Line",
+      "classification": "continuation",
+      "native": true,
+      "category": "message",
+      "scanBehavior": "advance",
+      "summary": "Continuation line for scrolling text."
+    },
+    "408": {
+      "label": "Comment Line",
+      "classification": "linear",
+      "native": true,
+      "category": "flow",
+      "scanBehavior": "advance",
+      "summary": "Continuation line for Comment."
+    },
+    "411": {
+      "label": "Else",
+      "classification": "branching",
+      "native": true,
+      "category": "flow",
+      "scanBehavior": "barrier",
+      "summary": "Else branch."
+    },
+    "412": {
+      "label": "End Conditional Branch",
+      "classification": "branching",
+      "native": true,
+      "category": "flow",
+      "scanBehavior": "barrier",
+      "summary": "End of conditional branch."
+    },
+    "413": {
+      "label": "Repeat Above",
+      "classification": "branching",
+      "native": true,
+      "category": "flow",
+      "scanBehavior": "barrier",
+      "summary": "Loop repeat marker."
+    },
+    "505": {
+      "label": "Movement Route Command (one route step)",
+      "classification": "continuation",
+      "native": true,
+      "category": "movement",
+      "scanBehavior": "movement-route-line",
+      "summary": "Continuation row for Set Movement Route.",
+      "stalenessRisk": "state"
+    },
+    "601": {
+      "label": "Battle Win Branch",
+      "classification": "branching",
+      "native": true,
+      "category": "battle",
+      "scanBehavior": "barrier",
+      "summary": "Battle win branch body."
+    },
+    "602": {
+      "label": "Battle Escape Branch",
+      "classification": "branching",
+      "native": true,
+      "category": "battle",
+      "scanBehavior": "barrier",
+      "summary": "Battle escape branch body."
+    },
+    "603": {
+      "label": "Battle Lose Branch",
+      "classification": "branching",
+      "native": true,
+      "category": "battle",
+      "scanBehavior": "barrier",
+      "summary": "Battle lose branch body."
+    },
+    "604": {
+      "label": "End Battle Processing",
+      "classification": "branching",
+      "native": true,
+      "category": "battle",
+      "scanBehavior": "barrier",
+      "summary": "End of battle result branches."
+    },
+    "605": {
+      "label": "Shop Item",
+      "classification": "linear",
+      "native": true,
+      "category": "scene-control",
+      "scanBehavior": "advance",
+      "summary": "Additional shop goods row.",
+      "stalenessRisk": "state"
+    },
+    "655": {
+      "label": "Script Line (continues JavaScript)",
+      "classification": "continuation",
+      "native": true,
+      "category": "advanced",
+      "scanBehavior": "advance",
+      "summary": "Continuation line for Script.",
+      "stalenessRisk": "external"
+    },
+    "657": {
+      "label": "Plugin Command Argument Line (continues plugin command)",
+      "classification": "continuation",
+      "native": false,
+      "category": "advanced",
+      "scanBehavior": "advance",
+      "summary": "Editor summary or argument line for MZ plugin command.",
+      "stalenessRisk": "external"
+    }
+  },
+  "movementRouteCommands": {
+    "0": {
+      "label": "Route End",
+      "classification": "linear",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "End of route."
+    },
+    "1": {
+      "label": "Move Down",
+      "classification": "linear",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "Character moves down one tile."
+    },
+    "2": {
+      "label": "Move Left",
+      "classification": "linear",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "Character moves left one tile."
+    },
+    "3": {
+      "label": "Move Right",
+      "classification": "linear",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "Character moves right one tile."
+    },
+    "4": {
+      "label": "Move Up",
+      "classification": "linear",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "Character moves up one tile."
+    },
+    "5": {
+      "label": "Move Lower Left",
+      "classification": "linear",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "Character moves diagonally lower-left."
+    },
+    "6": {
+      "label": "Move Lower Right",
+      "classification": "linear",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "Character moves diagonally lower-right."
+    },
+    "7": {
+      "label": "Move Upper Left",
+      "classification": "linear",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "Character moves diagonally upper-left."
+    },
+    "8": {
+      "label": "Move Upper Right",
+      "classification": "linear",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "Character moves diagonally upper-right."
+    },
+    "9": {
+      "label": "Move at Random",
+      "classification": "linear",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "Character moves randomly."
+    },
+    "10": {
+      "label": "Move Toward Player",
+      "classification": "linear",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "Character moves toward the player."
+    },
+    "11": {
+      "label": "Move Away From Player",
+      "classification": "linear",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "Character moves away from the player."
+    },
+    "12": {
+      "label": "1 Step Forward",
+      "classification": "linear",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "Character moves forward."
+    },
+    "13": {
+      "label": "1 Step Backward",
+      "classification": "linear",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "Character moves backward."
+    },
+    "14": {
+      "label": "Jump",
+      "classification": "linear",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "Character jumps by the specified offset."
+    },
+    "15": {
+      "label": "Wait",
+      "classification": "linear",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "Route waits for a number of frames."
+    },
+    "16": {
+      "label": "Face Down",
+      "classification": "linear",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "Character faces down."
+    },
+    "17": {
+      "label": "Face Left",
+      "classification": "linear",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "Character faces left."
+    },
+    "18": {
+      "label": "Face Right",
+      "classification": "linear",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "Character faces right."
+    },
+    "19": {
+      "label": "Face Up",
+      "classification": "linear",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "Character faces up."
+    },
+    "20": {
+      "label": "Turn 90 Degrees Right",
+      "classification": "linear",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "Character turns 90 degrees right."
+    },
+    "21": {
+      "label": "Turn 90 Degrees Left",
+      "classification": "linear",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "Character turns 90 degrees left."
+    },
+    "22": {
+      "label": "Turn 180 Degrees",
+      "classification": "linear",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "Character turns around."
+    },
+    "23": {
+      "label": "Turn 90 Degrees Right or Left",
+      "classification": "linear",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "Character turns randomly right or left."
+    },
+    "24": {
+      "label": "Turn at Random",
+      "classification": "linear",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "Character turns randomly."
+    },
+    "25": {
+      "label": "Turn Toward Player",
+      "classification": "linear",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "Character faces toward the player."
+    },
+    "26": {
+      "label": "Turn Away From Player",
+      "classification": "linear",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "Character faces away from the player."
+    },
+    "27": {
+      "label": "Switch ON",
+      "classification": "linear",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "Changes a switch ON.",
+      "reason": "switch-on",
+      "stalenessRisk": "state"
+    },
+    "28": {
+      "label": "Switch OFF",
+      "classification": "linear",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "Changes a switch OFF.",
+      "reason": "switch-off",
+      "stalenessRisk": "state"
+    },
+    "29": {
+      "label": "Change Speed",
+      "classification": "linear",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "Changes movement speed."
+    },
+    "30": {
+      "label": "Change Frequency",
+      "classification": "linear",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "Changes movement frequency."
+    },
+    "31": {
+      "label": "Walking Animation ON",
+      "classification": "linear",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "Enables walking animation."
+    },
+    "32": {
+      "label": "Walking Animation OFF",
+      "classification": "linear",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "Disables walking animation."
+    },
+    "33": {
+      "label": "Stepping Animation ON",
+      "classification": "linear",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "Enables stepping animation."
+    },
+    "34": {
+      "label": "Stepping Animation OFF",
+      "classification": "linear",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "Disables stepping animation."
+    },
+    "35": {
+      "label": "Direction Fix ON",
+      "classification": "linear",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "Enables direction fix."
+    },
+    "36": {
+      "label": "Direction Fix OFF",
+      "classification": "linear",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "Disables direction fix."
+    },
+    "37": {
+      "label": "Through ON",
+      "classification": "linear",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "Enables through movement."
+    },
+    "38": {
+      "label": "Through OFF",
+      "classification": "linear",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "Disables through movement."
+    },
+    "39": {
+      "label": "Transparent ON",
+      "classification": "linear",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "Makes the character transparent."
+    },
+    "40": {
+      "label": "Transparent OFF",
+      "classification": "linear",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "Makes the character visible."
+    },
+    "41": {
+      "label": "Change Image",
+      "classification": "linear",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "Changes character image."
+    },
+    "42": {
+      "label": "Change Opacity",
+      "classification": "linear",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "Changes character opacity."
+    },
+    "43": {
+      "label": "Change Blend Mode",
+      "classification": "linear",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "Changes character blend mode."
+    },
+    "44": {
+      "label": "Play SE (sound effect)",
+      "classification": "linear",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "Plays a sound effect."
+    },
+    "45": {
+      "label": "Script (runs JavaScript)",
+      "classification": "external",
+      "native": true,
+      "scanBehavior": "advance",
+      "summary": "Runs JavaScript inside the route.",
+      "reason": "script",
+      "stalenessRisk": "external"
+    }
+  },
+  "stopReasons": {
+    "barrier-command": "Stopped at a command that can change control flow or exit the current path.",
+    "branch-depth-limit": "Stopped after reaching the branch nesting limit.",
+    "branch-structure-desync": "Stopped because a branch command list did not match the expected structural markers.",
+    "current-message-unattached": "Current message has no verified interpreter origin.",
+    "empty-message": "Stopped at an empty Show Text block.",
+    "budget-limit": "Stopped after spending the foresight budget.",
+    "common-event-cycle": "Stopped before recursively scanning a common event already on the call stack.",
+    "common-event-depth-limit": "Stopped after reaching the common event nesting limit.",
+    "common-event-missing-id": "Stopped at a Common Event command without a valid common event id.",
+    "common-event-missing-list": "Stopped at a Common Event command whose target list was unavailable.",
+    "event-end": "Reached the end of the event list or branch list.",
+    "indent-boundary": "Stopped before crossing an event indent boundary.",
+    "message-limit": "Stopped after reaching the foresight message limit.",
+    "missing-command": "Stopped at a missing or invalid command entry.",
+    "movement-route-missing-list": "Stopped at a movement route without readable route commands.",
+    "nested-list-cycle": "Stopped before recursively scanning an embedded command list already on the call stack.",
+    "nested-list-depth-limit": "Stopped after reaching the embedded command list nesting limit.",
+    "nested-list-limit": "Stopped at a command with too many embedded command lists.",
+    "orphan-continuation": "Stopped at a continuation command without its owning command.",
+    "path-cycle": "Stopped before revisiting a command path already scanned in this lookahead.",
+    "scan-limit": "Stopped after reaching the foresight scan command limit.",
+    "show-text": "Found a Show Text block.",
+    "advance": "Advanced past a linear command.",
+    "movement-route": "Advanced past a movement route.",
+    "movement-route-barrier": "Stopped at a movement route command that must remain a barrier.",
+    "nested-list-unavailable": "Stopped at a declared nested command list that could not be read.",
+    "control-flow-target": "Stopped after resolving a static loop, break, or jump target.",
+    "unsafe-control-flow": "Stopped at a loop or jump that would require runtime execution to resolve.",
+    "unsupported-branch": "Stopped at a branch command that does not expose a supported structural branch shape."
+  }
+}

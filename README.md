@@ -1,53 +1,54 @@
 ## Overview
-RPG Maker MV / MZ addon to translate all text that gets drawn on the screen. Supported translators: DeepL (bring your own key) and local LLM.
+RPG Maker MV / MZ Live Translator - Simply translates the text on the game screen (does its best).
 
-Since RPG Maker is a scriptable platform, no implementation of a translator will work against every game. Chances are that many games will have subtle issues or won't work at all unless you debug yourself.
+Supports most games. Since RPG Maker is a scriptable platform, no implementation of a translator will work against every game. Chances are that some games will have subtle issues or won't work at all.
 
-## Implementation
-1. Tries to detect all kinds of texts being drawn on the screen and read its contents.
-2. Asynchronously query translation.
-3. When translations arrive, clear the corresponding text.
-4. Draw the translation in its place with invisible unicode watermarks so that the process does not repeat. 
-- This addon shouldn't affect the game's logic in any way. 
-5. Translations are cached in disk.
+Intended to be used with LM Studio (but deepl API key support exists as well for users without a GPU - for now)
+
+<p>
+  <img src="docs-assets/demo-1.png" alt="Screenshot 1" width="49%">
+  <img src="docs-assets/demo-2.png" alt="Screenshot 2" width="49%">
+</p>
+
+## How it works
+
+1. Intercepts all kinds of text draw.
+2. See if cached translation is available.
+3. If not, asynchronous translation request is sent to the LLM.
+4. When ready, fulfill the promise by clearing out the original and draw the translation in place.
+5. Foresight: Tries to peek ahead of the dialogue and finds texts to pre-translate. Branching paths (user choices, if's) are supported.
+
+## Web Installer
+Simply visit https://nt7011.github.io/ with a Chromium browser and point the game folder. The rest the will be taken care of.
 
 ## Prerequisites:
-1. If the game is packed with Enigma Virtual Box, unpack it first.
-2. (Required for some games) Update the game's included nw.js library. All RPGMV/MZ games ship with nwjs installations - sometimes with very outdated ones that will not work with this addon. https://nwjs.io/downloads/ - Extract all files to the game directory (where Game.exe is) and change the name of nwjs.exe to Game.exe. 
+1. If there's no `scripts/` in your game folder, it's probably been hidden inside `.exe` with Enigma Virtual Box. Unpack first. 
+2. (Required for most games) Update the game's included nw.js library. All RPGMV/MZ games ship with nwjs installations - sometimes with very outdated ones that will not work with this addon. https://nwjs.io/downloads/ - Extract all files to the game directory (where Game.exe is) and change the name of nwjs.exe to Game.exe. 
 
-## Instructions (Browser based automated installer)
-Visit https://nt7011.github.io/
+## Alternative Installations
 
-## Instructions (Installer):
-0. Currently the installer is broken for Unix systems. Use the browser installer.
-1. Download all files and copy `live-translator-installer/` to the game's folder (where Game.exe resides).
-2. Right-click `live-translator-installer/installer.ps1` → `Run with PowerShell`. If blocked, open up powershell console as administrator and run `Set-ExecutionPolicy Bypass -Scope LocalMachine`. If you're confused, ask ChatGPT.
-3. Go to `js/plugins/` or `www/js/plugins` to edit `live-translator-installer/translator.json` for provider settings and `live-translator-installer/settings.json` for addon behavior. For DeepL, set `"provider": "deepl"`, configure `settings.deepl.language`, and paste your API key into `settings.deepl.apiKey`. To use LM Studio API (`GET /api/v1/models`), set `"provider": "local"` and modify the prompt. To disable new external translation requests and only reuse entries already present in `translation-cache.log`, set `"provider": "none"`. Default name `"auto"` works if only one model is loaded in LM Studio. Set `gameMessage.textScale` in `settings.json` to an integer from `1` to `100` to shrink translated `Game_Message` text; set `textScaleOthers` to shrink translated non-message window, sprite, and PIXI text. `100` disables resizing. Set `checkUpdates` to `false` to disable GUI version checks. The files in the `installer` folder are not active!
+### Local Installer
+- Run `powershell -ExecutionPolicy Bypass -File local-installer\installer.ps1 -GameRoot "C:\Path\To\Game"`. If the release folders are already copied next to `Game.exe`, `-GameRoot` can be omitted.
 
-## Instructions (Manual):
-1. Copy `live-translator-installer/live-translator-loader.js` to the `js/plugins/` folder and add an entry to `plugins.js`.
-2. Copy `live-translator-installer` to the `js/plugins/` folder.
-3. Inspect `package.json` and make sure `name` field is not empty.
-3. Go to `js/plugins/` or `www/js/plugins` to edit `live-translator-installer/translator.json` for provider settings and `live-translator-installer/settings.json` for addon behavior. For DeepL, set `"provider": "deepl"`, configure `settings.deepl.language`, and paste your API key into `settings.deepl.apiKey`. To use LM Studio API (`GET /api/v1/models`), set `"provider": "local"` and modify the prompt. To disable new external translation requests and only reuse entries already present in `translation-cache.log`, set `"provider": "none"`. Default name `"auto"` works if only one model is loaded in LM Studio. Set `gameMessage.textScale` in `settings.json` to an integer from `1` to `100` to shrink translated `Game_Message` text; set `textScaleOthers` to shrink translated non-message window, sprite, and PIXI text. `100` disables resizing. Set `checkUpdates` to `false` to disable GUI version checks. The files in the `installer` folder are not active!
+### Manual Installation
+1. Copy `live-translator/` to `js/plugins/live-translator/` or `www/js/plugins/live-translator/`.
+2. Copy `live-translator/config-templates/settings.release.json` to `js/plugins/live-translator/settings.json` or `www/js/plugins/live-translator/settings.json`.
+3. Add an enabled `plugins.js` entry named `live-translator/live-translator-loader`.
+4. Inspect `package.json` and make sure `name` field is not empty.
 
-## Dev Environment and Troubleshooting (Recommended):
-1. Install `nwjs debugger for VSCode` plugin - https://marketplace.visualstudio.com/items?itemName=ruakr.vsc-nwjs
-2. Put the game inside `experimentation/` folder.
-3. Use included `launch.json` configurations to launch nwjs debugging session.
-4. Open up your vibecodingpromasterTM software of your choice because surely you're not manually debugging this 2000 line jank like what, some kind of a caveman.
+Then, go to `js/plugins/live-translator/` or `www/js/plugins/live-translator/` to edit `translator.json` for provider settings and `settings.json` for addon behavior.
 
-To translate other languages than Chinese, Japanese, or Korean, set `"translation.disableCjkFilter": true` in `settings.json`.
+## Settings
 
-To suppress specific source strings before any precache/cache/provider translation is applied, add regex strings under `"ignoreTranslationRegex"` in `settings.json`:
+`"translation.disableCjkFilter": true`: Enables translation from non-CJK (Chinese, Japanese, and Korean) sources.
 
-```json
-"ignoreTranslationRegex": [
-  "^\\s*[A-Z]\\s*$",
-  "/^SYSTEM:/i"
-]
-```
+`"overrideTranslationRegex"`: Perform a static translation based on regex
 
-Rules are checked against the trimmed translation source. They use JavaScript regular expressions in Unicode mode by default. To opt into flags, use slash form such as `"/^SYSTEM:/i"` or `"/^SYSTEM$/m"`. Supported optional flags are `i` (case-insensitive), `m` (make `^`/`$` match line starts/ends), and `s` (make `.` match newlines).
+`"substitutePlaintextBeforeTranslation"`: Replace things like names before feeding to the LLM.
+
+`textScale` and `textScaleOthers`: Resizes the translation text
+
+and more
 
 ## Translator GUI
 The translator monitor opens automatically when the game starts. If you close it, press `Ctrl+Shift+Enter` in the game window or run `LiveTranslatorGui.open()` from DevTools.
@@ -55,6 +56,14 @@ The translator monitor opens automatically when the game starts. If you close it
 ## Precacher GUI (Beta)
 After installing the plugin, press `Ctrl+Shift+P` in the game window or run `LiveTranslatorPrecacher.open()` from DevTools.
 Extraction follows `settings.json` `translation.disableCjkFilter` and uses the same CJK gate as live translation.
+
+## Recommended LLMs to Get Started
+
+VRAM 8GB - mradermacher/gemma-4-E4B-it-ultra-uncensored-heretic-i1-GGUF@IQ4_XS
+
+VRAM 16GB - mradermacher/gemma-4-26B-A4B-it-ultra-uncensored-heretic-i1-GGUF@IQ4_XS - barely fits but it's so good
+
+Load the model in LM Studio, test token speed by writing some chat in it, and then enable the server in LM Studio. The settings should work as is. 
 
 ## Changelog
 1.0 - major refactor - performance and accuracy improvements, etc
@@ -97,8 +106,4 @@ Extraction follows `settings.json` `translation.disableCjkFilter` and uses the s
 
 3.2.8 - errorneous translation abort hotfix
 
-3.2.9 - add an option to disable GUI auto startup
-
-3.2.10 - hotfix against a severely broken plugin
-
-![License](https://img.shields.io/badge/License-CC%20BY%204.0-blue.svg)
+4.0 - Almost a complete rewrite: foresight support. compatibility improvements, batching, priority, performance optimizations, and more

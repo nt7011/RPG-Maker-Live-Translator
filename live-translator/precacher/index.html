@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Precacher (Beta)</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header class="app-header">
+        <div>
+            <h1>Precacher <span>Beta</span></h1>
+            <div id="run-state" class="run-state neutral">Idle</div>
+        </div>
+        <button id="refresh-preflight" type="button" class="secondary">Refresh</button>
+    </header>
+
+    <main>
+        <details id="preflight-panel" class="panel preflight-panel" open>
+            <summary class="preflight-summary">
+                <h2>0. Preflight</h2>
+                <span id="preflight-overview" class="summary-status neutral">Checking</span>
+            </summary>
+            <div class="path-grid">
+                <div class="label">Game root</div>
+                <div id="game-root" class="value">-</div>
+                <div id="game-root-status" class="status neutral">checking</div>
+
+                <div class="label">Data folder</div>
+                <div id="data-folder" class="value">-</div>
+                <div id="data-folder-status" class="status neutral">checking</div>
+
+                <div class="label">Output file</div>
+                <div id="output-file" class="value">-</div>
+                <div id="output-file-status" class="status neutral">checking</div>
+
+                <div class="label">Translator config</div>
+                <div id="translator-config" class="value">-</div>
+                <div id="translator-config-status" class="status neutral">checking</div>
+
+                <div class="label">Local model status</div>
+                <div id="local-model-detail" class="value">-</div>
+                <div id="local-model-status" class="status neutral">checking</div>
+            </div>
+        </details>
+
+        <section class="panel">
+            <div class="section-title">
+                <div class="title-with-status">
+                    <h2>1. Extract Strings</h2>
+                    <span id="extraction-filter-status" class="summary-status neutral">CJK filter: checking</span>
+                </div>
+                <button id="extract-strings" type="button" class="primary">Extract strings</button>
+            </div>
+            <div class="warning">Extraction overwrites precache.json and precache-rejected.json.</div>
+            <div class="stats-grid">
+                <div>
+                    <span class="stat-label">Strings extracted</span>
+                    <strong id="strings-extracted">0</strong>
+                </div>
+                <div>
+                    <span class="stat-label">Strings rejected</span>
+                    <strong id="strings-rejected">0</strong>
+                </div>
+                <div>
+                    <span class="stat-label">JSON files scanned</span>
+                    <strong id="json-files-scanned">0</strong>
+                </div>
+                <div>
+                    <span class="stat-label">Last extraction time</span>
+                    <strong id="last-extraction-time">-</strong>
+                </div>
+            </div>
+        </section>
+
+        <section class="panel">
+            <div class="section-title">
+                <h2>2. Translate Strings</h2>
+                <div class="actions">
+                    <button id="translate-missing" type="button" class="primary">Translate missing</button>
+                    <button id="stop-translation" type="button" class="danger" disabled title="Completed progress stays saved in precache.json.">Stop</button>
+                </div>
+            </div>
+            <div class="action-note">Stop keeps completed progress saved in precache.json.</div>
+            <div id="precache-relaunch-reminder" class="notice hidden">Relaunch the game for the updated precache to take effect.</div>
+
+            <details class="advanced" open>
+                <summary>Advanced</summary>
+                <div class="field-row">
+                    <label for="concurrency">Concurrent requests</label>
+                    <input id="concurrency" type="number" min="1" step="1" value="1">
+                    <label for="token-budget">Input token budget per request</label>
+                    <input id="token-budget" type="number" min="1" step="1" value="1024">
+                    <div class="derived">Output cap: 2x request input estimate</div>
+                </div>
+
+                <label class="prompt-label" for="system-prompt">System prompt</label>
+                <textarea id="system-prompt" spellcheck="false"></textarea>
+            </details>
+
+            <div class="stats-grid runtime">
+                <div>
+                    <span class="stat-label">Total strings</span>
+                    <strong id="total-strings">0</strong>
+                </div>
+                <div>
+                    <span class="stat-label">Translated</span>
+                    <strong id="translated-count">0</strong>
+                </div>
+                <div>
+                    <span class="stat-label">Untranslated</span>
+                    <strong id="untranslated-count">0</strong>
+                </div>
+                <div>
+                    <span class="stat-label">Failed</span>
+                    <strong id="failed-count">0</strong>
+                </div>
+                <div>
+                    <span class="stat-label">Active workers</span>
+                    <strong id="active-workers">0</strong>
+                </div>
+                <div>
+                    <span class="stat-label">Completed batches</span>
+                    <strong id="completed-batches">0</strong>
+                </div>
+                <div>
+                    <span class="stat-label">Queue length</span>
+                    <strong id="queue-length">0</strong>
+                </div>
+                <div>
+                    <span class="stat-label">Run tokens</span>
+                    <strong id="token-progress">0 / 0</strong>
+                </div>
+                <div>
+                    <span class="stat-label">Tokens/sec (30s)</span>
+                    <strong id="tokens-per-second">0.0</strong>
+                </div>
+                <div>
+                    <span class="stat-label">ETA</span>
+                    <strong id="eta-remaining">-</strong>
+                </div>
+            </div>
+
+            <div class="logs-header">
+                <h3>Logs</h3>
+                <span>Last 20 lines</span>
+            </div>
+            <pre id="logs" class="logs">No logs yet.</pre>
+        </section>
+    </main>
+
+    <script src="app/support.js"></script>
+    <script src="app/files.js"></script>
+    <script src="app/stats.js"></script>
+    <script src="app/logs.js"></script>
+    <script src="app/ui-settings.js"></script>
+    <script src="app/dom.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

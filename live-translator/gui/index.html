@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Live Translator Monitor</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <main>
+        <section class="panel version-panel" aria-live="polite">
+            <div class="version-row">
+                <div id="version-indicator" class="version-indicator neutral">Version unknown: Checking installation</div>
+                <a id="version-update-link" class="version-update-link" href="https://nt7011.github.io/" target="_blank" rel="noopener noreferrer" hidden>Open installer</a>
+            </div>
+        </section>
+
+        <section class="panel diagnostics-panel">
+            <div class="diagnostics-grid">
+                <div>
+                    <span class="stat-label">Concurrency</span>
+                    <strong id="diag-concurrency">0/0</strong>
+                </div>
+                <div>
+                    <span class="stat-label">Queue</span>
+                    <strong id="diag-queue">0</strong>
+                </div>
+                <div>
+                    <span class="stat-label">Subscribers</span>
+                    <strong id="diag-subscribers">0</strong>
+                </div>
+                <div>
+                    <span class="stat-label">Cache</span>
+                    <strong id="diag-cache">-</strong>
+                </div>
+                <div>
+                    <span class="stat-label">Disk</span>
+                    <strong id="diag-disk">-</strong>
+                </div>
+            </div>
+            <div id="diag-lane-reminder" class="diagnostics-reminder neutral">
+                Waiting for concurrent stream diagnostics.
+            </div>
+        </section>
+
+        <section id="draw-capture-panel" class="panel capture-trace-panel">
+            <div class="section-title compact">
+                <h2>Draw Capture Trace</h2>
+                <div class="section-title-actions">
+                    <span id="draw-capture-summary" class="summary-status neutral">0 events</span>
+                    <button id="draw-capture-copy" type="button" class="copy-record-button" disabled>Copy</button>
+                </div>
+            </div>
+            <div id="draw-capture-trace" class="capture-trace-list">
+                <div class="empty">No draw capture trace.</div>
+            </div>
+        </section>
+
+        <section id="foresight-panel" class="panel foresight-panel">
+            <div class="section-title compact">
+                <h2>Foresight</h2>
+                <div class="section-title-actions">
+                    <label class="foresight-view-toggle">
+                        <input id="foresight-message-filter-toggle" type="checkbox" checked aria-controls="foresight-tree">
+                        <span>Messages</span>
+                    </label>
+                    <label class="foresight-view-toggle">
+                        <input id="foresight-view-toggle" type="checkbox" checked aria-controls="foresight-tree">
+                        <span>View</span>
+                    </label>
+                    <span id="foresight-summary" class="summary-status neutral">0 actions</span>
+                    <button id="foresight-copy" type="button" class="copy-record-button" disabled>Copy</button>
+                </div>
+            </div>
+            <div id="foresight-tree" class="foresight-tree-host">
+                <div class="empty">No foresight scan recorded.</div>
+            </div>
+        </section>
+
+        <section id="runtime-log-panel" class="panel">
+            <div class="section-title compact">
+                <h2>Active</h2>
+                <span id="active-text-summary" class="summary-status neutral">0 entries</span>
+            </div>
+            <div id="active-texts" class="text-record-list">
+                <div class="empty">No active text records.</div>
+            </div>
+        </section>
+
+        <section class="panel">
+            <div class="section-title compact">
+                <h2>Detached</h2>
+                <span id="detached-text-summary" class="summary-status neutral">0 entries</span>
+            </div>
+            <div id="detached-texts" class="text-record-list">
+                <div class="empty">No detached text records.</div>
+            </div>
+        </section>
+
+        <section class="panel">
+            <div class="section-title compact">
+                <h2>Archived</h2>
+                <span id="archived-text-summary" class="summary-status neutral">0 entries</span>
+            </div>
+            <div id="archived-texts" class="text-record-list">
+                <div class="empty">No archived text records.</div>
+            </div>
+        </section>
+
+        <details id="runtime-context-panel" class="panel collapsible-panel" open>
+            <summary class="section-title compact">
+                <h2>Runtime Context</h2>
+                <span id="runtime-context-summary" class="summary-status neutral">checking</span>
+            </summary>
+            <div class="path-grid">
+                <div class="label">Game root</div>
+                <div id="game-root" class="value">-</div>
+                <div id="game-root-status" class="status neutral">checking</div>
+
+                <div class="label">Support folder</div>
+                <div id="support-path" class="value">-</div>
+                <div id="support-path-status" class="status neutral">checking</div>
+
+                <div class="label">Heartbeat</div>
+                <div id="heartbeat" class="value">-</div>
+                <div id="main-window-link" class="status neutral">checking</div>
+            </div>
+        </details>
+
+        <details id="hook-installation-panel" class="panel collapsible-panel" open>
+            <summary class="section-title compact">
+                <h2>Hook Installation</h2>
+                <span id="hook-summary" class="summary-status neutral">0 hooks</span>
+            </summary>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Hook</th>
+                            <th>Status</th>
+                            <th>Reason</th>
+                        </tr>
+                    </thead>
+                    <tbody id="hook-results">
+                        <tr>
+                            <td colspan="3" class="empty">No hook installation records.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </details>
+
+        <section class="panel">
+            <div class="logs-header">
+                <h2>Runtime Log</h2>
+                <button id="clear-log" type="button" class="secondary">Clear</button>
+            </div>
+            <pre id="logs" class="logs">No log entries.</pre>
+        </section>
+    </main>
+
+    <script src="foresight-tree/utils.js"></script>
+    <script src="foresight-tree/dom-utils.js"></script>
+    <script src="foresight-tree/model-condense.js"></script>
+    <script src="foresight-tree/model.js"></script>
+    <script src="foresight-tree/dom.js"></script>
+    <script src="foresight-tree/routes.js"></script>
+    <script src="foresight-tree/renderer.js"></script>
+    <script src="foresight-tree-viewer.js"></script>
+    <script src="app/state.js"></script>
+    <script src="app/core.js"></script>
+    <script src="app/version.js"></script>
+    <script src="app/version-network.js"></script>
+    <script src="app/runtime-records.js"></script>
+    <script src="app/runtime-diagnostics.js"></script>
+    <script src="app/render-panels.js"></script>
+    <script src="app/diagnostic-jobs.js"></script>
+    <script src="app/text-record-lists.js"></script>
+    <script src="app/text-record-details.js"></script>
+    <script src="app/copy-actions.js"></script>
+    <script src="app/foresight-copy.js"></script>
+    <script src="app/dom-details.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
