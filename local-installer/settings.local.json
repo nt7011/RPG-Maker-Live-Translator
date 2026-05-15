@@ -1,0 +1,42 @@
+{
+    "disableGuiAutoLaunch": false,
+    "enableForesight": true,
+    "showForesightSpoilers": true,
+    "logging": {
+        "enabled": false,
+        "suppressExact": []
+    },
+    "debug": {
+        "level": "trace"
+    },
+    "performanceProfiler": {
+        "enabled": false
+    },
+    "translation": {
+        "disableCjkFilter": true,
+        "maxOutputTokens": 512
+    },
+    "textEligibility": {
+        "skipCounterLike": true
+    },
+    "drawCaptureTrace": {
+        "enabled": true,
+        "recordCjk": true,
+        "recordAll": false,
+        "limit": 320,
+        "targetTexts": []
+    },
+    "ignoreTranslationRegex": [
+        "^坐标[^A-Za-z]+$"
+    ],
+    "gameMessage": {
+        "textScale": 90,
+        "originAwareLineBreaks": true
+    },
+    "textScaleOthers": 90,
+    "diskCache": {
+        "enabled": true,
+        "maxMegabytes": 2048,
+        "clearOnLaunch": true
+    }
+}

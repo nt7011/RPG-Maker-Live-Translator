@@ -1,0 +1,49 @@
+{
+    "checkUpdates": true,
+    "enableForesight": true,
+    "showForesightSpoilers": false,
+    "logging": {
+        "enabled": false,
+        "suppressExact": []
+    },
+    "debug": {
+        "level": "trace"
+    },
+    "performanceProfiler": {
+        "enabled": false
+    },
+    "diagnostics": {
+        "performanceMode": false
+    },
+    "redraw": {
+        "extraPadding": 0,
+        "defaultOutline": 0
+    },
+    "bitmapFallback": {
+        "mode": "redraw"
+    },
+    "drawCaptureTrace": {
+        "enabled": true,
+        "recordCjk": true,
+        "recordAll": false,
+        "limit": 320,
+        "targetTexts": []
+    },
+    "translation": {
+        "disableCjkFilter": false,
+        "maxOutputTokens": 512
+    },
+    "ignoreTranslationRegex": [],
+    "overrideTranslationRegex": [],
+    "substitutePlaintextBeforeTranslation": [],
+    "gameMessage": {
+        "textScale": 100,
+        "originAwareLineBreaks": false
+    },
+    "textScaleOthers": 100,
+    "diskCache": {
+        "enabled": true,
+        "maxMegabytes": 2048,
+        "clearOnLaunch": true
+    }
+}
