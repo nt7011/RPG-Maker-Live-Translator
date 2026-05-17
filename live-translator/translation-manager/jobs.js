@@ -23,7 +23,6 @@
                 id: `job:${++scope.requestSequence}`,
                 key: request.normalized,
                 text: providerText,
-                textPreview: preview(request.normalized, 72),
                 providerInputChanged,
                 status: 'queued',
                 createdAt: Date.now(),
@@ -52,14 +51,14 @@
             jobsByKey.set(job.key, job);
             queuedJobs.push(job);
             scope.translationDiagnostics.increment('queued');
-            scope.translationDiagnostics.record('job.queued', {
+            scope.translationDiagnostics.recordLazy('job.queued', () => ({
                 jobId: job.id,
                 hook: job.hook,
                 priority: job.effectivePriority,
                 stream: job.stream,
-                textPreview: job.textPreview,
+                textPreview: preview(job.key, 72),
                 providerTextPreview: providerInputChanged ? preview(providerText, 72) : '',
-            });
+            }));
             schedulePump();
             return job;
         }

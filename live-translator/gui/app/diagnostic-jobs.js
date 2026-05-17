@@ -304,7 +304,7 @@ function createDiagnosticJobPill(job, mode, detailKey) {
         button.addEventListener('click', () => toggleDiagnosticJobDetail(detailKey));
     } else {
         button.setAttribute('aria-disabled', 'true');
-        button.title = 'Performance mode enabled in settings.json';
+        button.title = 'Detail view disabled in settings.json';
     }
 
     const text = document.createElement('span');

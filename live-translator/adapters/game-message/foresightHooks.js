@@ -12,15 +12,7 @@
     }
 
     function createController(scope = {}) {
-        const {
-            FORESIGHT_BUDGET,
-            FORESIGHT_SURFACE_BUDGET,
-            FORESIGHT_MAX_SCAN_COMMANDS,
-            FORESIGHT_SURFACE_MAX_SCAN_COMMANDS,
-            EVENT_COMMAND_CONTINUATION_CODES,
-            globalScope,
-            interpreterExecutionStack,
-        } = scope;
+        const { FORESIGHT_BUDGET, FORESIGHT_MAX_SCAN_COMMANDS, EVENT_COMMAND_CONTINUATION_CODES, globalScope, interpreterExecutionStack } = scope;
         const callScope = (name) => (...args) => scope[name](...args);
         const { getGameMessageForWindow, getGlobalGameMessage, integerIndex, cancelForesightTranslations, hasHookInChain, warn, attachGameMessageAddOrigin, attachChildInterpreterOriginContext, peekInterpreterExecutionContext, createInterpreterExecutionContext, createForesightFrameFromContext, createChildInterpreterDescriptor, getEventCommandNextIndex, cloneForesightFrames, cloneForesightFrame, readCommonEventIdFromCommand, getCommonEventData, getInterpreterForesightId, getInterpreterForesightListId, getInterpreterCommonEventId, getInterpreterCommonEventName, parseMessageOriginBlock, clearMessageOrigin, readMessageOriginText, getInterpreterOriginId } = Object.fromEntries(['getGameMessageForWindow', 'getGlobalGameMessage', 'integerIndex', 'cancelForesightTranslations', 'hasHookInChain', 'warn', 'attachGameMessageAddOrigin', 'attachChildInterpreterOriginContext', 'peekInterpreterExecutionContext', 'createInterpreterExecutionContext', 'createForesightFrameFromContext', 'createChildInterpreterDescriptor', 'getEventCommandNextIndex', 'cloneForesightFrames', 'cloneForesightFrame', 'readCommonEventIdFromCommand', 'getCommonEventData', 'getInterpreterForesightId', 'getInterpreterForesightListId', 'getInterpreterCommonEventId', 'getInterpreterCommonEventName', 'parseMessageOriginBlock', 'clearMessageOrigin', 'readMessageOriginText', 'getInterpreterOriginId'].map((name) => [name, callScope(name)]));
 
@@ -30,11 +22,9 @@
                 const module = (modules && modules.adapters && modules.adapters.foresight)
                     || (modules && modules['adapters.foresight']);
                 if (module && typeof module.createGameMessageForesight === 'function') {
-                    const budget = getForesightLookaheadBudget();
                     return module.createGameMessageForesight({
-                        budget,
-                        maxMessages: budget,
-                        maxScanCommands: getForesightMaxScanCommands(),
+                        budget: FORESIGHT_BUDGET,
+                        maxScanCommands: FORESIGHT_MAX_SCAN_COMMANDS,
                         settings: scope.settings,
                     });
                 }
@@ -42,33 +32,6 @@
                 warn('[GameMessage] Foresight scanner unavailable; lookahead disabled.', error);
             }
             return null;
-        }
-
-        function getForesightLookaheadBudget() {
-            return isDiagnosticsPerformanceModeEnabled()
-                ? positiveInteger(FORESIGHT_SURFACE_BUDGET, 10)
-                : positiveInteger(FORESIGHT_BUDGET, 30);
-        }
-
-        function getForesightMaxScanCommands() {
-            return isDiagnosticsPerformanceModeEnabled()
-                ? positiveInteger(FORESIGHT_SURFACE_MAX_SCAN_COMMANDS, 50)
-                : positiveInteger(FORESIGHT_MAX_SCAN_COMMANDS, 150);
-        }
-
-        function isDiagnosticsPerformanceModeEnabled() {
-            const settings = scope.settings && typeof scope.settings === 'object' ? scope.settings : {};
-            const diagnostics = settings.diagnostics && typeof settings.diagnostics === 'object'
-                ? settings.diagnostics
-                : null;
-            return !!(diagnostics
-                && Object.prototype.hasOwnProperty.call(diagnostics, 'performanceMode')
-                && diagnostics.performanceMode === true);
-        }
-
-        function positiveInteger(value, fallback) {
-            const numeric = Math.floor(Number(value));
-            return Number.isFinite(numeric) && numeric > 0 ? numeric : fallback;
         }
 
         function installGameInterpreterExecutionContextHook() {

@@ -11,7 +11,6 @@ var VERSION_CHECK_TIMEOUT_MS = 8000;
 var VERSION_CHECK_MAX_BYTES = 16 * 1024;
 var VERSION_CHECK_MAX_REDIRECTS = 5;
 var FORESIGHT_ACTION_DISPLAY_LIMIT = 150;
-var FORESIGHT_SURFACE_DISPLAY_LIMIT = 8;
 var RESERVED_LANE_MIN_CONCURRENCY = 3;
 // TODO: Replace this local reminder copy with policy-driven diagnostics once reserved lanes become user-configurable.
 var RESERVED_LANE_READY_MESSAGE = 'Concurrent streams >= 3: One of the concurrent requests will be reserved for the active Game Message.';

@@ -23,12 +23,7 @@
             const textRecords = Array.isArray(options.textRecords) ? options.textRecords : [];
             const usedRecords = new Set();
             const rawActions = scan && Array.isArray(scan.commandActions) ? scan.commandActions : [];
-            const surfaceOnly = options.surfaceOnly === true || (source && source.detailView === false);
-            const surfaceActions = surfaceOnly && !rawActions.length
-                ? createSurfaceMessageActions(textRecords)
-                : [];
-            const actionSource = rawActions.length ? rawActions : surfaceActions;
-            const actions = actionSource.slice(0, maxActions);
+            const actions = rawActions.slice(0, maxActions);
             const branchGroups = createFlatBranchGroups(actions);
             const pathStops = scan && Array.isArray(scan.pathStops) ? scan.pathStops : [];
             let nodes = actions.filter((action) => !branchGroups.childActions.has(action)).map((action, index) => createActionNode(action, {
@@ -46,8 +41,8 @@
             nodes = condensed.nodes;
             const scanLimit = positiveInteger(scan && scan.commandActionLimit, maxActions);
             const publishedTruncation = positiveInteger(scan && scan.commandActionsTruncated, 0);
-            const localTruncation = Math.max(0, actionSource.length - actions.length);
-            const model = {
+            const localTruncation = Math.max(0, rawActions.length - actions.length);
+            return {
                 messagesOnly: options.messagesOnly === true,
                 hasSnapshot: Boolean(source),
                 snapshotUpdatedAt: source && source.updatedAt ? source.updatedAt : null,
@@ -56,97 +51,13 @@
                 summary: source && source.summary && typeof source.summary === 'object'
                     ? Object.assign({}, source.summary)
                     : null,
-                actionLimit: surfaceOnly ? maxActions : Math.min(maxActions, scanLimit || maxActions),
+                actionLimit: Math.min(maxActions, scanLimit || maxActions),
                 actionCount: countActionNodes(nodes),
-                actionsAvailable: actionSource.length + publishedTruncation,
+                actionsAvailable: rawActions.length + publishedTruncation,
                 actionsTruncated: Math.max(publishedTruncation, localTruncation),
                 condensedActionCount: condensed.condensedActionCount,
                 nodes,
             };
-            if (surfaceOnly) model.surfaceOnly = true;
-            return model;
-        }
-
-    function createSurfaceMessageActions(records) {
-            return (Array.isArray(records) ? records : [])
-                .filter(isForesightSurfaceRecord)
-                .slice()
-                .sort(compareForesightSurfaceRecords)
-                .map(createSurfaceMessageAction);
-        }
-
-    function isForesightSurfaceRecord(record) {
-            const metadata = getRecordMetadata(record);
-            return metadata.foresight === true && metadata.foresightConsumed !== true;
-        }
-
-    function compareForesightSurfaceRecords(left, right) {
-            const leftMetadata = getRecordMetadata(left);
-            const rightMetadata = getRecordMetadata(right);
-            const indexDiff = compareNullableNumbers(
-                firstFiniteNumber(leftMetadata.foresightIndex, leftMetadata.messageStartIndex),
-                firstFiniteNumber(rightMetadata.foresightIndex, rightMetadata.messageStartIndex)
-            );
-            if (indexDiff) return indexDiff;
-            const priorityDiff = compareNullableNumbers(
-                firstFiniteNumber(rightMetadata.foresightPriority, rightMetadata.effectivePriority, rightMetadata.priority),
-                firstFiniteNumber(leftMetadata.foresightPriority, leftMetadata.effectivePriority, leftMetadata.priority)
-            );
-            if (priorityDiff) return priorityDiff;
-            return compareNullableNumbers(
-                firstFiniteNumber(left && left.updatedAt, left && left.seenAt),
-                firstFiniteNumber(right && right.updatedAt, right && right.seenAt)
-            );
-        }
-
-    function createSurfaceMessageAction(record) {
-            const metadata = getRecordMetadata(record);
-            const messageIndex = firstFiniteNumber(metadata.messageStartIndex, metadata.foresightIndex);
-            return {
-                index: messageIndex,
-                code: 101,
-                label: 'Show Text',
-                classification: 'linear',
-                native: true,
-                category: 'message',
-                scanBehavior: 'message',
-                action: 'message',
-                priorityDistance: firstFiniteNumber(metadata.foresightIndex),
-                branchDepth: 0,
-                branchPath: [],
-                listContext: {
-                    interpreterId: nonEmptyString(metadata.interpreterId),
-                    listId: nonEmptyString(metadata.listId) || nonEmptyString(metadata.interpreterId) || 'foresight',
-                },
-                budget: metadata.foresightBudget && typeof metadata.foresightBudget === 'object'
-                    ? cloneValue(metadata.foresightBudget, 0)
-                    : null,
-                consumedCommands: [],
-                routeCommandActions: [],
-                recordId: nonEmptyString(record && record.id),
-                translationRecordId: nonEmptyString(record && record.id),
-            };
-        }
-
-    function getRecordMetadata(record) {
-            return record && record.metadata && typeof record.metadata === 'object'
-                ? record.metadata
-                : {};
-        }
-
-    function firstFiniteNumber(...values) {
-            for (const value of values) {
-                const numeric = finiteNumber(value);
-                if (numeric !== null) return numeric;
-            }
-            return null;
-        }
-
-    function compareNullableNumbers(left, right) {
-            if (left === null && right === null) return 0;
-            if (left === null) return 1;
-            if (right === null) return -1;
-            return left - right;
         }
     
     function findLatestScan(scans) {

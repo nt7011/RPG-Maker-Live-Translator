@@ -198,6 +198,11 @@
                 openedOnce = true;
                 return true;
             }
+            if (isKnownClosedFromGuiState()) {
+                openedWindow = null;
+                markOpen(false);
+                return false;
+            }
             if (isClosedWindow(openedWindow)) {
                 openedWindow = null;
                 markOpen(false);

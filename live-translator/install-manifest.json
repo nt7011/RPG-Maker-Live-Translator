@@ -24,6 +24,7 @@
             "translator/providers/local-provider.js",
             "translator/providers/deepl-provider.js",
             "translator.js",
+            "runtime/gui-state.js",
             "runtime/diagnostics-policy.js",
             "hooks/window-text-scale.js",
             "hooks/window-registry-helpers.js",

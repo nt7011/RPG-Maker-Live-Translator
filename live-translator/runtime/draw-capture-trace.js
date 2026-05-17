@@ -27,12 +27,16 @@
 
     function createDrawCaptureTrace(options = {}) {
         const settings = readTraceSettings(options.settings || {});
+        const runtimeSettings = options.settings && typeof options.settings === 'object'
+            ? options.settings
+            : {};
         const events = [];
         let sequence = 0;
         let publishQueued = false;
         let enabled = settings.enabled;
 
         function record(stage, details = {}) {
+            if (!isEnabled()) return null;
             const source = details && typeof details === 'object' ? details : {};
             const rawText = firstString(source.rawText, source.text, source.visibleText, source.normalizedText);
             const visibleText = firstString(source.visibleText, source.normalizedText, rawText);
@@ -55,7 +59,6 @@
         }
 
         function shouldRecord(rawText, visibleText, source) {
-            if (!enabled) return false;
             if (source && source.force === true) return true;
             if (settings.recordAll) return true;
             const texts = [rawText, visibleText, firstString(source && source.normalizedText, '')]
@@ -84,6 +87,10 @@
             return enabled;
         }
 
+        function isEnabled() {
+            return enabled && isTraceDiagnosticsEnabled();
+        }
+
         function schedulePublish() {
             if (publishQueued) return;
             publishQueued = true;
@@ -94,18 +101,28 @@
         }
 
         function publish() {
+            if (!isTraceDiagnosticsEnabled()) {
+                events.length = 0;
+                sequence = 0;
+                try { delete globalScope.LiveTranslatorDrawCaptureTraceSnapshot; } catch (_) {
+                    try { globalScope.LiveTranslatorDrawCaptureTraceSnapshot = null; } catch (__) {}
+                }
+                return null;
+            }
             try {
                 globalScope.LiveTranslatorDrawCaptureTraceSnapshot = getSnapshot();
             } catch (_) {}
+            return globalScope.LiveTranslatorDrawCaptureTraceSnapshot || null;
         }
 
         function getSnapshot(optionsArg = {}) {
+            if (!isTraceDiagnosticsEnabled(optionsArg)) return null;
             const optionsObject = optionsArg && typeof optionsArg === 'object' ? optionsArg : {};
             const limit = positiveInteger(optionsObject.limit, settings.limit, 1, settings.limit);
             const list = events.slice(-limit).map((event) => sanitize(event, 3));
             return {
                 updatedAt: Date.now(),
-                enabled,
+                enabled: isEnabled(),
                 limit: settings.limit,
                 size: events.length,
                 sequence,
@@ -119,13 +136,83 @@
             };
         }
 
+        function getDiagnosticsPolicy(optionsArg = {}) {
+            const policy = globalScope.LiveTranslatorDiagnosticsPolicy;
+            if (policy && typeof policy.getSnapshotPolicy === 'function') {
+                return policy.getSnapshotPolicy(Object.assign({
+                    globalScope,
+                    settings: runtimeSettings,
+                }, optionsArg || {}));
+            }
+            return createFallbackDiagnosticsPolicy(optionsArg);
+        }
+
+        function createFallbackDiagnosticsPolicy(optionsArg = {}) {
+            const guiState = globalScope.LiveTranslatorGuiState;
+            const guiActive = !guiState || typeof guiState !== 'object'
+                ? true
+                : guiState.translatorOpen === true;
+            const diagnostics = runtimeSettings.diagnostics && typeof runtimeSettings.diagnostics === 'object'
+                ? runtimeSettings.diagnostics
+                : null;
+            const level = resolveFallbackLevel(diagnostics, optionsArg, guiActive);
+            const surface = guiActive && level !== 'none';
+            const detailView = surface && level === 'full';
+            return {
+                mode: surface ? level : 'none',
+                surface,
+                detailView,
+                full: detailView,
+                performanceMode: surface && level === 'performance',
+                none: !surface,
+            };
+        }
+
+        function resolveFallbackLevel(diagnostics, optionsArg = {}, guiActive = true) {
+            if (!guiActive || optionsArg.surface === false || optionsArg.enabled === false) return 'none';
+            const requested = normalizeFallbackLevel(optionsArg.mode || optionsArg.level || optionsArg.diagnosticsMode)
+                || normalizeFallbackLevel(diagnostics && (diagnostics.mode || diagnostics.level));
+            let level = requested
+                || (diagnostics && Object.prototype.hasOwnProperty.call(diagnostics, 'performanceMode')
+                    ? (diagnostics.performanceMode === true ? 'performance' : 'full')
+                    : '')
+                || (diagnostics && Object.prototype.hasOwnProperty.call(diagnostics, 'detailView')
+                    ? (diagnostics.detailView === true ? 'full' : 'performance')
+                    : (runtimeSettings.performanceMode === true ? 'performance' : 'full'));
+            if ((optionsArg.detailView === false || optionsArg.includeDetails === false) && level !== 'none') {
+                level = 'performance';
+            }
+            return level;
+        }
+
+        function normalizeFallbackLevel(value) {
+            const text = String(value || '').trim().toLowerCase();
+            if (!text) return '';
+            if (text === 'none' || text === 'off' || text === 'disabled' || text === 'closed') return 'none';
+            if (text === 'full' || text === 'detail' || text === 'details' || text === 'debug') return 'full';
+            if (text === 'performance'
+                || text === 'performancemode'
+                || text === 'performance-mode'
+                || text === 'surface'
+                || text === 'minimal'
+                || text === 'minimum') return 'performance';
+            return '';
+        }
+
+        function isTraceDiagnosticsEnabled(optionsArg = {}) {
+            const policy = getDiagnosticsPolicy(optionsArg);
+            return policy && policy.detailView === true;
+        }
+
         const api = {
             record,
             clear,
+            clearDiagnostics: clear,
             setEnabled,
             getSnapshot,
             snapshot: getSnapshot,
-            isEnabled: () => enabled,
+            publish,
+            isEnabled,
         };
 
         try { globalScope.LiveTranslatorDrawCaptureTrace = api; } catch (_) {}

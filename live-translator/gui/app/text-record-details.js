@@ -30,13 +30,13 @@ function createTextRecordItem(item, options = {}) {
         ? 'Foresight spoiler hidden'
         : (detailEnabled
             ? (options.active ? 'Hide text record details' : 'Show text record details')
-            : 'Performance mode enabled in settings.json');
+            : 'Detail view disabled in settings.json');
     if (censored) {
         button.disabled = true;
         button.setAttribute('aria-label', 'Foresight spoiler hidden');
     } else if (!detailEnabled) {
         button.setAttribute('aria-disabled', 'true');
-        button.setAttribute('aria-label', 'Performance mode enabled');
+        button.setAttribute('aria-label', 'Detail view disabled');
     } else {
         button.addEventListener('click', () => toggleTextRecordDetail(detailKey));
     }

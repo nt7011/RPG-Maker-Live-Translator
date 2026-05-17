@@ -36,9 +36,9 @@
                     scope.capacityExpiresAt = Date.now() + capacityRefreshMs;
                     scope.lastCapacityRefreshAt = Date.now();
                     scope.lastCapacityRefreshError = '';
-                    scope.translationDiagnostics.record('capacity.refreshed', {
+                    scope.translationDiagnostics.recordLazy('capacity.refreshed', () => ({
                         capacity: scope.providerCapacity,
-                    });
+                    }));
                     return scope.providerCapacity;
                 })
                 .catch((error) => {
@@ -47,10 +47,10 @@
                     scope.capacityExpiresAt = Date.now() + capacityRefreshMs;
                     scope.lastCapacityRefreshAt = Date.now();
                     scope.lastCapacityRefreshError = scope.translationDiagnostics.formatError(error);
-                    scope.translationDiagnostics.record('capacity.failed', {
+                    scope.translationDiagnostics.recordLazy('capacity.failed', () => ({
                         capacity: scope.providerCapacity,
                         error: scope.lastCapacityRefreshError,
-                    });
+                    }));
                     return scope.providerCapacity;
                 })
                 .finally(() => {

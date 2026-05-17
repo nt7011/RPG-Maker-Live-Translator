@@ -31,19 +31,14 @@ function normalizeHookFeedResult(result) {
     };
 }
 
-function readTextOrchestratorSnapshot(gameWindow, options = null) {
+function readTextOrchestratorSnapshot(gameWindow, options = {}) {
     if (!gameWindow) return null;
-    const hasOptions = options && typeof options === 'object' && Object.keys(options).length > 0;
-    if (!hasOptions) {
-        const published = gameWindow.LiveTranslatorTextOrchestratorSnapshot;
-        if (published && typeof published === 'object') return published;
-    }
     const orchestrator = gameWindow.LiveTranslatorTextOrchestrator;
     if (orchestrator && typeof orchestrator.getSnapshot === 'function') {
-        return hasOptions ? orchestrator.getSnapshot(options) : orchestrator.getSnapshot();
+        return orchestrator.getSnapshot(options);
     }
     if (orchestrator && typeof orchestrator.snapshot === 'function') {
-        return hasOptions ? orchestrator.snapshot(options) : orchestrator.snapshot();
+        return orchestrator.snapshot(options);
     }
     const published = gameWindow.LiveTranslatorTextOrchestratorSnapshot;
     if (published && typeof published === 'object') return published;
@@ -76,6 +71,9 @@ function normalizeTextOrchestratorSnapshot(snapshot) {
         summary: snapshot.summary && typeof snapshot.summary === 'object'
             ? Object.assign({}, snapshot.summary, summary)
             : summary,
+        diagnosticsMode: snapshot.diagnosticsMode ? String(snapshot.diagnosticsMode) : '',
+        performanceMode: snapshot.performanceMode === true,
+        detailView: snapshot.detailView === true,
         updatedAt: snapshot.updatedAt || null,
     };
 }

@@ -156,20 +156,58 @@ function shouldShowForesightSpoilers() {
     return getMonitorSettings().showForesightSpoilers === true;
 }
 
-function isDiagnosticsPerformanceModeEnabled() {
+function normalizeDiagnosticsMode(value) {
+    const text = String(value || '').trim().toLowerCase();
+    if (!text) return '';
+    if (text === 'none' || text === 'off' || text === 'disabled' || text === 'closed') return 'none';
+    if (text === 'full' || text === 'detail' || text === 'details' || text === 'debug') return 'full';
+    if (text === 'performance'
+        || text === 'performancemode'
+        || text === 'performance-mode'
+        || text === 'surface'
+        || text === 'minimal'
+        || text === 'minimum') return 'performance';
+    return '';
+}
+
+function getDiagnosticsMode() {
     const settings = getMonitorSettings();
     const diagnostics = normalizeSettingsObject(settings.diagnostics);
-    if (diagnostics && Object.prototype.hasOwnProperty.call(diagnostics, 'performanceMode')) {
-        return diagnostics.performanceMode === true;
+    if (diagnostics) {
+        const configured = normalizeDiagnosticsMode(diagnostics.mode || diagnostics.level);
+        if (configured) return configured;
+        if (Object.prototype.hasOwnProperty.call(diagnostics, 'performanceMode')) {
+            return diagnostics.performanceMode === true ? 'performance' : 'full';
+        }
+        if (Object.prototype.hasOwnProperty.call(diagnostics, 'detailView')) {
+            return diagnostics.detailView === true ? 'full' : 'performance';
+        }
     }
-    return false;
+    if (settings.performanceMode === true) return 'performance';
+    return 'full';
+}
+
+function isDiagnosticsSurfaceEnabled() {
+    return getDiagnosticsMode() !== 'none';
 }
 
 function isDiagnosticsDetailViewEnabled() {
-    return !isDiagnosticsPerformanceModeEnabled();
+    return getDiagnosticsMode() === 'full';
+}
+
+function isDiagnosticsPerformanceModeEnabled() {
+    return getDiagnosticsMode() === 'performance';
+}
+
+function getDiagnosticsSnapshotOptions() {
+    return {
+        mode: getDiagnosticsMode(),
+        detailView: isDiagnosticsDetailViewEnabled(),
+    };
 }
 
 function isDrawCaptureTraceEnabled() {
+    if (!isDiagnosticsDetailViewEnabled()) return false;
     const settings = getMonitorSettings();
     const traceSettings = normalizeSettingsObject(settings.drawCaptureTrace);
     if (traceSettings && traceSettings.enabled === false) return false;
@@ -260,27 +298,23 @@ function notifyGuiState(open) {
 function syncRuntimeDiagnosticsForGuiState(gameWindow, open) {
     const methods = open
         ? ['publish']
-        : ['clearDiagnostics', 'clearSnapshot'];
+        : ['clearDiagnostics', 'clearSnapshot', 'publish'];
     [
         gameWindow && gameWindow.LiveTranslatorTextOrchestrator,
         gameWindow && gameWindow.LiveTranslatorTranslationDiagnostics,
         gameWindow && gameWindow.LiveTranslatorForesightDiagnostics,
+        gameWindow && gameWindow.LiveTranslatorDrawCaptureTrace,
     ].forEach((api) => {
         if (!api || typeof api !== 'object') return;
         for (const method of methods) {
             if (typeof api[method] !== 'function') continue;
             try { api[method](); } catch (_) {}
-            break;
+            if (open) break;
         }
     });
 }
 
 function addLog(level, message) {
-    if (isDiagnosticsPerformanceModeEnabled()) {
-        state.logLines = [];
-        renderLogs();
-        return;
-    }
     const stamp = new Date().toLocaleTimeString();
     const normalized = String(message || '').replace(/\s+$/u, '');
     if (!normalized) return;
@@ -290,13 +324,6 @@ function addLog(level, message) {
 }
 
 function renderLogs() {
-    const panel = refs['runtime-log-panel'];
-    const performanceMode = isDiagnosticsPerformanceModeEnabled();
-    if (panel) panel.hidden = performanceMode;
-    if (performanceMode) {
-        state.logLines = [];
-        return;
-    }
     if (!refs.logs) return;
     const lines = state.logLines.slice(-80);
     refs.logs.textContent = lines.length ? lines.join('\n') : 'No log entries.';

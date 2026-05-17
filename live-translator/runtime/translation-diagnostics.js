@@ -48,6 +48,7 @@
 
         let eventSequence = 0;
         let publishQueued = false;
+        let capturedDiagnosticsDirty = false;
         const events = [];
         const pastJobs = [];
         const counters = {
@@ -72,26 +73,67 @@
                 return policy.getSnapshotPolicy(Object.assign({
                     globalScope,
                     settings,
-                }, optionsArg || {})) || { surface: true, detailView: true };
+                }, optionsArg || {})) || createFallbackSnapshotPolicy(optionsArg);
             }
+            return createFallbackSnapshotPolicy(optionsArg);
+        }
+
+        function createFallbackSnapshotPolicy(optionsArg = {}) {
             const guiState = globalScope.LiveTranslatorGuiState;
-            const surface = !guiState || typeof guiState !== 'object'
+            const guiActive = !guiState || typeof guiState !== 'object'
                 ? true
                 : guiState.translatorOpen === true;
             const diagnostics = settings.diagnostics && typeof settings.diagnostics === 'object'
                 ? settings.diagnostics
                 : null;
-            const performanceMode = diagnostics && Object.prototype.hasOwnProperty.call(diagnostics, 'performanceMode')
-                ? diagnostics.performanceMode === true
-                : false;
+            const level = resolveFallbackLevel(diagnostics, optionsArg, guiActive);
+            const surface = guiActive && level !== 'none';
+            const detailView = surface && level === 'full';
             return {
+                mode: surface ? level : 'none',
+                level: surface ? level : 'none',
                 surface,
-                detailView: surface
-                    && !performanceMode
-                    && optionsArg.detailView !== false
-                    && optionsArg.includeDetails !== false,
-                performanceMode,
+                detailView,
+                performanceMode: surface && level === 'performance',
+                full: surface && level === 'full',
+                none: !surface,
+                captureEvents: detailView,
+                captureHistories: detailView,
+                limits: level === 'performance'
+                    ? { foresightScans: 5, foresightMessages: 5, archivedItems: 40, detachedItems: 40, pastJobs: 20 }
+                    : { foresightScans: 0, foresightMessages: 0, archivedItems: 0, detachedItems: 0, pastJobs: 0 },
             };
+        }
+
+        function resolveFallbackLevel(diagnostics, optionsArg = {}, guiActive = true) {
+            if (!guiActive || optionsArg.surface === false || optionsArg.enabled === false) return 'none';
+            const requested = normalizeFallbackLevel(optionsArg.mode || optionsArg.level || optionsArg.diagnosticsMode)
+                || normalizeFallbackLevel(diagnostics && (diagnostics.mode || diagnostics.level));
+            let level = requested
+                || (diagnostics && Object.prototype.hasOwnProperty.call(diagnostics, 'performanceMode')
+                    ? (diagnostics.performanceMode === true ? 'performance' : 'full')
+                    : '')
+                || (diagnostics && Object.prototype.hasOwnProperty.call(diagnostics, 'detailView')
+                    ? (diagnostics.detailView === true ? 'full' : 'performance')
+                    : (settings.performanceMode === true ? 'performance' : 'full'));
+            if ((optionsArg.detailView === false || optionsArg.includeDetails === false) && level !== 'none') {
+                level = 'performance';
+            }
+            return level;
+        }
+
+        function normalizeFallbackLevel(value) {
+            const text = String(value || '').trim().toLowerCase();
+            if (!text) return '';
+            if (text === 'none' || text === 'off' || text === 'disabled' || text === 'closed') return 'none';
+            if (text === 'full' || text === 'detail' || text === 'details' || text === 'debug') return 'full';
+            if (text === 'performance'
+                || text === 'performancemode'
+                || text === 'performance-mode'
+                || text === 'surface'
+                || text === 'minimal'
+                || text === 'minimum') return 'performance';
+            return '';
         }
 
         function isSurfaceEnabled() {
@@ -132,7 +174,7 @@
                 return null;
             }
             if (!isDetailViewEnabled()) {
-                clearDetailDiagnostics();
+                schedulePublish();
                 return null;
             }
             const event = sanitize(Object.assign({
@@ -141,9 +183,28 @@
                 type: String(type || 'event'),
             }, details || {}), SANITIZE_DEPTH);
             events.push(event);
+            capturedDiagnosticsDirty = true;
             while (events.length > EVENT_LIMIT) events.shift();
             schedulePublish();
             return event;
+        }
+
+        function recordLazy(type, detailsFactory) {
+            if (!isSurfaceEnabled()) {
+                clearCapturedDiagnostics();
+                return null;
+            }
+            if (!isDetailViewEnabled()) {
+                schedulePublish();
+                return null;
+            }
+            let details = {};
+            try {
+                details = typeof detailsFactory === 'function' ? detailsFactory() : detailsFactory;
+            } catch (error) {
+                details = { error: formatError(error) };
+            }
+            return record(type, details && typeof details === 'object' ? details : {});
         }
 
         function increment(name, amount = 1) {
@@ -151,25 +212,16 @@
                 clearCapturedDiagnostics();
                 return;
             }
-            if (!isDetailViewEnabled()) {
-                clearDetailDiagnostics();
-                return;
-            }
             if (!Object.prototype.hasOwnProperty.call(counters, name)) counters[name] = 0;
             counters[name] += Number.isFinite(Number(amount)) ? Number(amount) : 1;
+            capturedDiagnosticsDirty = true;
             schedulePublish();
         }
 
         function schedulePublish() {
-            const policy = getSnapshotPolicy();
-            if (!policy.surface) {
+            if (!isSurfaceEnabled()) {
                 publishQueued = false;
                 clearCapturedDiagnostics();
-                return;
-            }
-            if (!policy.detailView) {
-                publishQueued = false;
-                clearDetailDiagnostics();
                 return;
             }
             if (publishQueued) return;
@@ -181,15 +233,15 @@
         }
 
         function publish() {
-            const policy = getSnapshotPolicy();
-            if (!policy.surface) {
+            if (!isSurfaceEnabled()) {
                 clearCapturedDiagnostics();
+                try { delete globalScope.LiveTranslatorTranslationDiagnosticsSnapshot; } catch (_) {
+                    try { globalScope.LiveTranslatorTranslationDiagnosticsSnapshot = null; } catch (__) {}
+                }
                 return null;
             }
-            const snapshot = getSnapshot();
-            if (!policy.detailView) return snapshot;
             try {
-                globalScope.LiveTranslatorTranslationDiagnosticsSnapshot = snapshot;
+                globalScope.LiveTranslatorTranslationDiagnosticsSnapshot = getSnapshot();
             } catch (_) {}
             return globalScope.LiveTranslatorTranslationDiagnosticsSnapshot || null;
         }
@@ -208,7 +260,7 @@
         }
 
         function getJobHistory(jobOrId, optionsArg = {}) {
-            if (optionsArg.detailView === false) return [];
+            if (optionsArg.detailView === false || optionsArg.captureHistories === false) return [];
             const jobId = typeof jobOrId === 'string'
                 ? jobOrId
                 : (jobOrId && jobOrId.id ? String(jobOrId.id) : '');
@@ -292,7 +344,7 @@
         }
 
         function snapshotJob(job, queuePosition = null, optionsArg = {}) {
-            const includeDetails = optionsArg.detailView !== false;
+            const includeDetails = optionsArg.detailView !== false && optionsArg.captureHistories !== false;
             const activeSubscribers = getActiveSubscribers(job);
             const terminalAt = job.terminalAt || job.completedAt || job.failedAt || job.canceledAt || null;
             return {
@@ -345,13 +397,14 @@
             });
             remembered.history = policy.detailView ? getJobHistory(job.id, policy) : [];
             pastJobs.push(remembered);
-            while (pastJobs.length > PAST_JOB_LIMIT) pastJobs.shift();
+            capturedDiagnosticsDirty = true;
+            while (pastJobs.length > getPastJobRetentionLimit(policy)) pastJobs.shift();
             schedulePublish();
             return remembered;
         }
 
         function snapshotPastJob(job, optionsArg = {}) {
-            const includeDetails = optionsArg.detailView !== false;
+            const includeDetails = optionsArg.detailView !== false && optionsArg.captureHistories !== false;
             if (includeDetails) return Object.assign({}, job, {
                 subscriberRecords: Array.isArray(job.subscriberRecords) ? job.subscriberRecords.slice() : [],
                 metadata: job.metadata && typeof job.metadata === 'object' ? Object.assign({}, job.metadata) : {},
@@ -395,12 +448,10 @@
         function getSnapshot(optionsArg = {}) {
             const optionsObject = optionsArg && typeof optionsArg === 'object' ? optionsArg : {};
             const policy = getSnapshotPolicy(optionsObject);
-            if (!policy.detailView) {
-                clearDetailDiagnostics();
-                trimPastJobDetails();
-            }
+            if (!policy.captureEvents) events.length = 0;
             const state = getState() || {};
             const limit = Math.max(1, Math.min(JOB_LIMIT, Number(optionsObject.jobLimit) || JOB_LIMIT));
+            const pastLimit = Math.max(1, Math.min(limit, getPastJobRetentionLimit(policy)));
             const jobs = Array.isArray(state.jobs) ? state.jobs : [];
             const queuedForDispatch = getSortedQueuedJobs(state.queuedJobs);
             const runningJobs = jobs
@@ -451,57 +502,40 @@
                 jobs: {
                     queued: queuedForDispatch.slice(0, limit).map((job, index) => snapshotJob(job, index + 1, policy)),
                     running: runningJobs.slice(0, limit).map((job) => snapshotJob(job, null, policy)),
-                    past: pastJobs.slice(-limit).reverse().map((job) => snapshotPastJob(job, policy)),
+                    past: pastJobs.slice(-pastLimit).reverse().map((job) => snapshotPastJob(job, policy)),
                 },
                 reservedLanes,
                 priorityBuckets: breakdowns.priorityBuckets,
                 hooks: breakdowns.hooks,
                 counters: Object.assign({}, counters),
-                events: policy.detailView ? events.slice(-EVENT_LIMIT) : [],
+                events: policy.captureEvents ? events.slice(-EVENT_LIMIT) : [],
+                diagnosticsMode: policy.mode || (policy.detailView ? 'full' : 'performance'),
+                performanceMode: policy.performanceMode === true,
                 detailView: policy.detailView === true,
             };
         }
 
+        function getPastJobRetentionLimit(policy) {
+            const configured = Number(policy && policy.limits && policy.limits.pastJobs);
+            if (Number.isFinite(configured) && configured > 0) return Math.max(1, Math.min(PAST_JOB_LIMIT, Math.round(configured)));
+            return PAST_JOB_LIMIT;
+        }
+
         function clearCapturedDiagnostics() {
+            if (!capturedDiagnosticsDirty && eventSequence === 0 && !events.length && !pastJobs.length) return false;
             events.length = 0;
             pastJobs.length = 0;
             eventSequence = 0;
-            resetCounters();
-            clearPublishedSnapshot();
-        }
-
-        function clearDetailDiagnostics() {
-            events.length = 0;
-            eventSequence = 0;
-            resetCounters();
-            clearPublishedSnapshot();
-        }
-
-        function trimPastJobDetails() {
-            pastJobs.forEach((job) => {
-                if (!job || typeof job !== 'object') return;
-                job.metadata = {};
-                job.history = [];
-                if (Array.isArray(job.subscriberRecords)) {
-                    job.subscriberRecords = job.subscriberRecords.slice(0, 12);
-                }
-            });
-        }
-
-        function resetCounters() {
             Object.keys(counters).forEach((key) => {
                 counters[key] = 0;
             });
-        }
-
-        function clearPublishedSnapshot() {
-            try { delete globalScope.LiveTranslatorTranslationDiagnosticsSnapshot; } catch (_) {
-                try { globalScope.LiveTranslatorTranslationDiagnosticsSnapshot = null; } catch (__) {}
-            }
+            capturedDiagnosticsDirty = false;
+            return true;
         }
 
         const api = {
             record,
+            recordLazy,
             increment,
             schedulePublish,
             publish,

@@ -110,17 +110,47 @@
         }
     }
 
+    function validateDiagnosticsModeSetting(raw, path, logger) {
+        if (raw === undefined || raw === null || raw === '') return;
+        if (typeof raw !== 'string') {
+            logger.warn(`[LiveTranslator][Config] settings.json "${path}" should be one of: none, performance, full.`);
+            return;
+        }
+        const normalized = raw.trim().toLowerCase();
+        if (!['none', 'performance', 'performancemode', 'performance-mode', 'surface', 'minimal', 'minimum', 'full', 'detail', 'details', 'debug'].includes(normalized)) {
+            logger.warn(`[LiveTranslator][Config] settings.json "${path}" should be one of: none, performance, full.`);
+        }
+    }
+
+    function validatePositiveIntegerSetting(raw, path, logger) {
+        if (raw === undefined || raw === null || raw === '') return;
+        const numeric = Number(raw);
+        if (!Number.isInteger(numeric) || numeric <= 0) {
+            logger.warn(`[LiveTranslator][Config] settings.json "${path}" should be a positive integer.`);
+        }
+    }
+
+    function validateDiagnosticsSettings(settings, logger) {
+        const diagnostics = settings && settings.diagnostics;
+        if (!diagnostics || typeof diagnostics !== 'object') return;
+        validateDiagnosticsModeSetting(diagnostics.mode, 'diagnostics.mode', logger);
+        validateDiagnosticsModeSetting(diagnostics.level, 'diagnostics.level', logger);
+        validateBooleanSetting(diagnostics.performanceMode, 'diagnostics.performanceMode', logger);
+
+        const limits = diagnostics.performanceLimits || diagnostics.limits;
+        if (!limits || typeof limits !== 'object') return;
+        ['foresightScans', 'foresightMessages', 'archivedItems', 'detachedItems', 'pastJobs'].forEach((key) => {
+            validatePositiveIntegerSetting(limits[key], `diagnostics.performanceLimits.${key}`, logger);
+        });
+    }
+
     function validateTextScaleSettings(settings, logger) {
         if (!settings || typeof settings !== 'object') return;
         validateBooleanSetting(settings.checkUpdates, 'checkUpdates', logger);
         validateBooleanSetting(settings.enableForesight, 'enableForesight', logger);
         validateBooleanSetting(settings.showForesightSpoilers, 'showForesightSpoilers', logger);
         validateTextScaleSetting(settings.textScaleOthers, 'textScaleOthers', logger);
-
-        const diagnostics = settings.diagnostics;
-        if (diagnostics && typeof diagnostics === 'object') {
-            validateBooleanSetting(diagnostics.performanceMode, 'diagnostics.performanceMode', logger);
-        }
+        validateDiagnosticsSettings(settings, logger);
 
         const gameMessage = settings.gameMessage;
         if (!gameMessage || typeof gameMessage !== 'object') return;

@@ -30,12 +30,12 @@
             scope.translationDiagnostics.increment('streamDeltas');
             if (!job.lastDeltaEventAt || job.lastDeltaAt - job.lastDeltaEventAt >= 1000) {
                 job.lastDeltaEventAt = job.lastDeltaAt;
-                scope.translationDiagnostics.record('stream.delta', {
+                scope.translationDiagnostics.recordLazy('stream.delta', () => ({
                     jobId: job.id,
                     hook: scope.translationDiagnostics.getJobHook(job),
                     partialLength: job.lastPartialLength,
                     deltaCount: job.deltaCount,
-                });
+                }));
             } else {
                 scope.translationDiagnostics.schedulePublish();
             }
@@ -59,7 +59,7 @@
                 if (subscriber.active) subscriber.status = 'running';
             });
             scope.translationDiagnostics.increment('dispatched');
-            scope.translationDiagnostics.record('job.dispatched', {
+            scope.translationDiagnostics.recordLazy('job.dispatched', () => ({
                 jobId: job.id,
                 hook: scope.translationDiagnostics.getJobHook(job),
                 priority: job.effectivePriority,
@@ -68,14 +68,14 @@
                 capacity: scope.providerCapacity,
                 running: scope.activeCount,
                 textPreview: preview(job.key, 72),
-            });
+            }));
 
             runProviderWithRetries(job, controller ? controller.signal : undefined)
                 .then((translated) => {
                     finalizeProviderSuccess(job, translated);
                     job.status = 'completed';
                     scope.translationDiagnostics.increment('completed');
-                    scope.translationDiagnostics.record('job.completed', {
+                    scope.translationDiagnostics.recordLazy('job.completed', () => ({
                         jobId: job.id,
                         hook: scope.translationDiagnostics.getJobHook(job),
                         priority: job.effectivePriority,
@@ -83,7 +83,7 @@
                         subscribers: scope.translationDiagnostics.getActiveSubscribers(job).length,
                         elapsedMs: Date.now() - (job.startedAt || Date.now()),
                         textPreview: preview(job.key, 72),
-                    });
+                    }));
                     scope.translationDiagnostics.rememberJob(job, 'completed');
                     job.subscribers.forEach((subscriber) => {
                         settleSubscriber(subscriber, 'resolve', translated);
@@ -93,7 +93,7 @@
                     job.status = isAbortErrorLike(error) ? 'canceled' : 'failed';
                     job.lastError = error;
                     if (job.status === 'failed') scope.translationDiagnostics.increment('failed');
-                    scope.translationDiagnostics.record(`job.${job.status}`, {
+                    scope.translationDiagnostics.recordLazy(`job.${job.status}`, () => ({
                         jobId: job.id,
                         hook: scope.translationDiagnostics.getJobHook(job),
                         priority: job.effectivePriority,
@@ -101,7 +101,7 @@
                         elapsedMs: Date.now() - (job.startedAt || Date.now()),
                         error: scope.translationDiagnostics.formatError(error),
                         textPreview: preview(job.key, 72),
-                    });
+                    }));
                     scope.translationDiagnostics.rememberJob(job, job.status, {
                         error: scope.translationDiagnostics.formatError(error),
                     });
@@ -153,13 +153,13 @@
                     job.lastRetryAt = Date.now();
                     job.nextRetryDelayMs = waitMs;
                     scope.translationDiagnostics.increment('retries');
-                    scope.translationDiagnostics.record('job.retry', {
+                    scope.translationDiagnostics.recordLazy('job.retry', () => ({
                         jobId: job.id,
                         hook: scope.translationDiagnostics.getJobHook(job),
                         attempt,
                         retryInMs: waitMs,
                         error: scope.translationDiagnostics.formatError(error),
-                    });
+                    }));
                     logger.warn(`[TranslationService] ${job.id} attempt ${attempt} failed; retrying in ${waitMs}ms.`, error);
                     await waitForRetry(waitMs, signal);
                 }

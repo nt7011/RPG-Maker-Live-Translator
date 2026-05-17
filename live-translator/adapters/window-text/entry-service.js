@@ -142,8 +142,18 @@
                 return '';
             }
     
+    function isDrawCaptureTraceEnabled() {
+                if (!drawCaptureTrace || typeof drawCaptureTrace.record !== 'function') return false;
+                try {
+                    return typeof drawCaptureTrace.isEnabled !== 'function'
+                        || drawCaptureTrace.isEnabled() !== false;
+                } catch (_) {
+                    return false;
+                }
+            }
+
     function recordDrawTrace(stage, rawText, details = {}) {
-                if (!drawCaptureTrace || typeof drawCaptureTrace.record !== 'function') return null;
+                if (!isDrawCaptureTraceEnabled()) return null;
                 try {
                     return drawCaptureTrace.record(stage, Object.assign({
                         adapter: ADAPTER_ID,
@@ -155,6 +165,7 @@
             }
     
     function windowTraceDetails(windowInstance, methodName, rawText, x, y, extra = {}) {
+                if (!isDrawCaptureTraceEnabled()) return null;
                 const windowData = getRegisteredWindowData(windowInstance);
                 const contents = windowInstance && windowInstance.contents ? windowInstance.contents : null;
                 const visibleText = safeStripRpgmEscapes(String(rawText ?? ''));
@@ -260,7 +271,7 @@
                 };
             }
     
-        return { requestEntryTranslation, observeEntry, syncEntryFromObservedItem, getEntryStatus, isEntryActive, isEntryRequestActive, isEntryCompleted, firstNonEmptyString, recordDrawTrace, windowTraceDetails, getRegisteredWindowData, markEntryObservedInRefresh, safeStripRpgmEscapes, describeWindowScreenState, buildOrchestratorPayload };
+        return { requestEntryTranslation, observeEntry, syncEntryFromObservedItem, getEntryStatus, isEntryActive, isEntryRequestActive, isEntryCompleted, firstNonEmptyString, isDrawCaptureTraceEnabled, recordDrawTrace, windowTraceDetails, getRegisteredWindowData, markEntryObservedInRefresh, safeStripRpgmEscapes, describeWindowScreenState, buildOrchestratorPayload };
     }
     
     defineRuntimeModule('adapters.windowTextEntryService', { create: createEntryServiceController });

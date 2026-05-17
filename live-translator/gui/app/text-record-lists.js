@@ -303,7 +303,7 @@ function createForesightTranslationPill(item) {
     if (item.id) button.dataset.recordId = item.id;
     button.title = censored
         ? 'Foresight spoiler hidden'
-        : (detailEnabled ? 'Show text record details' : 'Performance mode enabled in settings.json');
+        : (detailEnabled ? 'Show text record details' : 'Detail view disabled in settings.json');
     if (censored) {
         button.disabled = true;
         button.setAttribute('aria-label', 'Foresight spoiler hidden');
@@ -318,7 +318,7 @@ function createForesightTranslationPill(item) {
         });
     } else {
         button.setAttribute('aria-disabled', 'true');
-        button.setAttribute('aria-label', 'Performance mode enabled');
+        button.setAttribute('aria-label', 'Detail view disabled');
     }
 
     const content = document.createElement('span');

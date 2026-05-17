@@ -49,9 +49,7 @@
             clearElement(scroll);
             let hasRenderedTree = false;
             if (!model.nodes.length) {
-                scroll.appendChild(createEmpty(doc, model.surfaceOnly === true
-                    ? 'No foresight messages recorded.'
-                    : 'No command actions recorded.'));
+                scroll.appendChild(createEmpty(doc, 'No command actions recorded.'));
             } else {
                 const list = doc.createElement('ol');
                 list.className = 'foresight-tree-list';

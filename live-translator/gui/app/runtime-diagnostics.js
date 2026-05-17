@@ -24,6 +24,8 @@ function normalizeDiagnosticsSnapshot(snapshot) {
             : [],
         counters: source.counters && typeof source.counters === 'object' ? Object.assign({}, source.counters) : {},
         events: Array.isArray(source.events) ? source.events.map(normalizeDiagnosticEvent) : [],
+        diagnosticsMode: source.diagnosticsMode ? String(source.diagnosticsMode) : (source.detailView === true ? 'full' : 'performance'),
+        performanceMode: source.performanceMode === true,
         detailView: source.detailView === true,
     };
 }
@@ -80,6 +82,8 @@ function normalizeForesightSnapshot(snapshot) {
         recent: Array.isArray(snapshot.recent)
             ? snapshot.recent.map(normalizeForesightScan)
             : [],
+        diagnosticsMode: snapshot.diagnosticsMode ? String(snapshot.diagnosticsMode) : (snapshot.detailView === true ? 'full' : 'performance'),
+        performanceMode: snapshot.performanceMode === true,
         detailView: snapshot.detailView === true,
     };
 }

@@ -78,6 +78,10 @@
     
     function createScanDiagnostics(interpreterId, startIndex, budget, options = {}) {
             const captureCommandActions = options.captureCommandActions !== false;
+            const captureBlockDiagnostics = options.captureBlockDiagnostics === true;
+            const commandActionMessageLimit = captureCommandActions
+                ? positiveInteger(options.commandActionMessageLimit, 0)
+                : 0;
             return {
                 interpreterId: interpreterId || '',
                 status: 'scanned',
@@ -101,6 +105,11 @@
                 routeBarrierReason: '',
                 commandActions: captureCommandActions ? [] : null,
                 captureCommandActions,
+                captureBlockDiagnostics,
+                commandActionMessageLimit,
+                captureCommandActionPreview: commandActionMessageLimit > 0,
+                commandActionMessagesCaptured: 0,
+                commandActionMessageLimitReached: false,
                 commandActionLimit: DIAGNOSTIC_ACTION_LIMIT,
                 commandActionsTruncated: 0,
                 pathStops: [],
@@ -215,6 +224,15 @@
             return diagnostics && diagnostics.captureCommandActions === false
                 ? []
                 : createConsumedEventCommands(list, startIndex, nextIndex);
+        }
+
+    function createCommandActionBudgetSnapshot(diagnostics, budget) {
+            return diagnostics
+                && diagnostics.captureCommandActions !== false
+                && Array.isArray(diagnostics.commandActions)
+                && diagnostics.commandActions.length < DIAGNOSTIC_ACTION_LIMIT
+                ? createBudgetSnapshot(budget)
+                : null;
         }
 
     const queuedPathListIds = typeof WeakMap !== 'undefined' ? new WeakMap() : null;
@@ -534,13 +552,13 @@
     
                 if (metadata.scanBehavior === 'frame-end') {
                     diagnostics.scannedCommands += 1;
-                    recordCommandAction(diagnostics, path, {
+                    recordCommandAction(diagnostics, path, () => ({
                         index,
                         metadata,
                         action: 'frame-end',
                         stopReason: 'event-end',
                         listContext: createFrameListContext(frame),
-                    });
+                    }));
                     frame.index += 1;
                     index = frame.index;
                     const finished = finishScanFrame(path);
@@ -556,33 +574,42 @@
                     const block = parseMessageCommandBlock(frame.list, index, frame.interpreterId);
                     if (!block || !block.rawText.trim()) {
                         diagnostics.scannedCommands += 1;
-                        recordCommandAction(diagnostics, path, {
+                        recordCommandAction(diagnostics, path, () => ({
                             index,
                             metadata,
                             action: 'barrier',
                             stopReason: 'empty-message',
                             listContext: createFrameListContext(frame),
-                        });
+                        }));
                         return stopScanPath(path, diagnostics, 'empty-message', index, metadata);
                     }
                     attachFrameContextToBlock(block, frame);
                     attachPathContextToBlock(block, path, diagnostics);
-                    const budgetBefore = createBudgetSnapshot(path.budget);
+                    const budgetBefore = createCommandActionBudgetSnapshot(diagnostics, path.budget);
                     spendBudget(path.budget, MESSAGE_BUDGET_COST);
                     diagnostics.budget = createBudgetSnapshot(path.budget);
                     diagnostics.scannedCommands += Math.max(1, block.nextIndex - index);
                     diagnostics.blocks += 1;
-                    recordCommandAction(diagnostics, path, {
-                        index,
-                        metadata,
-                        action: 'message',
-                        budget: createActionBudgetSnapshot(budgetBefore, diagnostics.budget, MESSAGE_BUDGET_COST),
-                        listContext: createFrameListContext(frame),
-                        consumedCommands: createConsumedCommandsForDiagnostics(diagnostics, frame.list, index, block.nextIndex),
-                    });
+                    recordCommandAction(diagnostics, path, () => {
+                        const action = {
+                            index,
+                            metadata,
+                            action: 'message',
+                            budget: createActionBudgetSnapshot(budgetBefore, diagnostics.budget, MESSAGE_BUDGET_COST),
+                            consumedCommands: createConsumedCommandsForDiagnostics(diagnostics, frame.list, index, block.nextIndex),
+                        };
+                        // listContext is only needed for the expanded command
+                        // tree. Omitting it keeps performance preview capture
+                        // clear of heavier frame diagnostics helpers.
+                        if (diagnostics.captureCommandActionPreview !== true) {
+                            action.listContext = createFrameListContext(frame);
+                        }
+                        return action;
+                    }, { previewKind: 'message' });
                     block.foresightBudget = createBudgetSnapshot(path.budget);
-                    const blockDiagnostics = createBlockDiagnostics(diagnostics, block);
-                    if (blockDiagnostics) block.foresightDiagnostics = blockDiagnostics;
+                    if (diagnostics.captureBlockDiagnostics) {
+                        block.foresightDiagnostics = createBlockDiagnostics(diagnostics, block);
+                    }
                     blocks.push(block);
                     path.messageDistance += 1;
                     frame.index = block.nextIndex;
@@ -602,7 +629,7 @@
                         const consumed = Math.max(1, nested.nextIndex - index);
                         diagnostics.scannedCommands += consumed;
                         diagnostics.advancedCommands += consumed;
-                        recordCommandAction(diagnostics, path, {
+                        recordCommandAction(diagnostics, path, () => ({
                             index,
                             metadata: nested.metadata,
                             action: 'nested-list',
@@ -610,8 +637,14 @@
                             nestedList: nested.nestedList,
                             nestedLists: nested.nestedLists,
                             consumedCommands: nested.consumedCommands || createConsumedCommandsForDiagnostics(diagnostics, frame.list, index, nested.nextIndex),
-                        });
-                        recordTransparentCommandDiagnostics(diagnostics, code, nested.metadata);
+                        }));
+                        incrementCodeCount(diagnostics.transparentCommands, code);
+                        diagnostics.transparentCommandLabels[String(code)] = nested.metadata.label;
+                        if (hasStalenessRisk(nested.metadata)) {
+                            diagnostics.staleRiskCommands += 1;
+                            incrementCodeCount(diagnostics.staleRiskCommandCounts, code);
+                            diagnostics.staleRiskCommandLabels[String(code)] = nested.metadata.label;
+                        }
                         frame.index = nested.nextIndex;
                         index = frame.index;
                         const returnGuardId = createReturnGuardId();
@@ -622,7 +655,7 @@
                         return { requeue: true, index: getPathIndex(path) };
                     }
                     diagnostics.scannedCommands += 1;
-                    recordCommandAction(diagnostics, path, {
+                    recordCommandAction(diagnostics, path, () => ({
                         index,
                         metadata,
                         action: 'barrier',
@@ -631,7 +664,7 @@
                         nestedList: nested.nestedList || null,
                         nestedLists: nested.nestedLists,
                         consumedCommands: nested.consumedCommands || createConsumedCommandsForDiagnostics(diagnostics, frame.list, index, index + 1),
-                    });
+                    }));
                     return stopScanPath(path, diagnostics, nested.stopReason || 'nested-list-unavailable', index, metadata);
                 }
     
@@ -640,8 +673,14 @@
                     const consumed = Math.max(1, transparentRead.nextIndex - index);
                     diagnostics.scannedCommands += consumed;
                     diagnostics.advancedCommands += consumed;
-                    recordTransparentCommandDiagnostics(diagnostics, code, transparentRead.metadata);
-                    recordCommandAction(diagnostics, path, {
+                    incrementCodeCount(diagnostics.transparentCommands, code);
+                    diagnostics.transparentCommandLabels[String(code)] = transparentRead.metadata.label;
+                    if (hasStalenessRisk(transparentRead.metadata)) {
+                        diagnostics.staleRiskCommands += 1;
+                        incrementCodeCount(diagnostics.staleRiskCommandCounts, code);
+                        diagnostics.staleRiskCommandLabels[String(code)] = transparentRead.metadata.label;
+                    }
+                    recordCommandAction(diagnostics, path, () => ({
                         index,
                         metadata: transparentRead.metadata,
                         action: transparentRead.kind === 'movement-route'
@@ -652,7 +691,7 @@
                         nestedLists: transparentRead.nestedLists,
                         consumedCommands: transparentRead.consumedCommands || createConsumedCommandsForDiagnostics(diagnostics, frame.list, index, transparentRead.nextIndex),
                         routeCommandActions: transparentRead.routeCommandActions || [],
-                    });
+                    }));
                     if (transparentRead.kind === 'movement-route') diagnostics.routeCommands += 1;
                     frame.index = transparentRead.nextIndex;
                     index = frame.index;
@@ -672,8 +711,8 @@
                 diagnostics.routeBarrierReason = transparentRead.routeBarrierReason || '';
                 diagnostics.routeBarrierLabel = transparentRead.routeBarrierLabel || '';
                 if (diagnostics.routeBarrierCode !== null) diagnostics.routeBarriers += 1;
-                const budgetBefore = createBudgetSnapshot(path.budget);
-                recordCommandAction(diagnostics, path, {
+                const budgetBefore = createCommandActionBudgetSnapshot(diagnostics, path.budget);
+                recordCommandAction(diagnostics, path, () => ({
                     index,
                     metadata,
                     action: 'barrier',
@@ -684,7 +723,7 @@
                     nestedLists: transparentRead.nestedLists,
                     consumedCommands: transparentRead.consumedCommands || createConsumedCommandsForDiagnostics(diagnostics, frame.list, index, index + 1),
                     routeCommandActions: transparentRead.routeCommandActions || [],
-                });
+                }));
                 return stopScanPath(path, diagnostics, transparentRead.stopReason || 'barrier-command', index, metadata);
             }
     
@@ -692,38 +731,27 @@
             if (blocks.length >= maxMessages) return stopScanPath(path, diagnostics, 'message-limit', index);
             return stopScanPath(path, diagnostics, 'scan-limit', index);
         }
-
-    function recordTransparentCommandDiagnostics(diagnostics, code, metadata) {
-            if (!diagnostics || diagnostics.captureCommandActions === false) return;
-            incrementCodeCount(diagnostics.transparentCommands, code);
-            diagnostics.transparentCommandLabels[String(code)] = metadata && metadata.label ? metadata.label : '';
-            if (hasStalenessRisk(metadata)) {
-                diagnostics.staleRiskCommands += 1;
-                incrementCodeCount(diagnostics.staleRiskCommandCounts, code);
-                diagnostics.staleRiskCommandLabels[String(code)] = metadata.label;
-            }
-        }
     
     function scanBranchCommand(path, diagnostics, frame, index, metadata) {
             if (path.branchDepth >= MAX_BRANCH_DEPTH) {
                 diagnostics.scannedCommands += 1;
-                recordCommandAction(diagnostics, path, {
+                recordCommandAction(diagnostics, path, () => ({
                     index,
                     metadata,
                     action: 'barrier',
                     stopReason: 'branch-depth-limit',
                     listContext: createFrameListContext(frame),
                     consumedCommands: createConsumedCommandsForDiagnostics(diagnostics, frame.list, index, index + 1),
-                });
+                }));
                 return stopScanPath(path, diagnostics, 'branch-depth-limit', index, metadata);
             }
     
             const branchRead = readBranchCommand(frame.list, index, frame.expectedIndent, metadata);
-            const budgetBefore = createBudgetSnapshot(path.budget);
+            const budgetBefore = createCommandActionBudgetSnapshot(diagnostics, path.budget);
             diagnostics.scannedCommands += 1;
-    
+
             if (!branchRead.transparent) {
-                recordCommandAction(diagnostics, path, {
+                recordCommandAction(diagnostics, path, () => ({
                     index,
                     metadata,
                     action: branchRead.stopReason === 'control-flow-target' ? 'control-flow' : 'barrier',
@@ -733,30 +761,29 @@
                     branches: branchRead.branches || [],
                     controlFlowTarget: branchRead.controlFlowTarget,
                     consumedCommands: createConsumedCommandsForDiagnostics(diagnostics, frame.list, index, index + 1),
-                });
+                }));
                 return stopScanPath(path, diagnostics, branchRead.stopReason, index, metadata, {
                     controlFlowTarget: branchRead.controlFlowTarget,
                 });
             }
     
             const allocations = splitBudgetAcrossBranches(path.budget && path.budget.remaining, branchRead.targets.length);
-            const branches = branchRead.targets.map((target, branchIndex) => ({
-                label: target.label,
-                startIndex: target.startIndex,
-                endIndex: target.endIndex,
-                joinIndex: target.joinIndex,
-                budget: createBranchBudgetSnapshot(path.budget, allocations[branchIndex] || 0, branchIndex, branchRead.targets.length),
-                actions: [],
-            }));
-            recordCommandAction(diagnostics, path, {
+            recordCommandAction(diagnostics, path, () => ({
                 index,
                 metadata,
                 action: 'branch',
                 budget: createActionBudgetSnapshot(budgetBefore, budgetBefore, 0),
                 listContext: createFrameListContext(frame),
-                branches,
+                branches: branchRead.targets.map((target, branchIndex) => ({
+                    label: target.label,
+                    startIndex: target.startIndex,
+                    endIndex: target.endIndex,
+                    joinIndex: target.joinIndex,
+                    budget: createBranchBudgetSnapshot(path.budget, allocations[branchIndex] || 0, branchIndex, branchRead.targets.length),
+                    actions: [],
+                })),
                 consumedCommands: createConsumedCommandsForDiagnostics(diagnostics, frame.list, index, index + 1),
-            });
+            }));
     
             const newPaths = [];
             branchRead.targets.forEach((target, branchIndex) => {

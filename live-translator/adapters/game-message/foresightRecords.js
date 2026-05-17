@@ -80,7 +80,7 @@
                 messageNextIndex: Number.isFinite(Number(context.messageNextIndex)) ? Number(context.messageNextIndex) : null,
             };
             if (context.diagnostics && typeof context.diagnostics === 'object') {
-                if (isForesightDetailDiagnosticsEnabled()) {
+                if (shouldAttachForesightDiagnosticsMetadata()) {
                     metadata.foresightDiagnostics = Object.assign({}, context.diagnostics);
                 }
             }
@@ -191,8 +191,15 @@
             return Math.abs(hash).toString(36) || '0';
         }
 
-        function isForesightDetailDiagnosticsEnabled() {
+        function shouldAttachForesightDiagnosticsMetadata() {
             const policy = globalScope.LiveTranslatorDiagnosticsPolicy;
+            if (policy && typeof policy.getSnapshotPolicy === 'function') {
+                const snapshotPolicy = policy.getSnapshotPolicy({
+                    globalScope,
+                    settings: scope.settings || {},
+                });
+                return snapshotPolicy && snapshotPolicy.captureForesightMetadata === true;
+            }
             if (policy && typeof policy.isDetailViewEnabled === 'function') {
                 return policy.isDetailViewEnabled({
                     globalScope,
@@ -205,6 +212,9 @@
                 : null;
             if (diagnostics && Object.prototype.hasOwnProperty.call(diagnostics, 'performanceMode')) {
                 return diagnostics.performanceMode !== true;
+            }
+            if (diagnostics && Object.prototype.hasOwnProperty.call(diagnostics, 'detailView')) {
+                return diagnostics.detailView === true;
             }
             return true;
         }

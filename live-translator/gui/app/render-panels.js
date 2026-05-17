@@ -26,24 +26,17 @@ function refreshRuntimeFeed() {
                 ? gameWindow.LiveTranslatorHookInstallResults
                 : []);
         state.hookResults = results.map(normalizeHookFeedResult);
-        const detailEnabled = isDiagnosticsDetailViewEnabled();
-        const snapshotOptions = detailEnabled ? null : { detailView: false };
-        const textSnapshot = snapshotOptions
-            ? readTextOrchestratorSnapshot(gameWindow, snapshotOptions)
-            : readTextOrchestratorSnapshot(gameWindow);
+        const snapshotOptions = getDiagnosticsSnapshotOptions();
+        const textSnapshot = readTextOrchestratorSnapshot(gameWindow, snapshotOptions);
         const hasTextFeed = Boolean(textSnapshot);
         const textFeed = normalizeTextOrchestratorSnapshot(textSnapshot);
         state.activeTexts = textFeed.active;
         state.detachedTexts = textFeed.detached;
         state.archivedTexts = textFeed.archived;
         state.textSummary = textFeed.summary;
-        state.diagnostics = normalizeDiagnosticsSnapshot(snapshotOptions
-            ? readTranslationDiagnosticsSnapshot(gameWindow, snapshotOptions)
-            : gameWindow.LiveTranslatorTranslationDiagnosticsSnapshot);
+        state.diagnostics = normalizeDiagnosticsSnapshot(readTranslationDiagnosticsSnapshot(gameWindow, snapshotOptions));
         state.drawCaptureTrace = normalizeDrawCaptureTraceSnapshot(gameWindow.LiveTranslatorDrawCaptureTraceSnapshot);
-        state.foresight = normalizeForesightSnapshot(snapshotOptions
-            ? readForesightDiagnosticsSnapshot(gameWindow, snapshotOptions)
-            : gameWindow.LiveTranslatorForesightSnapshot);
+        state.foresight = normalizeForesightSnapshot(readForesightDiagnosticsSnapshot(gameWindow, snapshotOptions));
         state.hookSummary = snapshot && snapshot.summary
             ? Object.assign({}, snapshot.summary)
             : (gameWindow.LiveTranslatorHookInstallSummary
@@ -229,19 +222,18 @@ function renderForesightPanel() {
         setForesightCopyEnabled(false);
         return;
     }
-    const detailEnabled = isDiagnosticsDetailViewEnabled();
-    const surfaceOnly = !detailEnabled;
+    if (!isDiagnosticsSurfaceEnabled()) {
+        container.hidden = true;
+        container.innerHTML = '';
+        setSummaryStatus('foresight-summary', 'neutral', 'diagnostics disabled');
+        setForesightCopyEnabled(false);
+        return;
+    }
     if (!state.foresightVisible) {
         container.hidden = true;
         setSummaryStatus('foresight-summary', 'neutral', 'hidden');
-        const model = surfaceOnly
-            ? createForesightDiagnosticsModel(state.foresight, getForesightTextRecords(), {
-                maxActions: FORESIGHT_SURFACE_DISPLAY_LIMIT,
-                messagesOnly: true,
-                surfaceOnly: true,
-            })
-            : createForesightDiagnosticsModel(state.foresight, getForesightTextRecords());
-        setForesightCopyEnabled(detailEnabled && Boolean(model && model.hasSnapshot && model.scan));
+        const model = createForesightDiagnosticsModel(state.foresight, getForesightTextRecords());
+        setForesightCopyEnabled(Boolean(model && model.hasSnapshot && model.scan));
         return;
     }
     container.hidden = false;
@@ -258,7 +250,7 @@ function renderForesightPanel() {
         return;
     }
 
-    const renderOptions = {
+    const model = viewer.render(container, {
         snapshot: state.foresight,
         textRecords: getForesightTextRecords(),
         createTranslationPill: createForesightTranslationPill,
@@ -266,37 +258,30 @@ function renderForesightPanel() {
         messagesOnly: state.foresightMessagesOnly,
         dynamicRenderKey: createForesightDynamicRenderKey(),
         formatTime,
-    };
-    if (surfaceOnly) {
-        renderOptions.maxActions = FORESIGHT_SURFACE_DISPLAY_LIMIT;
-        renderOptions.messagesOnly = true;
-        renderOptions.surfaceOnly = true;
-    }
-    const model = viewer.render(container, renderOptions);
+    });
     renderForesightSummary(model);
-    setForesightCopyEnabled(detailEnabled && Boolean(model && model.hasSnapshot && model.scan));
+    setForesightCopyEnabled(Boolean(model && model.hasSnapshot && model.scan));
 }
 
 function syncForesightVisibilityToggle() {
     const toggle = refs['foresight-view-toggle'];
     if (!toggle) return;
-    const enabled = isForesightEnabled();
+    const enabled = isForesightEnabled() && isDiagnosticsSurfaceEnabled();
     toggle.disabled = !enabled;
     toggle.checked = enabled && state.foresightVisible;
     toggle.title = enabled
         ? (state.foresightVisible ? 'Hide foresight' : 'Show foresight')
-        : 'Foresight disabled in settings.json';
+        : (isForesightEnabled() ? 'Diagnostics disabled in settings.json' : 'Foresight disabled in settings.json');
 }
 
 function syncForesightMessageFilterToggle() {
     const toggle = refs['foresight-message-filter-toggle'];
     if (!toggle) return;
-    const detailEnabled = isDiagnosticsDetailViewEnabled();
-    const enabled = isForesightEnabled() && detailEnabled;
-    toggle.checked = detailEnabled ? (enabled && state.foresightMessagesOnly) : true;
+    const enabled = isForesightEnabled() && isDiagnosticsSurfaceEnabled();
+    toggle.checked = enabled && state.foresightMessagesOnly;
     toggle.disabled = !enabled || !state.foresightVisible;
     toggle.title = !enabled
-        ? (isForesightEnabled() ? 'Performance mode; showing limited foresight messages' : 'Foresight disabled in settings.json')
+        ? (isForesightEnabled() ? 'Diagnostics disabled in settings.json' : 'Foresight disabled in settings.json')
         : (state.foresightMessagesOnly
         ? 'Show all foresight actions'
         : 'Only show game messages and message-bearing paths');
@@ -323,12 +308,6 @@ function renderForesightSummary(model) {
     const hidden = Number(model.actionsTruncated) || 0;
     const condensed = Number(model.condensedActionCount) || 0;
     const blocks = Number(model.scan.blocks) || 0;
-    if (model.surfaceOnly === true) {
-        const messageCount = count || blocks;
-        const suffix = hidden > 0 ? ` / +${formatNumber(hidden)} hidden` : '';
-        setSummaryStatus('foresight-summary', getForesightSummaryTone(model), `${formatNumber(messageCount)} messages${suffix}`);
-        return;
-    }
     const suffix = [
         hidden > 0 ? `+${formatNumber(hidden)} hidden` : '',
         condensed > 0 ? `${formatNumber(condensed)} condensed` : '',

@@ -26,10 +26,9 @@
         function recordEvent(type, item, optionsForEvent = {}) {
             if (!item) return null;
             const eventType = String(type || 'event');
-            const includeDetails = shouldCaptureDetailDiagnostics();
-            const routeDetails = includeDetails || eventType === 'item.render_queued'
-                ? pickSerializableObject(optionsForEvent.details || {})
-                : {};
+            const diagnosticsPolicy = getEventDiagnosticsPolicy();
+            const includeDetails = diagnosticsPolicy.detailView === true;
+            const routeDetails = pickSerializableObject(optionsForEvent.details || {});
             const event = {
                 at: Date.now(),
                 seq: ++scope.sequence,
@@ -42,14 +41,15 @@
                 details: routeDetails,
             };
             if (includeDetails) {
-                if (isDuplicateSkippedEvent(item, event)) return null;
-                events.push(event);
-                while (events.length > eventLimit) events.shift();
-                appendItemEvent(item, event);
+                if (!isDuplicateSkippedEvent(item, event)) {
+                    events.push(event);
+                    while (events.length > eventLimit) events.shift();
+                    appendItemEvent(item, event);
+                }
                 scope.detailDiagnosticsActive = true;
             }
             notify(event);
-            if (shouldPublishSurfaceDiagnostics()) schedulePublish();
+            if (diagnosticsPolicy.surface === true) schedulePublish();
             return event;
         }
 
@@ -103,14 +103,18 @@
             });
         }
 
-        function shouldPublishSurfaceDiagnostics() {
-            return typeof scope.isDiagnosticSurfaceEnabled !== 'function'
+        function getEventDiagnosticsPolicy() {
+            if (typeof scope.getDiagnosticsSnapshotPolicy === 'function') {
+                const policy = scope.getDiagnosticsSnapshotPolicy() || {};
+                const surface = policy.surface !== false;
+                const detailView = surface && policy.detailView === true;
+                return { surface, detailView };
+            }
+            const surface = typeof scope.isDiagnosticSurfaceEnabled !== 'function'
                 || scope.isDiagnosticSurfaceEnabled() === true;
-        }
-
-        function shouldCaptureDetailDiagnostics() {
-            return typeof scope.isDiagnosticDetailViewEnabled !== 'function'
-                || scope.isDiagnosticDetailViewEnabled() === true;
+            const detailView = surface && (typeof scope.isDiagnosticDetailViewEnabled !== 'function'
+                || scope.isDiagnosticDetailViewEnabled() === true);
+            return { surface, detailView };
         }
 
         return {

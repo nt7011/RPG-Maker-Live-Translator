@@ -12,7 +12,7 @@
     }
 
     function createController(scope = {}) {
-        const { summarize, cloneItem, globalScope, archivedLimit, activeItems, detachedItems, archivedItems, renderCommands, events } = scope;
+        const { summarize, cloneItem, globalScope, activeItems, detachedItems, archivedItems, renderCommands, events } = scope;
 
         /**
          * Build a serializable snapshot for debug consumers.
@@ -23,30 +23,41 @@
          */
         function getSnapshot(optionsArg = {}) {
             const policy = getSnapshotPolicy(optionsArg);
-            if (!policy.detailView) clearCapturedDiagnostics();
+            if (!policy.captureHistories) clearCapturedDiagnostics();
             const cloneOptions = { detailView: policy.detailView };
             const active = Array.from(activeItems.values())
                 .sort((a, b) => (b.sequence || 0) - (a.sequence || 0))
                 .map((item) => cloneItem(item, cloneOptions));
-            const detached = Array.from(detachedItems.values())
-                .sort((a, b) => (b.sequence || 0) - (a.sequence || 0))
-                .map((item) => cloneItem(item, cloneOptions));
-            const archived = Array.from(archivedItems.values())
-                .sort((a, b) => (b.deactivatedAt || b.updatedAt || 0) - (a.deactivatedAt || a.updatedAt || 0))
-                .map((item) => cloneItem(item, cloneOptions));
-            const eventCount = policy.detailView ? events.length : 0;
+            const detachedSource = limitSnapshotRows(
+                Array.from(detachedItems.values())
+                    .sort((a, b) => (b.sequence || 0) - (a.sequence || 0)),
+                policy && policy.limits && policy.limits.detachedItems
+            );
+            const archivedSource = limitSnapshotRows(
+                Array.from(archivedItems.values())
+                    .sort((a, b) => (b.deactivatedAt || b.updatedAt || 0) - (a.deactivatedAt || a.updatedAt || 0)),
+                policy && policy.limits && policy.limits.archivedItems
+            );
+            const detached = detachedSource.map((item) => cloneItem(item, cloneOptions));
+            const archived = archivedSource.map((item) => cloneItem(item, cloneOptions));
+            const eventCount = policy.captureEvents ? events.length : 0;
             return {
                 active,
                 detached,
                 archived,
-                events: policy.detailView ? events.slice() : [],
-                renderQueue: policy.detailView
+                events: policy.captureEvents ? events.slice() : [],
+                renderQueue: policy.captureRenderQueue
                     ? renderCommands.map((command) => Object.assign({}, command))
                     : [],
                 summary: Object.assign(summarize(active, detached, archived, eventCount), {
                     diagnosticsSurface: policy.surface === true,
+                    diagnosticsMode: policy.mode || (policy.detailView ? 'full' : 'performance'),
+                    performanceMode: policy.performanceMode === true,
                     detailView: policy.detailView === true,
                 }),
+                diagnosticsMode: policy.mode || (policy.detailView ? 'full' : 'performance'),
+                performanceMode: policy.performanceMode === true,
+                detailView: policy.detailView === true,
                 updatedAt: Date.now(),
             };
         }
@@ -79,21 +90,9 @@
          * snapshot rebuilds during bursts of draw or translation events.
          */
         function schedulePublish() {
-            const policy = getSnapshotPolicy();
-            if (!policy.surface) {
+            if (!getSnapshotPolicy().surface) {
                 scope.publishQueued = false;
                 clearCapturedDiagnostics();
-                try { delete globalScope.LiveTranslatorTextOrchestratorSnapshot; } catch (_) {
-                    try { globalScope.LiveTranslatorTextOrchestratorSnapshot = null; } catch (__) {}
-                }
-                return;
-            }
-            if (!policy.detailView) {
-                scope.publishQueued = false;
-                clearCapturedDiagnostics();
-                try { delete globalScope.LiveTranslatorTextOrchestratorSnapshot; } catch (_) {
-                    try { globalScope.LiveTranslatorTextOrchestratorSnapshot = null; } catch (__) {}
-                }
                 return;
             }
             if (scope.publishQueued) return;
@@ -105,10 +104,20 @@
         }
 
         function getSnapshotPolicy(optionsArg = {}) {
-            if (typeof scope.getDiagnosticsSnapshotPolicy === 'function') {
-                return scope.getDiagnosticsSnapshotPolicy(optionsArg) || { surface: true, detailView: true };
-            }
-            return { surface: true, detailView: true };
+            const raw = typeof scope.getDiagnosticsSnapshotPolicy === 'function'
+                ? (scope.getDiagnosticsSnapshotPolicy(optionsArg) || { surface: true, detailView: true })
+                : { surface: true, detailView: true };
+            const detailView = raw.detailView === true;
+            return Object.assign({
+                mode: detailView ? 'full' : 'performance',
+                surface: raw.surface !== false,
+                detailView,
+                performanceMode: raw.surface !== false && !detailView,
+                captureEvents: detailView,
+                captureHistories: detailView,
+                captureRenderQueue: detailView,
+                limits: {},
+            }, raw);
         }
 
         function clearCapturedDiagnostics() {
@@ -122,6 +131,12 @@
             });
             scope.detailDiagnosticsActive = false;
             return true;
+        }
+
+        function limitSnapshotRows(rows, limit) {
+            const numeric = Number(limit);
+            if (!Number.isFinite(numeric) || numeric <= 0) return rows;
+            return rows.slice(0, Math.max(1, Math.round(numeric)));
         }
 
         return {

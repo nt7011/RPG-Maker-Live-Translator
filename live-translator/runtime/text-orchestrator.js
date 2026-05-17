@@ -46,24 +46,72 @@
 
     function resolveDiagnosticsPolicy(globalScopeRef, settings) {
         const policy = globalScopeRef && globalScopeRef.LiveTranslatorDiagnosticsPolicy;
+        const normalizeLevel = (value) => {
+            const text = String(value || '').trim().toLowerCase();
+            if (!text) return '';
+            if (text === 'none' || text === 'off' || text === 'disabled' || text === 'closed') return 'none';
+            if (text === 'full' || text === 'detail' || text === 'details' || text === 'debug') return 'full';
+            if (text === 'performance'
+                || text === 'performancemode'
+                || text === 'performance-mode'
+                || text === 'surface'
+                || text === 'minimal'
+                || text === 'minimum') return 'performance';
+            return '';
+        };
+        const performanceLimits = () => ({
+            foresightScans: 5,
+            foresightMessages: 5,
+            archivedItems: 40,
+            detachedItems: 40,
+            pastJobs: 20,
+        });
         function fallbackSnapshotPolicy(optionsArg = {}) {
             const guiState = globalScopeRef && globalScopeRef.LiveTranslatorGuiState;
-            const surface = !guiState || typeof guiState !== 'object'
+            const guiActive = !guiState || typeof guiState !== 'object'
                 ? true
                 : guiState.translatorOpen === true;
             const diagnostics = settings && settings.diagnostics && typeof settings.diagnostics === 'object'
                 ? settings.diagnostics
                 : null;
-            const performanceMode = diagnostics && Object.prototype.hasOwnProperty.call(diagnostics, 'performanceMode')
-                ? diagnostics.performanceMode === true
-                : false;
+            const configuredLevel = normalizeLevel(optionsArg.mode || optionsArg.level || optionsArg.diagnosticsMode)
+                || (diagnostics && normalizeLevel(diagnostics.mode || diagnostics.level))
+                || (diagnostics && Object.prototype.hasOwnProperty.call(diagnostics, 'performanceMode')
+                    ? (diagnostics.performanceMode === true ? 'performance' : 'full')
+                    : '')
+                || (diagnostics && Object.prototype.hasOwnProperty.call(diagnostics, 'detailView')
+                    ? (diagnostics.detailView === true ? 'full' : 'performance')
+                    : (settings && settings.performanceMode === true ? 'performance' : 'full'));
+            const level = !guiActive || optionsArg.surface === false || optionsArg.enabled === false
+                ? 'none'
+                : ((optionsArg.detailView === false || optionsArg.includeDetails === false) && configuredLevel !== 'none'
+                    ? 'performance'
+                    : configuredLevel);
+            const surface = guiActive && level !== 'none';
+            const detailView = surface && level === 'full';
             return {
+                mode: surface ? level : 'none',
+                level: surface ? level : 'none',
                 surface,
-                detailView: surface
-                    && !performanceMode
-                    && optionsArg.detailView !== false
-                    && optionsArg.includeDetails !== false,
-                performanceMode,
+                detailView,
+                performanceMode: surface && level === 'performance',
+                full: surface && level === 'full',
+                none: !surface,
+                captureEvents: detailView,
+                captureHistories: detailView,
+                captureRenderQueue: detailView,
+                captureForesightActions: detailView,
+                captureForesightMetadata: detailView,
+                includeActiveItems: surface,
+                includeDetachedItems: surface,
+                includeArchivedItems: surface,
+                limits: level === 'performance' ? performanceLimits() : {
+                    foresightScans: 0,
+                    foresightMessages: 0,
+                    archivedItems: 0,
+                    detachedItems: 0,
+                    pastJobs: 0,
+                },
             };
         }
         const getSnapshotPolicy = policy && typeof policy.getSnapshotPolicy === 'function'

@@ -30,13 +30,13 @@
             subscriber.status = kind === 'resolve' ? 'completed' : isAbortErrorLike(value) ? 'canceled' : 'failed';
             unregisterSubscriber(subscriber);
             subscriber.job.subscribers.delete(subscriber.id);
-            scope.translationDiagnostics.record(`subscriber.${subscriber.status}`, {
+            scope.translationDiagnostics.recordLazy(`subscriber.${subscriber.status}`, () => ({
                 jobId: subscriber.job.id,
                 subscriberId: subscriber.id,
                 recordId: subscriber.recordId || '',
                 hook: subscriber.hook || '',
                 message: kind === 'resolve' ? '' : scope.translationDiagnostics.formatError(value),
-            });
+            }));
             if (kind === 'resolve') {
                 logTranslationEvent('completed', subscriber.job.key, value, subscriber.context);
                 subscriber.deferred.resolve(value);
@@ -62,31 +62,31 @@
                     removeQueuedJob(job);
                     forgetJobKey(job);
                     job.status = 'canceled';
-                    scope.translationDiagnostics.record('job.canceled', {
+                    scope.translationDiagnostics.recordLazy('job.canceled', () => ({
                         jobId: job.id,
                         hook: job.hook || '',
                         reason: scope.translationDiagnostics.formatError(error),
                         status: 'queued',
-                    });
+                    }));
                     scope.translationDiagnostics.rememberJob(job, 'canceled', {
                         reason: scope.translationDiagnostics.formatError(error),
                     });
                 } else if (job.status === 'running' && job.controller && typeof job.controller.abort === 'function') {
                     try { job.controller.abort(error); } catch (_) {}
-                    scope.translationDiagnostics.record('job.abort_requested', {
+                    scope.translationDiagnostics.recordLazy('job.abort_requested', () => ({
                         jobId: job.id,
                         hook: job.hook || '',
                         reason: scope.translationDiagnostics.formatError(error),
-                    });
+                    }));
                 }
             } else if (!stillActive) {
                 job.detached = true;
-                scope.translationDiagnostics.record('job.detached', {
+                scope.translationDiagnostics.recordLazy('job.detached', () => ({
                     jobId: job.id,
                     hook: job.hook || '',
                     reason: scope.translationDiagnostics.formatError(error),
                     status: job.status || '',
-                });
+                }));
                 if (job.status === 'queued') schedulePump();
             } else if (job.status === 'queued') {
                 schedulePump();
@@ -105,7 +105,7 @@
             subscriber.lastPriorityReason = String(reason || '');
             recomputeJobPriority(subscriber.job);
             scope.translationDiagnostics.increment('priorityChanges');
-            scope.translationDiagnostics.record('priority.changed', {
+            scope.translationDiagnostics.recordLazy('priority.changed', () => ({
                 jobId: subscriber.job.id,
                 subscriberId: subscriber.id,
                 recordId: subscriber.recordId || '',
@@ -114,7 +114,7 @@
                 priority: nextPriority,
                 effectivePriority: subscriber.job.effectivePriority,
                 reason: reason || '',
-            });
+            }));
             // Priority changes can alter lane membership even for running jobs.
             // A demoted priority-1000 job should immediately release the normal
             // queue gate, while a promoted queued job may become eligible for the
@@ -153,7 +153,7 @@
                 subscribersByRecordId.get(subscriber.recordId).add(subscriber);
             }
             recomputeJobPriority(job);
-            scope.translationDiagnostics.record('subscriber.added', {
+            scope.translationDiagnostics.recordLazy('subscriber.added', () => ({
                 jobId: job.id,
                 subscriberId: subscriber.id,
                 recordId: subscriber.recordId,
@@ -161,7 +161,7 @@
                 priority: subscriber.priority,
                 stream: subscriber.stream,
                 jobStatus: job.status,
-            });
+            }));
 
             const handle = decorateHandle({
                 id: subscriber.id,

@@ -29,26 +29,20 @@ function buildForesightDiagnosticsCopyPayload(snapshot = state.foresight, textRe
     };
 }
 
-function createForesightDiagnosticsModel(snapshot, textRecords, options = {}) {
+function createForesightDiagnosticsModel(snapshot, textRecords) {
     const viewer = globalThis.LiveTranslatorForesightTreeViewer
         || (globalThis.window && globalThis.window.LiveTranslatorForesightTreeViewer);
-    const maxActions = Number.isFinite(Number(options.maxActions))
-        ? Math.max(1, Math.floor(Number(options.maxActions)))
-        : FORESIGHT_ACTION_DISPLAY_LIMIT;
     if (viewer && typeof viewer.createModel === 'function') {
-        const viewerOptions = {
+        return viewer.createModel(snapshot, {
             textRecords: Array.isArray(textRecords) ? textRecords : [],
-            maxActions,
-        };
-        if (options.messagesOnly === true) viewerOptions.messagesOnly = true;
-        if (options.surfaceOnly === true) viewerOptions.surfaceOnly = true;
-        return viewer.createModel(snapshot, viewerOptions);
+            maxActions: FORESIGHT_ACTION_DISPLAY_LIMIT,
+        });
     }
     const source = snapshot && typeof snapshot === 'object' ? snapshot : null;
     const scans = source && Array.isArray(source.recent) ? source.recent : [];
     const scan = scans.length ? scans[scans.length - 1] : null;
     const actions = scan && Array.isArray(scan.commandActions)
-        ? scan.commandActions.slice(0, maxActions)
+        ? scan.commandActions.slice(0, FORESIGHT_ACTION_DISPLAY_LIMIT)
         : [];
     return {
         hasSnapshot: Boolean(source),
@@ -58,7 +52,7 @@ function createForesightDiagnosticsModel(snapshot, textRecords, options = {}) {
         summary: source && source.summary && typeof source.summary === 'object'
             ? Object.assign({}, source.summary)
             : null,
-        actionLimit: maxActions,
+        actionLimit: FORESIGHT_ACTION_DISPLAY_LIMIT,
         actionCount: actions.length,
         actionsAvailable: actions.length + (Number(scan && scan.commandActionsTruncated) || 0),
         actionsTruncated: Number(scan && scan.commandActionsTruncated) || 0,

@@ -44,7 +44,7 @@
             const normalizedRequest = normalizeRequest(input, maybeOptions);
             const context = requestContext(normalizedRequest);
             scope.translationDiagnostics.increment('requests');
-            scope.translationDiagnostics.record('request.received', {
+            scope.translationDiagnostics.recordLazy('request.received', () => ({
                 hook: normalizedRequest.hook,
                 source: normalizedRequest.source,
                 priority: normalizedRequest.priority,
@@ -52,20 +52,20 @@
                 recordId: normalizedRequest.recordId,
                 textPreview: preview(normalizedRequest.normalized, 72),
                 textLength: normalizedRequest.normalized.length,
-            });
+            }));
             logTranslationEvent('request', normalizedRequest.normalized, null, context);
 
             const override = lookupOverrideTranslationRegex(normalizedRequest.normalized);
             if (override) {
                 scope.translationDiagnostics.increment('overrideHits');
-                scope.translationDiagnostics.record('request.override', {
+                scope.translationDiagnostics.recordLazy('request.override', () => ({
                     hook: normalizedRequest.hook,
                     recordId: normalizedRequest.recordId,
                     source: OVERRIDE_REGEX_SETTING,
                     regex: override.regex,
                     regexIndex: override.regexIndex,
                     textPreview: preview(normalizedRequest.normalized, 72),
-                });
+                }));
                 logTranslationEvent('override', normalizedRequest.normalized, override.translation, Object.assign({}, context, override, {
                     source: OVERRIDE_REGEX_SETTING,
                     sourceHint: OVERRIDE_REGEX_SETTING,
@@ -82,13 +82,13 @@
             if (ignored.skip) {
                 const reason = ignored.reason || 'translation filter';
                 scope.translationDiagnostics.increment('skipped');
-                scope.translationDiagnostics.record('request.skipped', {
+                scope.translationDiagnostics.recordLazy('request.skipped', () => ({
                     hook: normalizedRequest.hook,
                     recordId: normalizedRequest.recordId,
                     reason,
                     source: 'filter',
                     textPreview: preview(normalizedRequest.normalized, 72),
-                });
+                }));
                 logTranslationEvent('skip', normalizedRequest.normalized, reason, Object.assign({}, context, ignored, {
                     source: 'filter',
                     skipReason: reason,
@@ -104,11 +104,11 @@
             const precached = resolvePrecacheShortcut(normalizedRequest.normalized, context);
             if (precached !== null) {
                 scope.translationDiagnostics.increment('precacheHits');
-                scope.translationDiagnostics.record('request.precache_hit', {
+                scope.translationDiagnostics.recordLazy('request.precache_hit', () => ({
                     hook: normalizedRequest.hook,
                     recordId: normalizedRequest.recordId,
                     textPreview: preview(normalizedRequest.normalized, 72),
-                });
+                }));
                 return createImmediateHandle(precached, {
                     key: normalizedRequest.normalized,
                     status: 'completed',
@@ -120,11 +120,11 @@
             const cached = lookupCompleted(normalizedRequest.normalized);
             if (cached !== null) {
                 scope.translationDiagnostics.increment('cacheHits');
-                scope.translationDiagnostics.record('request.cache_hit', {
+                scope.translationDiagnostics.recordLazy('request.cache_hit', () => ({
                     hook: normalizedRequest.hook,
                     recordId: normalizedRequest.recordId,
                     textPreview: preview(normalizedRequest.normalized, 72),
-                });
+                }));
                 logTranslationEvent('cache_hit', normalizedRequest.normalized, cached, Object.assign({}, context, { source: 'cache' }));
                 return createImmediateHandle(cached, {
                     key: normalizedRequest.normalized,
@@ -138,13 +138,13 @@
             if (skipInfo.skip) {
                 const reason = skipInfo.reason || 'translation filter';
                 scope.translationDiagnostics.increment('skipped');
-                scope.translationDiagnostics.record('request.skipped', {
+                scope.translationDiagnostics.recordLazy('request.skipped', () => ({
                     hook: normalizedRequest.hook,
                     recordId: normalizedRequest.recordId,
                     reason,
                     source: 'filter',
                     textPreview: preview(normalizedRequest.normalized, 72),
-                });
+                }));
                 logTranslationEvent('skip', normalizedRequest.normalized, reason, Object.assign({}, context, skipInfo, {
                     source: 'filter',
                     skipReason: reason,
@@ -164,14 +164,14 @@
                 const upgradedFromJob = streamUpgrade ? job : null;
                 job = createJob(normalizedRequest);
                 if (upgradedFromJob) {
-                    scope.translationDiagnostics.record('job.stream_upgrade_queued', {
+                    scope.translationDiagnostics.recordLazy('job.stream_upgrade_queued', () => ({
                         jobId: job.id,
                         upgradedFromJobId: upgradedFromJob.id,
                         hook: normalizedRequest.hook,
                         recordId: normalizedRequest.recordId,
                         priority: normalizedRequest.priority,
                         textPreview: preview(normalizedRequest.normalized, 72),
-                    });
+                    }));
                 }
                 logTranslationEvent('cache_miss', normalizedRequest.normalized, null, Object.assign({}, context, { source: 'provider' }));
             }
@@ -179,14 +179,14 @@
             const handle = createSubscriber(job, normalizedRequest);
             if (isJoin) {
                 scope.translationDiagnostics.increment('joined');
-                scope.translationDiagnostics.record('job.joined', {
+                scope.translationDiagnostics.recordLazy('job.joined', () => ({
                     jobId: job.id,
                     subscriberId: handle.id,
                     hook: normalizedRequest.hook,
                     recordId: normalizedRequest.recordId,
                     effectivePriority: job.effectivePriority,
                     stream: job.stream,
-                });
+                }));
                 if (job.status === 'queued') schedulePump();
             }
             return handle;
