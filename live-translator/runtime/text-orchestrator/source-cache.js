@@ -147,6 +147,26 @@
             }
         }
 
+        function lookupForcedAsyncServiceTranslation(text) {
+            if (!scope.translationService || typeof scope.translationService.lookup !== 'function') return null;
+            if (scope.translationService.forceAsyncTranslation !== true) return null;
+            const key = String(text ?? '').trim();
+            if (!key) return null;
+            try {
+                const hit = scope.translationService.lookup(key, { includeForcedAsync: true });
+                if (!hit || hit.forceAsync !== true || typeof hit.translation !== 'string' || !hit.translation.trim()) return null;
+                return {
+                    translation: hit.translation,
+                    sourceHint: firstNonEmptyString(hit.source, hit.sourceHint, 'cache'),
+                };
+            } catch (error) {
+                if (logger && typeof logger.warn === 'function') {
+                    logger.warn('[TextOrchestrator] Forced async translation lookup failed.', error);
+                }
+                return null;
+            }
+        }
+
         function describeServiceSkip(text) {
             if (!scope.translationService || typeof scope.translationService.describeEligibility !== 'function') return null;
             const key = String(text ?? '').trim();
@@ -258,6 +278,7 @@
             isTranslationNoopRenderRejection,
             reuseCompletedSourceTranslation,
             lookupServiceTranslation,
+            lookupForcedAsyncServiceTranslation,
             describeServiceSkip,
             reuseLookupTranslation,
             isSkippedItem,

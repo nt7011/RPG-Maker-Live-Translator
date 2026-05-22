@@ -305,12 +305,11 @@
             }
 
             let status = 'native-only';
-            const backgroundPatch = captureBitmapDrawBackdrop(bitmap, text, x, y, maxWidth, lineHeight, align);
-            const nativeTextRegion = backgroundPatch && backgroundPatch.region
-                ? backgroundPatch.region
-                : (typeof scope.createBitmapTextRegion === 'function'
-                    ? scope.createBitmapTextRegion(bitmap, text, x, y, maxWidth, lineHeight, align)
-                    : null);
+            const backgroundPatch = captureBitmapDrawBackdrop(bitmap, text, x, y, maxWidth, lineHeight, align, 'text');
+            const fallbackBackgroundPatch = captureBitmapDrawBackdrop(bitmap, text, x, y, maxWidth, lineHeight, align, 'redraw') || backgroundPatch;
+            const nativeTextRegion = typeof scope.createBitmapTextRegion === 'function'
+                ? scope.createBitmapTextRegion(bitmap, text, x, y, maxWidth, lineHeight, align)
+                : (backgroundPatch && backgroundPatch.region ? backgroundPatch.region : null);
             try {
                 const result = invokeOriginal('');
                 if (visibleText) {
@@ -326,6 +325,7 @@
                         ownerType,
                         drawState,
                         backgroundPatch,
+                        fallbackBackgroundPatch,
                     });
                     status = unit ? 'recorded' : 'recordMissed';
                     if (profilerOn) perfCount(unit ? 'bitmap.drawText.recorded' : 'bitmap.drawText.recordMissed', 1, 'hook');
@@ -351,11 +351,14 @@
             }
         }
 
-        function captureBitmapDrawBackdrop(bitmap, text, x, y, maxWidth, lineHeight, align) {
+        function captureBitmapDrawBackdrop(bitmap, text, x, y, maxWidth, lineHeight, align, mode = 'text') {
             if (!bitmap || typeof Bitmap === 'undefined') return null;
-            const region = typeof scope.createBitmapTextRegion === 'function'
-                ? scope.createBitmapTextRegion(bitmap, text, x, y, maxWidth, lineHeight, align)
-                : null;
+            const useRedrawRegion = mode === 'redraw';
+            const region = useRedrawRegion && typeof scope.createBitmapTextBackdropRegion === 'function'
+                ? scope.createBitmapTextBackdropRegion(bitmap, text, x, y, maxWidth, lineHeight, align)
+                : (typeof scope.createBitmapTextRegion === 'function'
+                    ? scope.createBitmapTextRegion(bitmap, text, x, y, maxWidth, lineHeight, align)
+                    : null);
             if (!region) return null;
             const patchX = region.x1;
             const patchY = region.y1;
@@ -484,6 +487,7 @@
                     align: unit.align,
                     ownerType: 'Bitmap',
                     drawState: unit.drawState,
+                    backgroundPatch: unit.fallbackBackgroundPatch || unit.backgroundPatch,
                 });
                 if (!fragment || !sanitizeVisibleText(fragment.visibleText)) return;
                 const ownership = recordBitmapSurfaceDraw(bitmap, fragment, { candidateAdapters: [] });
@@ -592,6 +596,7 @@
                 width,
                 ownerType: input.ownerType || 'Bitmap',
                 drawState: input.drawState || scope.captureBitmapDrawState(bitmap),
+                backgroundPatch: input.backgroundPatch || null,
                 fontSignature: computeFontSignature(input.drawState, bitmap),
                 recordedAt: Date.now(),
             };

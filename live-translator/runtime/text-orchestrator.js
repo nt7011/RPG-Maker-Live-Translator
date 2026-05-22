@@ -299,6 +299,7 @@
             isTranslationNoopRenderRejection: 'sourceCache',
             reuseCompletedSourceTranslation: 'sourceCache',
             lookupServiceTranslation: 'sourceCache',
+            lookupForcedAsyncServiceTranslation: 'sourceCache',
             describeServiceSkip: 'sourceCache',
             reuseLookupTranslation: 'sourceCache',
             isSkippedItem: 'sourceCache',

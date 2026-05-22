@@ -145,6 +145,7 @@
             state.renderOps.forEach((op) => {
                 if (!op || !op.rect || !rectanglesOverlap(rect, op.rect)) return;
                 if (!relation(op.drawOrder || 0)) return;
+                if (op.nativeTextKey && state.entries && state.entries.has(op.nativeTextKey)) return;
                 items.push({ type: 'renderOp', drawOrder: op.drawOrder || 0, op });
             });
             state.entries.forEach((entry) => {

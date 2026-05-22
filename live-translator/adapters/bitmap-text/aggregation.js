@@ -226,6 +226,9 @@
                 },
                 bounds,
                 drawState: dominant.drawState,
+                backgroundPatches: group
+                    .map((fragment) => fragment && fragment.backgroundPatch)
+                    .filter((patch) => patch && patch.bitmap && patch.width > 0 && patch.height > 0),
                 methodName: dominant.methodName || 'drawText',
                 ownerType: dominant.ownerType || 'Bitmap',
                 fragments: group,
@@ -306,6 +309,7 @@
             existing.drawParams = fresh.drawParams;
             existing.bounds = fresh.bounds;
             existing.drawState = fresh.drawState;
+            existing.backgroundPatches = fresh.backgroundPatches;
             existing.methodName = fresh.methodName;
             existing.ownerType = fresh.ownerType;
             existing.fragments = fresh.fragments;

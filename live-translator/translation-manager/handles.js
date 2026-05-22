@@ -70,11 +70,60 @@
         });
     }
 
+    function createDelayedHandle(result, options = {}) {
+        const sourceHint = options.sourceHint ? String(options.sourceHint) : '';
+        const delayMs = Math.max(0, Math.floor(Number(options.delayMs) || 0));
+        const setTimer = typeof globalScope.setTimeout === 'function'
+            ? globalScope.setTimeout.bind(globalScope)
+            : (typeof setTimeout === 'function' ? setTimeout : null);
+        const clearTimer = typeof globalScope.clearTimeout === 'function'
+            ? globalScope.clearTimeout.bind(globalScope)
+            : (typeof clearTimeout === 'function' ? clearTimeout : null);
+        const deferred = createDeferred();
+        let status = options.initialStatus || 'pending';
+        let settled = false;
+        let timerId = null;
+
+        function resolveLater() {
+            if (settled) return;
+            settled = true;
+            status = options.status || 'completed';
+            deferred.resolve(result);
+        }
+
+        if (setTimer && delayMs > 0) {
+            timerId = setTimer(resolveLater, delayMs);
+        } else {
+            Promise.resolve().then(resolveLater);
+        }
+
+        deferred.promise.catch(noop);
+        return decorateHandle({
+            id: options.id || '',
+            key: options.key || '',
+            sourceHint,
+            promise: deferred.promise,
+            cancel: (reason) => {
+                if (settled) return false;
+                settled = true;
+                status = 'canceled';
+                if (timerId !== null && clearTimer) clearTimer(timerId);
+                deferred.reject(createAbortError(reason || 'Translation request canceled.'));
+                return true;
+            },
+            setPriority: () => false,
+            getPriority: () => clampPriority(options.priority),
+            getStatus: () => status,
+            getSourceHint: () => sourceHint,
+        });
+    }
+
     defineRuntimeModule('runtime.translationManagerHandles', {
         createAbortError,
         isAbortErrorLike,
         createDeferred,
         decorateHandle,
         createImmediateHandle,
+        createDelayedHandle,
     });
 })();

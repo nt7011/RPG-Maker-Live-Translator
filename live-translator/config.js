@@ -152,6 +152,11 @@
         validateTextScaleSetting(settings.textScaleOthers, 'textScaleOthers', logger);
         validateDiagnosticsSettings(settings, logger);
 
+        const snapshot = settings.Snapshot;
+        if (snapshot && typeof snapshot === 'object') {
+            validateBooleanSetting(snapshot.ForceAsyncTranslation, 'Snapshot.ForceAsyncTranslation', logger);
+        }
+
         const gameMessage = settings.gameMessage;
         if (!gameMessage || typeof gameMessage !== 'object') return;
         validateTextScaleSetting(gameMessage.textScale, 'gameMessage.textScale', logger);

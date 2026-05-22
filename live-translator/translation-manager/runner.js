@@ -12,7 +12,7 @@
     }
 
     function createController(scope = {}) {
-        const { createAbortError, isAbortErrorLike, logger, preview, provider, maxRetries, retryBaseMs, retryMaxMs, requestTimeoutMs, completed } = scope;
+        const { createAbortError, isAbortErrorLike, logger, preview, provider, maxRetries, retryBaseMs, retryMaxMs, requestTimeoutMs, normalizeCacheKey, completed } = scope;
         const callScope = (name) => (...args) => scope[name](...args);
         const { finalizeProviderSuccess, forgetJobKey, settleSubscriber, schedulePump } = Object.fromEntries(['finalizeProviderSuccess', 'forgetJobKey', 'settleSubscriber', 'schedulePump'].map((name) => [name, callScope(name)]));
 
@@ -140,6 +140,12 @@
                         try { emptyError.retryable = true; } catch (_) {}
                         throw emptyError;
                     }
+                    if (isUnchangedProviderOutput(job, translated)) {
+                        const unchangedError = new Error('Translator returned unchanged text.');
+                        try { unchangedError.code = 'UNCHANGED_TRANSLATION_OUTPUT'; } catch (_) {}
+                        try { unchangedError.retryable = true; } catch (_) {}
+                        throw unchangedError;
+                    }
                     logger.debug(`[TranslationService] ${job.id} completed "${preview(job.key)}"`);
                     return translated;
                 } catch (error) {
@@ -175,6 +181,12 @@
             if (error.code === 'ETIMEDOUT' || error.code === 'EMPTY_TRANSLATION_OUTPUT' || error.code === 'EMPTY_STREAM_OUTPUT') return true;
             const message = error && error.message ? error.message : String(error);
             return /\b(network|fetch|timeout|temporarily|unavailable|ECONNRESET|ECONNREFUSED)\b/i.test(message);
+        }
+
+        function isUnchangedProviderOutput(job, translated) {
+            const source = normalizeCacheKey(job && (job.key || job.text));
+            const output = normalizeCacheKey(translated);
+            return !!(source && output && source === output);
         }
 
         function computeRetryDelayMs(error, attempt) {
@@ -221,6 +233,7 @@
             startJob,
             runProviderWithRetries,
             shouldRetry,
+            isUnchangedProviderOutput,
             computeRetryDelayMs,
             waitForRetry,
         };

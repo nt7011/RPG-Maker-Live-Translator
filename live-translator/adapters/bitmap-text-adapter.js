@@ -128,6 +128,7 @@
             }
         };
         scope.createBitmapTextRegion = (...args) => createBitmapTextRegion(scope, ...args);
+        scope.createBitmapTextBackdropRegion = (...args) => createBitmapTextBackdropRegion(scope, ...args);
         scope.isBitmapTextBackdropTrusted = (...args) => isBitmapTextBackdropTrusted(scope, ...args);
         scope.recordBitmapNativeTextInk = (...args) => recordBitmapNativeTextInk(scope, ...args);
         scope.hasBitmapNativeTextInkInterest = (bitmap) => hasBitmapNativeTextInkInterest(scope, bitmap);
@@ -328,6 +329,43 @@
         return { x1, y1, x2, y2 };
     }
 
+    function createBitmapTextBackdropRegion(scope, bitmap, text, x, y, maxWidth, lineHeight) {
+        if (!bitmap) return null;
+        const visibleText = typeof scope.sanitizeVisibleText === 'function'
+            ? scope.sanitizeVisibleText(text)
+            : String(text ?? '').trim();
+        if (!visibleText) return null;
+        const sourceWidth = Math.max(0, Math.ceil(Number(bitmap.width) || 0));
+        const sourceHeight = Math.max(0, Math.ceil(Number(bitmap.height) || 0));
+        if (!sourceWidth || !sourceHeight) return null;
+
+        const measuredWidth = measureNativeBitmapTextWidth(bitmap, text);
+        const drawWidth = resolveNativeBitmapBackdropWidth(measuredWidth, maxWidth);
+        if (!drawWidth) return null;
+
+        const outlineWidth = Number(bitmap && bitmap.outlineWidth);
+        const outline = Number.isFinite(outlineWidth)
+            ? Math.max(1, outlineWidth + 1)
+            : 2;
+        const fontSize = positiveNativeNumber(bitmap && bitmap.fontSize, lineHeight, 24);
+        const height = positiveNativeNumber(lineHeight, fontSize, 24);
+        const topPad = Math.min(outline, Math.ceil(fontSize * 0.08));
+        const bottomPad = Math.max(outline, Math.ceil(fontSize * 0.25));
+        const x1 = Math.max(0, Math.floor(finiteNativeNumber(x, 0) - outline));
+        const y1 = Math.max(0, Math.floor(finiteNativeNumber(y, 0) - topPad));
+        const width = Math.ceil(drawWidth + outline * 2);
+        const heightWithPadding = Math.ceil(height + topPad + bottomPad);
+        const clippedWidth = Math.min(sourceWidth, width, Math.max(0, sourceWidth - x1));
+        const clippedHeight = Math.min(sourceHeight, heightWithPadding, Math.max(0, sourceHeight - y1));
+        if (clippedWidth <= 0 || clippedHeight <= 0) return null;
+        return {
+            x1,
+            y1,
+            x2: x1 + clippedWidth,
+            y2: y1 + clippedHeight,
+        };
+    }
+
     function isBitmapTextBackdropTrusted(scope, bitmap, region) {
         if (!bitmap || !region || !isNativeRect(region)) return false;
         let ink = null;
@@ -417,6 +455,14 @@
         const limit = Number(maxWidth);
         if (!Number.isFinite(measured) || measured <= 0) return 0;
         if (Number.isFinite(limit) && limit > 0) return Math.max(1, Math.min(Math.ceil(limit), Math.ceil(measured)));
+        return Math.max(1, Math.ceil(measured));
+    }
+
+    function resolveNativeBitmapBackdropWidth(measuredWidth, maxWidth) {
+        const measured = Number(measuredWidth);
+        const limit = Number(maxWidth);
+        if (!Number.isFinite(measured) || measured <= 0) return 0;
+        if (Number.isFinite(limit) && limit > 0) return Math.max(1, Math.max(Math.ceil(limit), Math.ceil(measured)));
         return Math.max(1, Math.ceil(measured));
     }
 

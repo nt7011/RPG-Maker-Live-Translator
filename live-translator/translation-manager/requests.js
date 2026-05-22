@@ -12,11 +12,11 @@
     }
 
     function createController(scope = {}) {
-        const { OVERRIDE_REGEX_SETTING, normalizeCacheKey, createImmediateHandle, preview, provider, precacheStore, completed, jobsByKey } = scope;
+        const { OVERRIDE_REGEX_SETTING, normalizeCacheKey, createImmediateHandle, createDelayedHandle, preview, provider, precacheStore, completed, jobsByKey } = scope;
         const callScope = (name) => (...args) => scope[name](...args);
         const { describeIgnoreTranslationRegex, describeSkip, logTranslationEvent, normalizeRequest, requestContext, lookupCompleted, lookupOverrideTranslationRegex, resolvePrecacheShortcut, createJob, createSubscriber, schedulePump } = Object.fromEntries(['describeIgnoreTranslationRegex', 'describeSkip', 'logTranslationEvent', 'normalizeRequest', 'requestContext', 'lookupCompleted', 'lookupOverrideTranslationRegex', 'resolvePrecacheShortcut', 'createJob', 'createSubscriber', 'schedulePump'].map((name) => [name, callScope(name)]));
 
-        function lookup(normalized) {
+        function lookup(normalized, options = {}) {
             const key = normalizeCacheKey(normalized);
             if (!key) return null;
             const override = lookupOverrideTranslationRegex(key);
@@ -33,11 +33,45 @@
                 ? precacheStore.lookup(key)
                 : null;
             if (precached && typeof precached.translation === 'string') {
-                return { source: 'precache', translation: precached.translation };
+                return createLookupHit('precache', precached.translation, options);
             }
             const cached = lookupCompleted(key);
-            if (cached !== null) return { source: 'cache', translation: cached };
+            if (cached !== null) return createLookupHit('cache', cached, options);
             return null;
+        }
+
+        function createLookupHit(source, translation, options = {}) {
+            if (shouldForceAsyncSource(source)) {
+                if (!options || options.includeForcedAsync !== true) return null;
+                return {
+                    source,
+                    sourceHint: source,
+                    translation,
+                    forceAsync: true,
+                };
+            }
+            return { source, sourceHint: source, translation };
+        }
+
+        function shouldForceAsyncSource(source) {
+            return scope.forceAsyncTranslation === true
+                && (source === 'cache' || source === 'precache');
+        }
+
+        function createCacheHitHandle(translation, normalizedRequest, sourceHint) {
+            const options = {
+                key: normalizedRequest.normalized,
+                status: 'completed',
+                priority: normalizedRequest.priority,
+                sourceHint,
+            };
+            if (!shouldForceAsyncSource(sourceHint)) {
+                return createImmediateHandle(translation, options);
+            }
+            return createDelayedHandle(translation, Object.assign({}, options, {
+                delayMs: scope.forceAsyncTranslationDelayMs,
+                initialStatus: 'pending',
+            }));
         }
 
         function request(input, maybeOptions = {}) {
@@ -109,12 +143,7 @@
                     recordId: normalizedRequest.recordId,
                     textPreview: preview(normalizedRequest.normalized, 72),
                 }));
-                return createImmediateHandle(precached, {
-                    key: normalizedRequest.normalized,
-                    status: 'completed',
-                    priority: normalizedRequest.priority,
-                    sourceHint: 'precache',
-                });
+                return createCacheHitHandle(precached, normalizedRequest, 'precache');
             }
 
             const cached = lookupCompleted(normalizedRequest.normalized);
@@ -126,12 +155,7 @@
                     textPreview: preview(normalizedRequest.normalized, 72),
                 }));
                 logTranslationEvent('cache_hit', normalizedRequest.normalized, cached, Object.assign({}, context, { source: 'cache' }));
-                return createImmediateHandle(cached, {
-                    key: normalizedRequest.normalized,
-                    status: 'completed',
-                    priority: normalizedRequest.priority,
-                    sourceHint: 'cache',
-                });
+                return createCacheHitHandle(cached, normalizedRequest, 'cache');
             }
 
             const skipInfo = describeSkip(normalizedRequest.normalized);

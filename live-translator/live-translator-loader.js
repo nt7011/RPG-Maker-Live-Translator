@@ -176,6 +176,21 @@
         return Array.isArray(list) ? list.slice() : [];
     }
 
+    function getLoaderOptions() {
+        const scope = getGlobalScope();
+        return scope.LiveTranslatorLoaderOptions && typeof scope.LiveTranslatorLoaderOptions === 'object'
+            ? scope.LiveTranslatorLoaderOptions
+            : {};
+    }
+
+    function shouldLoadRuntimeScript(script, options = {}) {
+        // Harnesses can load the translator pipeline without opening debug UI windows.
+        if (options.disableUiLauncher === true) {
+            return script !== 'ui-launcher/window-support.js' && script !== 'ui-launcher.js';
+        }
+        return true;
+    }
+
     function normalizeRuntimeManifest(manifest) {
         if (!manifest || typeof manifest !== 'object' || !manifest.runtime || typeof manifest.runtime !== 'object') {
             throw new Error('[LiveTranslatorLoader] install-manifest.json is invalid.');
@@ -369,16 +384,17 @@
         return scope.LiveTranslatorLoaderState;
     }
 
-    function createRuntimeScriptPlan(manifest) {
+    function createRuntimeScriptPlan(manifest, options = {}) {
         const scriptLoadOrder = Array.isArray(manifest.scriptLoadOrder)
             ? manifest.scriptLoadOrder.slice()
             : [];
         if (scriptLoadOrder[0] !== 'logger.js' || scriptLoadOrder[1] !== 'config.js') {
             throw new Error('[LiveTranslatorLoader] runtime.scriptLoadOrder must begin with logger.js and config.js.');
         }
+        const filteredLoadOrder = scriptLoadOrder.filter((script) => shouldLoadRuntimeScript(script, options));
         return {
-            preAssetScripts: scriptLoadOrder.slice(0, 2),
-            postAssetScripts: scriptLoadOrder.slice(2),
+            preAssetScripts: filteredLoadOrder.slice(0, 2),
+            postAssetScripts: filteredLoadOrder.slice(2),
         };
     }
 
@@ -420,10 +436,11 @@
         try {
             // Phase 2: resolve the support folder next to live-translator-loader.js.
             const supportDir = resolveSupportDir(loaderScript);
+            const loaderOptions = getLoaderOptions();
 
             // Phase 3: load the install manifest, then the remaining manifest-declared loader helpers.
             const manifest = await loadRuntimeManifest(supportDir);
-            const scriptPlan = createRuntimeScriptPlan(manifest);
+            const scriptPlan = createRuntimeScriptPlan(manifest, loaderOptions);
             await loadLoaderHelpers(supportDir, manifest);
             const pathResolver = getLoaderModule('pathResolver');
             const scriptInjectorModule = getLoaderModule('scriptInjector');

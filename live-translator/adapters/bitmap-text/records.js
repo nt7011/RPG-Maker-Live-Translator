@@ -175,6 +175,7 @@
                     if (clearRect && clearRect.width > 0 && clearRect.height > 0 && typeof bitmap.clearRect === 'function') {
                         bitmap.clearRect(clearRect.x, clearRect.y, clearRect.width, clearRect.height);
                     }
+                    restoreEntryBackgroundPatches(bitmap, entry, clearBounds);
                     replayBitmapItems(bitmap, replayBefore);
                     drawBitmapTextValue(bitmap, entry, restored, { scaleTranslated: true });
                     replayBitmapItems(bitmap, replayAfter);
@@ -189,6 +190,24 @@
             } finally {
                 bitmap._trActiveRedrawEntry = previousActiveEntry;
             }
+        }
+
+        function restoreEntryBackgroundPatches(bitmap, entry, clearBounds) {
+            if (!bitmap || !entry) return;
+            const patches = Array.isArray(entry.backgroundPatches) ? entry.backgroundPatches : [];
+            patches.forEach((patch) => restoreBackgroundPatch(bitmap, patch, clearBounds));
+        }
+
+        function restoreBackgroundPatch(bitmap, patch, clearBounds) {
+            if (!bitmap || !patch || !patch.bitmap || typeof bitmap.blt !== 'function') return;
+            const width = positiveNumber(patch.width);
+            const height = positiveNumber(patch.height);
+            if (width <= 0 || height <= 0) return;
+            const x = finiteNumber(patch.x);
+            const y = finiteNumber(patch.y);
+            const patchBounds = rectFromDimensions(x, y, width, height);
+            if (clearBounds && patchBounds && !rectanglesOverlap(clearBounds, patchBounds)) return;
+            bitmap.blt(patch.bitmap, 0, 0, width, height, x, y, width, height);
         }
         
         function markEntryTerminal(entry, status, reason) {

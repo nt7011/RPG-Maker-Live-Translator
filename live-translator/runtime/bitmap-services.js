@@ -243,6 +243,7 @@
                 styleId: style.id,
                 drawState: style.state,
                 backgroundPatch: input.backgroundPatch || null,
+                fallbackBackgroundPatch: input.fallbackBackgroundPatch || null,
                 order: ++state.order,
             };
             state.units.push(unit);

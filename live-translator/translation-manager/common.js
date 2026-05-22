@@ -132,6 +132,13 @@
         };
     }
 
+    function isSnapshotForceAsyncTranslationEnabled(settings = {}) {
+        const snapshot = settings && settings.Snapshot && typeof settings.Snapshot === 'object'
+            ? settings.Snapshot
+            : null;
+        return !!(snapshot && snapshot.ForceAsyncTranslation === true);
+    }
+
     defineRuntimeModule('runtime.translationManagerCommon', {
         noop,
         defaultPreview,
@@ -144,5 +151,6 @@
         createReservedPriorityLanePolicies,
         createTextProcessorProvider,
         createNoneProvider,
+        isSnapshotForceAsyncTranslationEnabled,
     });
 })();

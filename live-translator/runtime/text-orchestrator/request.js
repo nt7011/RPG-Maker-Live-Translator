@@ -14,7 +14,7 @@
     function createController(scope = {}) {
         const { firstString, firstNonEmptyString, clampPriority, normalizeId, mergeDetails, providerSkipDecision, providerUnavailableDecision, serviceSkipDecision, normalizeTranslationHandle, decorateTranslationHandle, textEligibility, activeItems } = scope;
         const callScope = (name) => (...args) => scope[name](...args);
-        const { updateItem, markTranslationRequested, skipItemTranslation, completeItemTranslation, failItemTranslation, queueRenderCommand, getItemById, recordEvent, getCompletedSourceTranslation, reuseCompletedSourceTranslation, describeServiceSkip, isSkippedItem, createSkippedTranslationHandle, resolveRequestPolicy, applyRequestPolicy } = Object.fromEntries(['updateItem', 'markTranslationRequested', 'skipItemTranslation', 'completeItemTranslation', 'failItemTranslation', 'queueRenderCommand', 'getItemById', 'recordEvent', 'getCompletedSourceTranslation', 'reuseCompletedSourceTranslation', 'describeServiceSkip', 'isSkippedItem', 'createSkippedTranslationHandle', 'resolveRequestPolicy', 'applyRequestPolicy'].map((name) => [name, callScope(name)]));
+        const { updateItem, markTranslationRequested, skipItemTranslation, completeItemTranslation, failItemTranslation, queueRenderCommand, getItemById, recordEvent, getCompletedSourceTranslation, reuseCompletedSourceTranslation, lookupForcedAsyncServiceTranslation, describeServiceSkip, isSkippedItem, createSkippedTranslationHandle, resolveRequestPolicy, applyRequestPolicy } = Object.fromEntries(['updateItem', 'markTranslationRequested', 'skipItemTranslation', 'completeItemTranslation', 'failItemTranslation', 'queueRenderCommand', 'getItemById', 'recordEvent', 'getCompletedSourceTranslation', 'reuseCompletedSourceTranslation', 'lookupForcedAsyncServiceTranslation', 'describeServiceSkip', 'isSkippedItem', 'createSkippedTranslationHandle', 'resolveRequestPolicy', 'applyRequestPolicy'].map((name) => [name, callScope(name)]));
 
         /**
          * Request translation for an active item and let the orchestrator own
@@ -155,6 +155,16 @@
             }
             const providerDecision = describeProviderDispatch(eligibility, text);
             if (providerDecision.allowed === false) {
+                const forcedAsync = lookupForcedAsyncServiceTranslation(text);
+                if (forcedAsync) {
+                    return startTranslationRequest(item, text, Object.assign({}, requestOptions, {
+                        sourceHint: forcedAsync.sourceHint,
+                    }), {
+                        hook,
+                        priority,
+                        metadata,
+                    });
+                }
                 return skipItemTranslation(item, providerDecision.decision, {
                     hook,
                     priority,

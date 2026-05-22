@@ -72,7 +72,7 @@
         }
 
         function hasOpenedOnce() {
-            return openedOnce || isKnownOpenFromGuiState();
+            return openedOnce;
         }
 
         function clearOpeningTimeout() {
@@ -105,12 +105,6 @@
         function focusExistingWindow() {
             try {
                 if (!openedWindow) {
-                    if (isKnownOpenFromGuiState()) {
-                        clearOpeningTimeout();
-                        opening = false;
-                        openedOnce = true;
-                        return true;
-                    }
                     markOpen(false);
                     return false;
                 }

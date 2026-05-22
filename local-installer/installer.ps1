@@ -1,7 +1,11 @@
 [CmdletBinding()]
 param(
     [string]$GameRoot = "",
-    [string]$RuntimeSource = ""
+    [string]$RuntimeSource = "",
+    [string]$SnapshotSource = "",
+
+    [ValidateSet("debug", "snapshot")]
+    [string]$PluginProfile = "debug"
 )
 
 $ErrorActionPreference = "Stop"
@@ -65,6 +69,48 @@ function Read-InstallManifest {
     return $manifest
 }
 
+function Resolve-OptionalSnapshotSource {
+    param(
+        [Parameter(Mandatory = $true)][string]$ResolvedRuntimeRoot,
+        [string]$ConfiguredSnapshotSource = "",
+        [bool]$AllowDefaultSnapshotSource = $false
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($ConfiguredSnapshotSource)) {
+        return Get-FullPath (Resolve-InputPath -BasePath (Get-Location).Path -Path $ConfiguredSnapshotSource)
+    }
+
+    if (-not $AllowDefaultSnapshotSource) {
+        return ""
+    }
+
+    $runtimeParent = Split-Path -Path $ResolvedRuntimeRoot -Parent
+    $snapshotCandidate = Get-FullPath (Join-Path -Path $runtimeParent -ChildPath "snapshot")
+    if (Test-Path -LiteralPath $snapshotCandidate -PathType Container) {
+        return $snapshotCandidate
+    }
+
+    return ""
+}
+
+function Read-SnapshotManifest {
+    param([Parameter(Mandatory = $true)][string]$SnapshotRoot)
+
+    $manifestPath = Join-Path -Path $SnapshotRoot -ChildPath "install-manifest.json"
+    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+        throw "snapshot/install-manifest.json not found at $manifestPath"
+    }
+
+    $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ([string]$manifest.module -ne "snapshot") { throw "snapshot/install-manifest.json missing module 'snapshot'" }
+    if (-not $manifest.supportDirectory) { throw "snapshot/install-manifest.json missing supportDirectory" }
+    if (-not $manifest.loader) { throw "snapshot/install-manifest.json missing loader" }
+    if (-not $manifest.freezePlugin) { throw "snapshot/install-manifest.json missing freezePlugin" }
+    if (-not $manifest.replayRuntime) { throw "snapshot/install-manifest.json missing replayRuntime" }
+
+    return $manifest
+}
+
 function Resolve-SupportChildPath {
     param(
         [Parameter(Mandatory = $true)][string]$SupportTargetDir,
@@ -107,11 +153,55 @@ function Find-PluginLayout {
     throw "Could not find js\plugins or www\js\plugins directory under $ResolvedGameRoot"
 }
 
+function New-InstallerPackageName {
+    param([Parameter(Mandatory = $true)][string]$ResolvedGameRoot)
+
+    # NW.js uses package.json "name" when choosing the Chromium profile
+    # directory. Own that value so unrelated games never share a stale profile.
+    $folderName = Split-Path -Path $ResolvedGameRoot -Leaf
+    if ([string]::IsNullOrWhiteSpace($folderName)) {
+        $folderName = "game"
+    }
+
+    $safeBase = $folderName.Trim().ToLowerInvariant()
+    $safeBase = [regex]::Replace($safeBase, "\s+", "-")
+    $safeBase = [regex]::Replace($safeBase, "[^a-z0-9._-]+", "-")
+    $safeBase = [regex]::Replace($safeBase, "-{2,}", "-")
+    $safeBase = $safeBase.Trim([char[]]"._-")
+    if ([string]::IsNullOrWhiteSpace($safeBase)) {
+        $safeBase = "game"
+    }
+
+    $timestamp = Get-Date -Format "yyyyMMddHHmmssfff"
+    return "$safeBase-$timestamp"
+}
+
+function Set-PackageNameInContent {
+    param(
+        [Parameter(Mandatory = $true)][string]$PackageContent,
+        [Parameter(Mandatory = $true)][string]$PackageName
+    )
+
+    $namePattern = '("name"\s*:\s*)(?:"(?:\\.|[^"\\])*"|null|true|false|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)'
+    if (-not [regex]::IsMatch($PackageContent, $namePattern)) {
+        throw "Could not find a JSON name field to update"
+    }
+
+    return [regex]::Replace(
+        $PackageContent,
+        $namePattern,
+        { param($match) $match.Groups[1].Value + '"' + $PackageName + '"' },
+        1
+    )
+}
+
 function Repair-PackageName {
     param([Parameter(Mandatory = $true)][string]$ResolvedGameRoot)
 
-    # RPG Maker/NW.js can fail on an empty package name. Fix only that narrow,
-    # known-bad shape and leave every other package.json untouched.
+    # RPG Maker/NW.js profile state is keyed by package name. Rewrite package
+    # names we find so old or unrelated Chromium profile state cannot poison
+    # the game executable.
+    $installerPackageName = New-InstallerPackageName -ResolvedGameRoot $ResolvedGameRoot
     $packagePaths = @("package.json", "www\package.json")
     $foundAny = $false
 
@@ -124,10 +214,9 @@ function Repair-PackageName {
             $packageContent = Get-Content -LiteralPath $fullPath -Raw -Encoding UTF8
             $packageJson = $packageContent | ConvertFrom-Json
             $hasNameProperty = $null -ne $packageJson.PSObject.Properties["name"]
-            $currentName = if ($hasNameProperty) { [string]$packageJson.name } else { $null }
 
-            if ($hasNameProperty -and $null -ne $currentName -and $currentName.Trim() -eq "") {
-                Write-Host "Found empty name field in $packagePath, setting to 'Game'" -ForegroundColor Yellow
+            if ($hasNameProperty) {
+                Write-Host "Setting $packagePath name field to '$installerPackageName'" -ForegroundColor Yellow
 
                 $backupPath = "$fullPath.backup"
                 if (-not (Test-Path -LiteralPath $backupPath -PathType Leaf)) {
@@ -135,13 +224,11 @@ function Repair-PackageName {
                     Write-Host "Backup created: $packagePath.backup" -ForegroundColor Cyan
                 }
 
-                $updatedContent = $packageContent -replace '("name"\s*:\s*)""', '$1"Game"'
+                $updatedContent = Set-PackageNameInContent -PackageContent $packageContent -PackageName $installerPackageName
                 Set-Content -LiteralPath $fullPath -Value $updatedContent -Encoding UTF8 -Force
-                Write-Host "Updated name field to 'Game' in $packagePath" -ForegroundColor Green
-            } elseif ($hasNameProperty -and -not [string]::IsNullOrWhiteSpace($currentName)) {
-                Write-Host "$packagePath name field is already set to: '$currentName'" -ForegroundColor Cyan
+                Write-Host "Updated name field in $packagePath" -ForegroundColor Green
             } else {
-                Write-Host "No empty name field found in $packagePath (leaving file unchanged)" -ForegroundColor Cyan
+                Write-Host "No name field found in $packagePath (leaving file unchanged)" -ForegroundColor Cyan
             }
         } catch {
             Write-Host "Warning: Could not process ${packagePath}: $($_.Exception.Message)" -ForegroundColor Yellow
@@ -181,6 +268,49 @@ function Copy-RuntimeBundle {
         Copy-Item -LiteralPath $_.FullName -Destination $supportFull -Recurse -Force
     }
     Write-Host "Copied live-translator runtime bundle to $supportFull" -ForegroundColor Yellow
+}
+
+function Copy-OptionalSnapshotBundle {
+    param(
+        [Parameter(Mandatory = $true)][string]$ResolvedSnapshotRoot,
+        [Parameter(Mandatory = $true)][string]$PluginsDir
+    )
+
+    if ([string]::IsNullOrWhiteSpace($ResolvedSnapshotRoot)) { return $false }
+
+    $snapshotFull = Get-FullPath $ResolvedSnapshotRoot
+    $pluginsFull = Get-FullPath $PluginsDir
+    if (-not (Test-Path -LiteralPath $snapshotFull -PathType Container)) {
+        throw "Snapshot source does not exist: $snapshotFull"
+    }
+
+    $snapshotManifest = Read-SnapshotManifest -SnapshotRoot $snapshotFull
+    foreach ($field in @("loader", "freezePlugin", "replayRuntime")) {
+        $relativePath = [string]$snapshotManifest.$field
+        $sourcePath = Join-Path -Path $snapshotFull -ChildPath $relativePath
+        if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
+            throw "$relativePath not found at $sourcePath"
+        }
+    }
+
+    $snapshotTargetFull = Get-FullPath (Join-Path -Path $pluginsFull -ChildPath ([string]$snapshotManifest.supportDirectory))
+    if (-not (Test-IsUnderPath -Path $snapshotTargetFull -Parent $pluginsFull)) {
+        throw "Refusing to use snapshot directory outside plugin folder: $snapshotTargetFull"
+    }
+    if ((Test-IsUnderPath -Path $snapshotTargetFull -Parent $snapshotFull) -or
+        (Test-IsUnderPath -Path $snapshotFull -Parent $snapshotTargetFull)) {
+        throw "Snapshot source and target must be separate directories."
+    }
+
+    if (-not (Test-Path -LiteralPath $snapshotTargetFull -PathType Container)) {
+        New-Item -ItemType Directory -Path $snapshotTargetFull -Force | Out-Null
+    }
+
+    Get-ChildItem -LiteralPath $snapshotFull -Force | ForEach-Object {
+        Copy-Item -LiteralPath $_.FullName -Destination $snapshotTargetFull -Recurse -Force
+    }
+    Write-Host "Installed optional snapshot plugin to $snapshotTargetFull" -ForegroundColor Cyan
+    return $true
 }
 
 function Resolve-SettingsSource {
@@ -289,37 +419,232 @@ function Get-LegacyPluginEntryName {
     return $entryName
 }
 
-function Test-PluginEntryExists {
+function Test-NameInList {
     param(
-        [Parameter(Mandatory = $true)][string]$PluginsContent,
-        [Parameter(Mandatory = $true)][string]$PluginEntryName
+        [string]$Name,
+        [string[]]$Names = @()
     )
 
-    $escapedName = [regex]::Escape($PluginEntryName)
-    return $PluginsContent -match ('"name"\s*:\s*"' + $escapedName + '"')
-}
-
-function Rename-PluginEntry {
-    param(
-        [Parameter(Mandatory = $true)][string]$PluginsContent,
-        [Parameter(Mandatory = $true)][string]$OldName,
-        [Parameter(Mandatory = $true)][string]$NewName
-    )
-
-    $escapedName = [regex]::Escape($OldName)
-    $regex = [regex]('("name"\s*:\s*")' + $escapedName + '(")')
-    $evaluator = [System.Text.RegularExpressions.MatchEvaluator]{
-        param($match)
-        return $match.Groups[1].Value + $NewName + $match.Groups[2].Value
+    if ([string]::IsNullOrWhiteSpace($Name)) { return $false }
+    foreach ($candidate in @($Names)) {
+        if (-not [string]::IsNullOrWhiteSpace($candidate) -and
+            $Name.Equals($candidate, [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $true
+        }
     }
-    return $regex.Replace($PluginsContent, $evaluator, 1)
+    return $false
 }
 
-function Ensure-PluginEntry {
+function Find-MatchingArrayClose {
+    param(
+        [Parameter(Mandatory = $true)][string]$Content,
+        [Parameter(Mandatory = $true)][int]$OpenIndex
+    )
+
+    $depth = 0
+    $inString = $false
+    $quote = [char]0
+    $escape = $false
+    $lineComment = $false
+    $blockComment = $false
+    $singleQuote = [char]39
+    $doubleQuote = [char]34
+
+    for ($index = $OpenIndex; $index -lt $Content.Length; $index++) {
+        $char = $Content[$index]
+        $next = if ($index + 1 -lt $Content.Length) { $Content[$index + 1] } else { [char]0 }
+
+        if ($lineComment) {
+            if ($char -eq "`n") { $lineComment = $false }
+            continue
+        }
+        if ($blockComment) {
+            if ($char -eq "*" -and $next -eq "/") {
+                $blockComment = $false
+                $index++
+            }
+            continue
+        }
+        if ($inString) {
+            if ($escape) {
+                $escape = $false
+            } elseif ($char -eq "\") {
+                $escape = $true
+            } elseif ($char -eq $quote) {
+                $inString = $false
+            }
+            continue
+        }
+
+        if ($char -eq "/" -and $next -eq "/") {
+            $lineComment = $true
+            $index++
+            continue
+        }
+        if ($char -eq "/" -and $next -eq "*") {
+            $blockComment = $true
+            $index++
+            continue
+        }
+        if ($char -eq $singleQuote -or $char -eq $doubleQuote) {
+            $inString = $true
+            $quote = $char
+            continue
+        }
+        if ($char -eq "[") {
+            $depth++
+            continue
+        }
+        if ($char -eq "]") {
+            $depth--
+            if ($depth -eq 0) { return $index }
+            if ($depth -lt 0) { break }
+        }
+    }
+
+    throw "Could not find the closing bracket for the plugins array."
+}
+
+function Find-PluginsArrayLiteral {
+    param(
+        [Parameter(Mandatory = $true)][string]$PluginsContent,
+        [Parameter(Mandatory = $true)][string]$PluginsFile
+    )
+
+    # RPG Maker normally writes "var $plugins = [...]". Deployed games may keep
+    # the same array under "plugins = [...]"; parse the array instead of splitting
+    # on commas, because plugin parameters can contain nested objects and lists.
+    $assignment = [regex]'(?s)(?:var\s+)?(?:\$)?plugins\s*=\s*\['
+    $match = $assignment.Match($PluginsContent)
+    if (-not $match.Success) {
+        throw "Could not find a plugins = [...] array in $PluginsFile"
+    }
+
+    $openIndex = $match.Index + $match.Value.LastIndexOf("[")
+    $closeIndex = Find-MatchingArrayClose -Content $PluginsContent -OpenIndex $openIndex
+    return [pscustomobject]@{
+        OpenIndex = $openIndex
+        CloseIndex = $closeIndex
+        Inner = $PluginsContent.Substring($openIndex + 1, $closeIndex - $openIndex - 1)
+    }
+}
+
+function Split-PluginsArrayEntries {
+    param([Parameter(Mandatory = $true)][string]$ArrayContent)
+
+    $entries = @()
+    $start = 0
+    $braceDepth = 0
+    $bracketDepth = 0
+    $parenDepth = 0
+    $inString = $false
+    $quote = [char]0
+    $escape = $false
+    $lineComment = $false
+    $blockComment = $false
+    $singleQuote = [char]39
+    $doubleQuote = [char]34
+
+    for ($index = 0; $index -lt $ArrayContent.Length; $index++) {
+        $char = $ArrayContent[$index]
+        $next = if ($index + 1 -lt $ArrayContent.Length) { $ArrayContent[$index + 1] } else { [char]0 }
+
+        if ($lineComment) {
+            if ($char -eq "`n") { $lineComment = $false }
+            continue
+        }
+        if ($blockComment) {
+            if ($char -eq "*" -and $next -eq "/") {
+                $blockComment = $false
+                $index++
+            }
+            continue
+        }
+        if ($inString) {
+            if ($escape) {
+                $escape = $false
+            } elseif ($char -eq "\") {
+                $escape = $true
+            } elseif ($char -eq $quote) {
+                $inString = $false
+            }
+            continue
+        }
+
+        if ($char -eq "/" -and $next -eq "/") {
+            $lineComment = $true
+            $index++
+            continue
+        }
+        if ($char -eq "/" -and $next -eq "*") {
+            $blockComment = $true
+            $index++
+            continue
+        }
+        if ($char -eq $singleQuote -or $char -eq $doubleQuote) {
+            $inString = $true
+            $quote = $char
+            continue
+        }
+
+        switch ($char) {
+            "{" { $braceDepth++; break }
+            "}" { if ($braceDepth -gt 0) { $braceDepth-- }; break }
+            "[" { $bracketDepth++; break }
+            "]" { if ($bracketDepth -gt 0) { $bracketDepth-- }; break }
+            "(" { $parenDepth++; break }
+            ")" { if ($parenDepth -gt 0) { $parenDepth-- }; break }
+            "," {
+                if ($braceDepth -eq 0 -and $bracketDepth -eq 0 -and $parenDepth -eq 0) {
+                    $entry = $ArrayContent.Substring($start, $index - $start).Trim()
+                    if (-not [string]::IsNullOrWhiteSpace($entry)) { $entries += $entry }
+                    $start = $index + 1
+                }
+                break
+            }
+        }
+    }
+
+    $lastEntry = $ArrayContent.Substring($start).Trim()
+    if (-not [string]::IsNullOrWhiteSpace($lastEntry)) { $entries += $lastEntry }
+    return @($entries)
+}
+
+function Get-PluginNameFromEntry {
+    param([Parameter(Mandatory = $true)][string]$EntryText)
+
+    $doubleQuoted = [regex]::Match($EntryText, '"name"\s*:\s*"(?<name>(?:\\.|[^"\\])*)"')
+    if ($doubleQuoted.Success) {
+        return $doubleQuoted.Groups["name"].Value.Replace('\/', '/')
+    }
+
+    $singleQuoted = [regex]::Match($EntryText, "'name'\s*:\s*'(?<name>(?:\\.|[^'\\])*)'")
+    if ($singleQuoted.Success) {
+        return $singleQuoted.Groups["name"].Value.Replace('\/', '/')
+    }
+
+    return ""
+}
+
+function New-PluginEntryJson {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [string]$Description = ""
+    )
+
+    return ([ordered]@{
+            name = $Name
+            status = $true
+            description = $Description
+            parameters = @{}
+        } | ConvertTo-Json -Compress)
+}
+
+function Sync-PluginEntries {
     param(
         [Parameter(Mandatory = $true)][string]$PluginsFile,
-        [Parameter(Mandatory = $true)][string]$PluginEntryName,
-        [Parameter(Mandatory = $true)][string]$LegacyPluginEntryName
+        [object[]]$DesiredPlugins = @(),
+        [string[]]$RemovePluginNames = @()
     )
 
     if (-not (Test-Path -LiteralPath $PluginsFile -PathType Leaf)) {
@@ -327,43 +652,74 @@ function Ensure-PluginEntry {
     }
 
     $pluginsContent = Get-Content -LiteralPath $PluginsFile -Raw -Encoding UTF8
-    if (Test-PluginEntryExists -PluginsContent $pluginsContent -PluginEntryName $PluginEntryName) {
-        Write-Host "Plugin entry already exists in $PluginsFile" -ForegroundColor Yellow
+    $arrayLiteral = Find-PluginsArrayLiteral -PluginsContent $pluginsContent -PluginsFile $PluginsFile
+    $entries = Split-PluginsArrayEntries -ArrayContent $arrayLiteral.Inner
+    $desiredNames = @($DesiredPlugins | ForEach-Object { [string]$_.Name } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+
+    $keptEntries = @()
+    $presentDesired = @{}
+    $changed = $false
+    $removedNames = @()
+
+    foreach ($entry in $entries) {
+        $entryName = Get-PluginNameFromEntry -EntryText $entry
+        if (Test-NameInList -Name $entryName -Names $RemovePluginNames) {
+            $removedNames += $entryName
+            $changed = $true
+            continue
+        }
+
+        if (Test-NameInList -Name $entryName -Names $desiredNames) {
+            $key = $entryName.ToLowerInvariant()
+            if ($presentDesired.ContainsKey($key)) {
+                $removedNames += $entryName
+                $changed = $true
+                continue
+            }
+            $presentDesired[$key] = $true
+        }
+
+        $keptEntries += $entry
+    }
+
+    $addedNames = @()
+    foreach ($plugin in @($DesiredPlugins)) {
+        $name = [string]$plugin.Name
+        if ([string]::IsNullOrWhiteSpace($name)) { continue }
+        $key = $name.ToLowerInvariant()
+        if ($presentDesired.ContainsKey($key)) { continue }
+
+        $keptEntries += New-PluginEntryJson -Name $name -Description ([string]$plugin.Description)
+        $presentDesired[$key] = $true
+        $addedNames += $name
+        $changed = $true
+    }
+
+    if (-not $changed) {
+        Write-Host "Managed plugin entries already match $PluginProfile profile in $PluginsFile" -ForegroundColor Yellow
         return $false
     }
 
     Copy-Item -LiteralPath $PluginsFile -Destination "$PluginsFile.backup" -Force
     Write-Host "Backup created: $PluginsFile.backup" -ForegroundColor Cyan
 
-    if ($LegacyPluginEntryName -and
-        (Test-PluginEntryExists -PluginsContent $pluginsContent -PluginEntryName $LegacyPluginEntryName)) {
-        $updatedContent = Rename-PluginEntry `
-            -PluginsContent $pluginsContent `
-            -OldName $LegacyPluginEntryName `
-            -NewName $PluginEntryName
-        Set-Content -LiteralPath $PluginsFile -Value $updatedContent -Encoding UTF8 -Force
-        Write-Host "Updated plugin entry to $PluginEntryName in $PluginsFile" -ForegroundColor Green
-        return $true
+    $prefix = $pluginsContent.Substring(0, $arrayLiteral.OpenIndex + 1)
+    $suffix = $pluginsContent.Substring($arrayLiteral.CloseIndex)
+    $newline = "`r`n"
+    $body = if ($keptEntries.Count -gt 0) {
+        $newline + (($keptEntries | ForEach-Object { "    " + $_.Trim() }) -join ("," + $newline)) + $newline
+    } else {
+        ""
     }
-
-    Write-Host "Adding plugin entry to $PluginsFile..." -ForegroundColor Yellow
-    $entryJson = [ordered]@{
-        name = $PluginEntryName
-        status = $true
-        description = "Entry point for the live translation system"
-        parameters = @{}
-    } | ConvertTo-Json -Compress
-    $entry = "$entryJson,"
-    $regex = [regex]'(\[)'
-    $updatedContent = $regex.Replace($pluginsContent, '${1}' + $entry, 1)
-
-    if ($updatedContent -eq $pluginsContent) {
-        Write-Host "Warning: Unable to inject plugin entry into $PluginsFile automatically" -ForegroundColor Yellow
-        return $true
-    }
-
+    $updatedContent = $prefix + $body + $suffix
     Set-Content -LiteralPath $PluginsFile -Value $updatedContent -Encoding UTF8 -Force
-    Write-Host "Plugin entry added to $PluginsFile" -ForegroundColor Green
+
+    if ($addedNames.Count -gt 0) {
+        Write-Host "Added managed plugin entry: $($addedNames -join ', ')" -ForegroundColor Green
+    }
+    if ($removedNames.Count -gt 0) {
+        Write-Host "Removed managed plugin entry: $($removedNames -join ', ')" -ForegroundColor Green
+    }
     return $true
 }
 
@@ -372,6 +728,11 @@ $resolvedRuntimeSource = if ([string]::IsNullOrWhiteSpace($RuntimeSource)) {
 } else {
     Get-FullPath (Resolve-InputPath -BasePath (Get-Location).Path -Path $RuntimeSource)
 }
+
+$resolvedSnapshotSource = Resolve-OptionalSnapshotSource `
+    -ResolvedRuntimeRoot $resolvedRuntimeSource `
+    -ConfiguredSnapshotSource $SnapshotSource `
+    -AllowDefaultSnapshotSource ($PluginProfile -eq "snapshot")
 
 $resolvedGameRoot = if ([string]::IsNullOrWhiteSpace($GameRoot)) {
     Get-FullPath $defaultRoot
@@ -389,6 +750,10 @@ try {
     }
 
     $manifest = Read-InstallManifest -ManifestPath $manifestPath
+    if ($PluginProfile -eq "snapshot" -and [string]::IsNullOrWhiteSpace($resolvedSnapshotSource)) {
+        throw "Snapshot profile requires a snapshot source folder."
+    }
+
     $layout = Find-PluginLayout -ResolvedGameRoot $resolvedGameRoot
     $pluginsDirFull = Get-FullPath $layout.PluginsDir
     $supportTargetFull = Get-FullPath (Join-Path -Path $pluginsDirFull -ChildPath ([string]$manifest.supportDirectory))
@@ -404,6 +769,14 @@ try {
 
     Repair-PackageName -ResolvedGameRoot $resolvedGameRoot
     Copy-RuntimeBundle -ResolvedRuntimeRoot $resolvedRuntimeSource -SupportTargetDir $supportTargetFull
+    if ($PluginProfile -eq "snapshot") {
+        Write-Host "Snapshot profile enables the standard live-translator plugin entry before the snapshot harness." -ForegroundColor Cyan
+    }
+    if (-not [string]::IsNullOrWhiteSpace($resolvedSnapshotSource)) {
+        Copy-OptionalSnapshotBundle `
+            -ResolvedSnapshotRoot $resolvedSnapshotSource `
+            -PluginsDir $pluginsDirFull | Out-Null
+    }
     Install-SettingsFile `
         -InstallerRoot $scriptRoot `
         -ResolvedRuntimeRoot $resolvedRuntimeSource `
@@ -415,10 +788,43 @@ try {
         -SupportDirectory ([string]$manifest.supportDirectory) `
         -LoaderFile ([string]$manifest.loader)
     $legacyPluginEntryName = Get-LegacyPluginEntryName -LoaderFile ([string]$manifest.loader)
-    $createdPluginsBackup = Ensure-PluginEntry `
+    $snapshotPluginEntryName = ""
+    if (-not [string]::IsNullOrWhiteSpace($resolvedSnapshotSource)) {
+        $snapshotManifest = Read-SnapshotManifest -SnapshotRoot $resolvedSnapshotSource
+        $snapshotPluginEntryName = Get-PluginEntryName `
+            -SupportDirectory ([string]$snapshotManifest.supportDirectory) `
+            -LoaderFile ([string]$snapshotManifest.loader)
+    } else {
+        $snapshotPluginEntryName = "snapshot/snapshot-loader"
+    }
+
+    $desiredPlugins = if ($PluginProfile -eq "snapshot") {
+        @(
+            [pscustomobject]@{
+                Name = $pluginEntryName
+                Description = "Entry point for the live translation system"
+            },
+            [pscustomobject]@{
+                Name = $snapshotPluginEntryName
+                Description = "Snapshot capture and validation harness"
+            }
+        )
+    } else {
+        @([pscustomobject]@{
+                Name = $pluginEntryName
+                Description = "Entry point for the live translation system"
+            })
+    }
+    $removePlugins = if ($PluginProfile -eq "snapshot") {
+        @($legacyPluginEntryName)
+    } else {
+        @($legacyPluginEntryName, $snapshotPluginEntryName)
+    }
+
+    $createdPluginsBackup = Sync-PluginEntries `
         -PluginsFile ([string]$layout.PluginsFile) `
-        -PluginEntryName $pluginEntryName `
-        -LegacyPluginEntryName $legacyPluginEntryName
+        -DesiredPlugins $desiredPlugins `
+        -RemovePluginNames $removePlugins
 } catch {
     $exitCode = 1
     Write-Host "Installation failed: $($_.Exception.Message)" -ForegroundColor Red

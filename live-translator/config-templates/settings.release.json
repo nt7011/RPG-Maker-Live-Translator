@@ -12,6 +12,9 @@
     "performanceProfiler": {
         "enabled": false
     },
+    "Snapshot": {
+        "ForceAsyncTranslation": false
+    },
     "diagnostics": {
         "performanceMode": true
     },
