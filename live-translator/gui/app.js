@@ -11,21 +11,34 @@
             parseVersionPayload,
             getVersionCheckResult,
             validateVersionCheckUrl,
+            fetchRemoteTextWithNode,
+            replaceVersionHttpsForTest(value) {
+                const previous = https;
+                https = value;
+                return previous;
+            },
             normalizeTextOrchestratorSnapshot,
             normalizeForesightSnapshot,
             normalizeDrawCaptureTraceSnapshot,
-            getMonitorSettings,
-            isForesightEnabled,
-            shouldShowForesightSpoilers,
-            shouldCensorForesightSpoilerRecord,
-            isDrawCaptureTraceEnabled,
-            getForesightDisabledMessage,
+            normalizeGuiDiagnosticsMode,
+            createGuiConfiguredPolicy,
+            getGuiConfiguredPolicy,
+            getGuiRuntimeState,
+            getGuiViewState,
+            getGuiEffectivePolicy,
+            refreshGuiPolicySnapshot,
+            getGuiDiagnosticsSnapshotRequest,
+            isGuiTextRecordSpoilerCensored,
             syncRuntimeDiagnosticsForGuiState,
             buildDrawCaptureTraceCopyPayload,
             buildForesightDiagnosticsCopyPayload,
             buildTextRecordCopyPayload,
-            getTextRecordPolicyDiagnostics,
+            getTextRecordRuntimePolicyDiagnostics,
             getTextRecordTranslationRailInfo,
+            syncTextRecordListBodyVisibility,
+            createLmStudioStatusModel,
+            formatLmStudioModelLabel,
+            formatLmStudioComplaint,
         };
     }
 

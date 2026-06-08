@@ -12,9 +12,15 @@
     }
 
     function createController(scope = {}) {
-        const { firstString, normalizeInputRecord, applyPatch, normalizeId, normalizeStatus, statusFromTranslationEvent, mergeDetails, cloneItem, mergeProviderDispatchPolicy, normalizeTranslationService, preview, textEligibility, events } = scope;
-        const callScope = (name) => (...args) => scope[name](...args);
-        const { validateObservationOwnership, cancelItemTranslation, rejectOpenRenderCommands, upsertItem, createEmptyItem, getItemById, placeInactiveItem, releaseSlotIndexesForItem, claimSlotSignature, resetItemForSourceReplacement, recordEvent, resolveObservationIdentity, getRestoredItemStatus, shouldPreserveRefreshStatus, rememberSourceTranslation, hydrateSourceTranslation, applyObservationPolicy, applyObservationPriorityPolicy, resolveLifecyclePolicy, applyLifecyclePolicy } = Object.fromEntries(['validateObservationOwnership', 'cancelItemTranslation', 'rejectOpenRenderCommands', 'upsertItem', 'createEmptyItem', 'getItemById', 'placeInactiveItem', 'releaseSlotIndexesForItem', 'claimSlotSignature', 'resetItemForSourceReplacement', 'recordEvent', 'resolveObservationIdentity', 'getRestoredItemStatus', 'shouldPreserveRefreshStatus', 'rememberSourceTranslation', 'hydrateSourceTranslation', 'applyObservationPolicy', 'applyObservationPriorityPolicy', 'resolveLifecyclePolicy', 'applyLifecyclePolicy'].map((name) => [name, callScope(name)]));
+        const { firstString, normalizeInputRecord, applyPatch, normalizeId, normalizeStatus, statusFromTranslationEvent, mergeDetails, cloneItem, createLifecycleResult, mergeProviderDispatchPolicy, normalizeTranslationService, preview, textEligibility, textLifecycle, events } = scope;
+        const { resolveLifecyclePolicy, applyLifecyclePolicy, applyObservationPolicy, applyObservationPriorityPolicy } = scope.controllerFacades.policy;
+        const { validateObservationOwnership } = scope.controllerFacades.ownership;
+        const { cancelItemTranslation } = scope.controllerFacades.translationState;
+        const { rejectOpenRenderCommands } = scope.controllerFacades.render;
+        const { upsertItem, createEmptyItem, getItemById, placeInactiveItem, releaseSlotIndexesForItem, claimSlotSignature, resetItemForSourceReplacement, setItemRenderCycleFromObservation, markItemRenderCycleTranslationKnown } = scope.controllerFacades.items;
+        const { recordEvent } = scope.controllerFacades.events;
+        const { resolveObservationIdentity, getRestoredItemStatus, shouldPreserveRefreshStatus } = scope.controllerFacades.identity;
+        const { rememberSourceTranslation, hydrateSourceTranslation } = scope.controllerFacades.sourceCache;
 
         /**
          * Observe or refresh a text item.
@@ -65,8 +71,14 @@
                     || Object.prototype.hasOwnProperty.call(input, 'translationStatus')));
             if (statusWasProvided) {
                 const incomingStatus = normalizeStatus(source.status, 'detected');
-                if (incomingStatus === 'pending' || incomingStatus === 'completed') {
-                    hydrateSourceTranslation(source);
+                const beforeNativePaint = isBeforeNativePaint(source);
+                if ((incomingStatus === 'detected' && beforeNativePaint)
+                    || incomingStatus === 'pending'
+                    || incomingStatus === 'translating'
+                    || incomingStatus === 'completed') {
+                    hydrateSourceTranslation(source, {
+                        includeForcedAsync: beforeNativePaint,
+                    });
                 }
             }
             if (!eligibility.eligible) {
@@ -96,6 +108,7 @@
                 });
             }
             const item = upsertItem(id, source);
+            const renderCycleTransition = setItemRenderCycleFromObservation(item, source);
             if (identity.slotSignature) claimSlotSignature(identity.slotSignature, id);
             recordEvent(eventOptions.eventType || 'item.observed', item, {
                 message: identity.sourceChangedInPlace
@@ -107,9 +120,20 @@
                     refreshed: identity.refreshed === true,
                     explicitId: identity.explicitId || '',
                     sourceChangedInPlace: identity.sourceChangedInPlace === true,
+                    renderCyclePhase: renderCycleTransition && renderCycleTransition.phase ? renderCycleTransition.phase : '',
+                    renderCycleRejected: renderCycleTransition && renderCycleTransition.ok === false,
                 }),
             });
             return cloneItem(item);
+        }
+
+        function isBeforeNativePaint(source) {
+            const boundary = source && source.drawBoundary && typeof source.drawBoundary === 'object'
+                ? source.drawBoundary
+                : null;
+            return !!(boundary
+                && boundary.beforeNativePaint === true
+                && boundary.sourceCommitted !== true);
         }
 
         /**
@@ -129,11 +153,33 @@
                 delete source.status;
             }
             const item = upsertItem(key, source);
+            const renderCycleTransition = setItemRenderCycleFromObservation(item, source);
+            const translationCycleTransition = markUpdatedTranslationKnown(item, source, optionsForEvent.message || 'item-updated');
             recordEvent(optionsForEvent.eventType || 'item.updated', item, {
                 message: optionsForEvent.message || '',
-                details: mergeDetails(optionsForEvent.details, optionsForEvent.decision && optionsForEvent.decision.details),
+                details: mergeDetails(optionsForEvent.details, optionsForEvent.decision && optionsForEvent.decision.details, {
+                    renderCyclePhase: renderCycleTransition && renderCycleTransition.phase ? renderCycleTransition.phase : '',
+                    renderCycleRejected: renderCycleTransition && renderCycleTransition.ok === false,
+                    translationCyclePhase: translationCycleTransition && translationCycleTransition.phase ? translationCycleTransition.phase : '',
+                    translationCycleRejected: translationCycleTransition && translationCycleTransition.ok === false,
+                }),
             });
             return cloneItem(item);
+        }
+
+        function markUpdatedTranslationKnown(item, source, reason) {
+            if (!item || !source || typeof source !== 'object') return null;
+            const status = normalizeStatus(source.status, '');
+            const translated = firstString(source.translationReceived, source.translation, source.translationDrawn);
+            if (status !== 'completed' && !translated) return null;
+            return markItemRenderCycleTranslationKnown(item, translated, {
+                reason: firstString(reason, 'item-updated'),
+                sourceHint: source.sourceHint || item.sourceHint || '',
+                details: {
+                    status,
+                    update: true,
+                },
+            });
         }
 
         /**
@@ -146,14 +192,25 @@
          */
         function retireItem(id, status, optionsForEvent = {}) {
             const key = normalizeId(id);
-            if (!key) return null;
+            if (!key) {
+                return createLifecycleResult('missing-id', {
+                    handled: false,
+                    changed: false,
+                    terminal: true,
+                    reason: 'missing-id',
+                });
+            }
             const existing = getItemById(key) || createEmptyItem(key);
             const lifecyclePolicy = resolveLifecyclePolicy(existing, status, optionsForEvent);
             const eventDetails = mergeDetails(optionsForEvent.details, lifecyclePolicy.details);
             applyLifecyclePolicy(existing, lifecyclePolicy);
             applyPatch(existing, normalizeInputRecord({ id: key, status }));
-            existing.status = normalizeStatus(status, 'stale');
-            existing.active = false;
+            textLifecycle.applyTransition(existing, normalizeStatus(status, 'stale'), {
+                active: false,
+                detached: existing.detached === true,
+                requestActive: false,
+                retire: true,
+            });
             existing.updatedAt = Date.now();
             existing.deactivatedAt = existing.updatedAt;
             rejectOpenRenderCommands(existing, optionsForEvent.message || existing.status || 'item-retired', eventDetails);
@@ -164,7 +221,20 @@
                 message: optionsForEvent.message || '',
                 details: eventDetails,
             });
-            return cloneItem(existing);
+            const item = cloneItem(existing);
+            return createLifecycleResult('retired', {
+                handled: true,
+                changed: true,
+                terminal: true,
+                recordId: key,
+                id: key,
+                reason: firstString(optionsForEvent.message, existing.status, 'item-retired'),
+                item,
+                itemStatus: existing.status,
+                active: false,
+                detached: existing.detached === true,
+                archived: existing.archived === true,
+            });
         }
 
         /**

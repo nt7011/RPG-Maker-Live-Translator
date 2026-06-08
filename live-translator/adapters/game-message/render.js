@@ -10,11 +10,20 @@
     if (typeof defineRuntimeModule !== 'function') {
         throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/game-message/render.js.');
     }
+    const requireRuntimeModule = globalScope.LiveTranslatorRequire;
+    if (typeof requireRuntimeModule !== 'function') {
+        throw new Error('[LiveTranslator] runtime module require is unavailable before adapters/game-message/render.js.');
+    }
+    const displayStateModule = requireRuntimeModule('runtime.displayState');
 
     function createController(scope = {}) {
         const { logger, dbg, preview, stripControls, adapterContract, detachedRecords } = scope;
-        const callScope = (name) => (...args) => scope[name](...args);
-        const { restoreMessageText, redrawMessageText, applyPendingMessageRedraw, createPendingRenderDecision, isSessionCurrent, isCurrentTranslation, getWindowType, updateItem, retireItem, resolveMessageRecord } = Object.fromEntries(['restoreMessageText', 'redrawMessageText', 'applyPendingMessageRedraw', 'createPendingRenderDecision', 'isSessionCurrent', 'isCurrentTranslation', 'getWindowType', 'updateItem', 'retireItem', 'resolveMessageRecord'].map((name) => [name, callScope(name)]));
+        const displayState = displayStateModule.createDisplayStateService(scope.globalScope || globalScope);
+        const { prepareMessageRedrawText } = scope.controllerFacades.evaluation;
+        const { restoreMessageText } = scope.controllerFacades.text;
+        const { redrawMessageText, createPendingRenderDecision } = scope.controllerFacades.redraw;
+        const { getWindowType, updateItem, retireItem, resolveMessageRecord } = scope.controllerFacades.records;
+        const { isSessionCurrent, isCurrentTranslation, getMessageRenderSession, getPendingMessageRedrawSession, clearMessageRequestSession, getMessageStreamPreviewText, isMessageStreamPreviewCurrent, stopMessageStreamPreview, clearPendingStreamPreviewSession } = scope.controllerFacades.session;
 
         /**
          * Apply a completed translation render command accepted by the contract gate.
@@ -27,8 +36,11 @@
             const translated = typeof command.text === 'string' ? command.text : '';
             let restored = restoreMessageText(translated, payload);
             if (typeof restored !== 'string' || !restored.trim()) restored = payload.resolved;
+            const prepared = prepareMessageRedrawText(windowInstance, restored, payload, {
+                streamingPreview: false,
+            });
 
-            const restoredVisible = stripControls(restored || '').trim();
+            const restoredVisible = stripControls((prepared && prepared.text) || restored || '').trim();
             const renderDetails = {
                 source: 'message',
                 sessionId,
@@ -38,22 +50,25 @@
                     : translated,
             };
 
-            if (!restoredVisible) {
-                skipRender(record, windowInstance, payload, sessionId, 'restored text empty', renderDetails);
+            if (!prepared || !prepared.ok || !restoredVisible) {
+                skipRender(record, windowInstance, payload, sessionId, prepared && prepared.reason ? prepared.reason : 'restored text empty', renderDetails);
                 return true;
             }
             const matchedOriginal = restoredVisible === payload.visible;
             const appliedDetails = Object.assign({}, renderDetails, {
-                translationDrawn: restored,
+                translationDrawn: prepared.text,
+                translationRestored: restored,
                 matchedOriginal,
             });
             const pendingRenderDecision = createPendingRenderDecision(command, route, appliedDetails);
 
-            stopStreamPreview(windowInstance, sessionId, windowInstance._trMessageRequestToken, true);
+            const requestToken = getMessageRenderSession(windowInstance).requestToken;
+            stopStreamPreview(windowInstance, sessionId, requestToken, true);
             dbg(`[GameMessage] Translation: "${preview(payload.visible)}" -> "${preview(restoredVisible)}"`);
-            const drawn = redrawMessageText(windowInstance, restored, sessionId, {
+            const drawn = redrawMessageText(windowInstance, prepared.text, sessionId, {
+                preconverted: prepared.preconverted === true,
                 renderEvent: {
-                    text: restored,
+                    text: prepared.text,
                     details: appliedDetails,
                 },
                 renderDecision: pendingRenderDecision,
@@ -63,10 +78,10 @@
             // immediate draw succeeds; deferred draws report it from
             // applyPendingMessageRedraw.
             if (drawn) {
-                markMessageRendered(record, restored, appliedDetails);
+                markMessageRendered(record, prepared.text, appliedDetails);
                 clearCurrentRequestToken(windowInstance);
                 return true;
-            } else if (!windowInstance._trPendingRedraw) {
+            } else if (!getPendingMessageRedrawSession(windowInstance)) {
                 markRenderFailed(record, 'message redraw failed', renderDetails);
                 clearCurrentRequestToken(windowInstance);
                 return false;
@@ -94,10 +109,11 @@
             const recordId = route && route.recordId ? route.recordId : '';
             if (!recordId || !target || !target.windowInstance) return false;
             const windowInstance = target.windowInstance;
-            const recordMatches = windowInstance._trMessageRecordId === recordId
-                && windowInstance._trMessageRecordSessionId === target.sessionId;
+            const renderSession = getMessageRenderSession(windowInstance);
+            const recordMatches = renderSession.recordId === recordId
+                && renderSession.recordSessionId === target.sessionId;
             if (!recordMatches) return false;
-            if (windowInstance._trMessageRenderRetained === true) {
+            if (renderSession.renderRetained === true) {
                 const screenState = getMessageScreenState(windowInstance);
                 return screenState === 'visible'
                     ? true
@@ -122,8 +138,9 @@
          * Handle a render command that should not draw because the output is unusable.
          */
         function skipRender(record, windowInstance, payload, sessionId, reason, details) {
-            stopStreamPreview(windowInstance, sessionId, windowInstance._trMessageRequestToken, true);
-            restoreOriginalAfterStreamPreview(windowInstance, payload, sessionId, windowInstance._trMessageRequestToken);
+            const requestToken = getMessageRenderSession(windowInstance).requestToken;
+            stopStreamPreview(windowInstance, sessionId, requestToken, true);
+            restoreOriginalAfterStreamPreview(windowInstance, payload, sessionId, requestToken);
             clearCurrentRequestToken(windowInstance);
             markRenderSkipped(record, reason, details);
             dbg(`[GameMessage Skip] ${reason}.`);
@@ -135,23 +152,18 @@
         function stopStreamPreview(windowInstance, sessionId, requestToken = null, preserveText = true) {
             if (!windowInstance) return;
             if (requestToken && !isCurrentTranslation(windowInstance, sessionId, requestToken)) return;
-            if (windowInstance._trStreamSessionId !== sessionId) return;
+            if (!isMessageStreamPreviewCurrent(windowInstance, sessionId)) return;
             clearPendingStreamPreview(windowInstance, sessionId);
-            windowInstance._trStreamLoopActive = false;
-            windowInstance._trStreamSessionId = null;
-            windowInstance._trStreamDeferredLogged = false;
-            if (!preserveText) windowInstance._trStreamText = '';
+            stopMessageStreamPreview(windowInstance, sessionId, {
+                preserveText: preserveText === true,
+            });
         }
 
         /**
          * Drop a queued streaming preview redraw without touching final render work.
          */
         function clearPendingStreamPreview(windowInstance, sessionId = null) {
-            const pending = windowInstance && windowInstance._trPendingRedraw;
-            if (!pending || pending.streamingPreview !== true) return false;
-            if (sessionId !== null && pending.sessionId && pending.sessionId !== sessionId) return false;
-            windowInstance._trPendingRedraw = null;
-            return true;
+            return clearPendingStreamPreviewSession(windowInstance, sessionId).changed === true;
         }
 
         /**
@@ -160,7 +172,7 @@
         function restoreOriginalAfterStreamPreview(windowInstance, payload, sessionId, requestToken = null) {
             if (!windowInstance || !payload) return;
             if (requestToken && !isCurrentTranslation(windowInstance, sessionId, requestToken)) return;
-            if (typeof windowInstance._trStreamText !== 'string' || !windowInstance._trStreamText) return;
+            if (!getMessageStreamPreviewText(windowInstance)) return;
             redrawMessageText(windowInstance, payload.resolved, sessionId);
         }
 
@@ -168,12 +180,7 @@
          * Clear the current request token from a window if it still matches.
          */
         function clearCurrentRequestToken(windowInstance, requestToken = null) {
-            if (!windowInstance) return;
-            if (requestToken && windowInstance._trMessageRequestToken !== requestToken) return;
-            windowInstance._trMessageRequestToken = null;
-            windowInstance._trMessageTranslationSessionId = null;
-            windowInstance._trMessageTranslationRecordId = null;
-            windowInstance._trMessageTranslationPriority = null;
+            clearMessageRequestSession(windowInstance, requestToken);
         }
 
         /**
@@ -222,13 +229,14 @@
          * Handle an orchestrator-owned request failure for an attached message.
          */
         function handleRequestFailed(target, event = {}, recordId = '') {
-            if (!target || !target.windowInstance || target.windowInstance._trMessageRecordId !== recordId) {
+            const renderSession = target && target.windowInstance ? getMessageRenderSession(target.windowInstance) : null;
+            if (!target || !target.windowInstance || !renderSession || renderSession.recordId !== recordId) {
                 retireDetachedRecord(recordId, 'message-detached-failed', event.details || null);
                 return;
             }
-            if (!target.windowInstance._trMessageRequestToken) return;
-            stopStreamPreview(target.windowInstance, target.sessionId, target.windowInstance._trMessageRequestToken, true);
-            restoreOriginalAfterStreamPreview(target.windowInstance, target.payload, target.sessionId, target.windowInstance._trMessageRequestToken);
+            if (!renderSession.requestToken) return;
+            stopStreamPreview(target.windowInstance, target.sessionId, renderSession.requestToken, true);
+            restoreOriginalAfterStreamPreview(target.windowInstance, target.payload, target.sessionId, renderSession.requestToken);
             clearCurrentRequestToken(target.windowInstance);
             markRenderFailed(target.record || recordId, event.message || 'translation failed', event.details || null);
             errorLog('[GameMessage] Translation failed', event.message || 'translation failed');
@@ -238,10 +246,11 @@
          * Handle an orchestrator-owned skip for an attached or detached message.
          */
         function handleRequestSkipped(target, event = {}, recordId = '') {
-            if (target && target.windowInstance && target.windowInstance._trMessageRecordId === recordId) {
-                if (!target.windowInstance._trMessageRequestToken) return;
-                stopStreamPreview(target.windowInstance, target.sessionId, target.windowInstance._trMessageRequestToken, true);
-                restoreOriginalAfterStreamPreview(target.windowInstance, target.payload, target.sessionId, target.windowInstance._trMessageRequestToken);
+            const renderSession = target && target.windowInstance ? getMessageRenderSession(target.windowInstance) : null;
+            if (target && target.windowInstance && renderSession && renderSession.recordId === recordId) {
+                if (!renderSession.requestToken) return;
+                stopStreamPreview(target.windowInstance, target.sessionId, renderSession.requestToken, true);
+                restoreOriginalAfterStreamPreview(target.windowInstance, target.payload, target.sessionId, renderSession.requestToken);
                 clearCurrentRequestToken(target.windowInstance);
             } else {
                 retireDetachedRecord(recordId, 'message-detached-skipped', event.details || null);
@@ -249,23 +258,12 @@
         }
 
         /**
-         * Reset streaming preview fields on a Window_Message object.
-         */
-        function resetStreamState(windowInstance) {
-            if (!windowInstance) return;
-            clearPendingStreamPreview(windowInstance);
-            windowInstance._trStreamAbort = null;
-            windowInstance._trStreamText = '';
-            windowInstance._trStreamSessionId = null;
-            windowInstance._trStreamLoopActive = false;
-            windowInstance._trStreamDeferredLogged = false;
-        }
-
-        /**
          * Return a broad message-window visibility state.
          */
         function getMessageScreenState(windowInstance) {
             if (!windowInstance) return 'removed';
+            const chainState = displayState.describeDisplayChain(windowInstance);
+            if (chainState.state === 'inactive-scene') return 'inactive-scene';
             if (windowInstance.visible === false) return 'hidden';
             const openness = Number(windowInstance.openness);
             if (Number.isFinite(openness) && openness <= 0) return 'closed';
@@ -310,7 +308,6 @@
             retireDetachedRecord,
             handleRequestFailed,
             handleRequestSkipped,
-            resetStreamState,
             getMessageScreenState,
             warn,
             isAdapterContractFailure,

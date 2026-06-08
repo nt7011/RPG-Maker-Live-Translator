@@ -13,8 +13,6 @@
 
     function createController(scope = {}) {
         const { IGNORE_REGEX_SETTING, OVERRIDE_REGEX_SETTING, clampPriority, defaultPriorityForHook, getPositiveSetting, normalizeCacheKey, deriveCacheKeyAliases, findIgnoredTranslationRegexMatch, findOverrideTranslationRegexMatch, telemetry, disk, getCacheEntryLimit, pruneMapToLimit, precacheStore, ignoreTranslationRegexRules, overrideTranslationRegexRules, requestTimeoutMs, completed } = scope;
-        const callScope = (name) => (...args) => scope[name](...args);
-        const { request } = Object.fromEntries(['request'].map((name) => [name, callScope(name)]));
 
         function describeIgnoreTranslationRegex(text) {
             const raw = String(text ?? '');

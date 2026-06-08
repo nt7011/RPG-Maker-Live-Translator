@@ -12,44 +12,25 @@
     }
 
     function createController(scope = {}) {
-        const callScope = (name) => (...args) => scope[name](...args);
+        const { hasRenderedTranslation } = scope.controllerFacades.entries;
+        const { logOverlayDraw } = scope.controllerFacades.state;
+        const { drawTextToBitmap } = scope.controllerFacades.overlayBitmap;
+        const { attachOverlayAfterSource, copySpriteColorEffects, createOverlaySprite } = scope.controllerFacades.overlaySprite;
         const {
-            attachOverlayAfterSource,
-            copySpriteColorEffects,
-            createOverlaySprite,
-            drawTextToBitmap,
             ensureParentRunState,
-            finiteNumber,
-            hasRenderedTranslation,
             hideRunSources,
             isActiveParentRunSlot,
-            logOverlayDraw,
-            measureTextWidth,
             refreshParentRunRenderable,
             removeParentRun,
-            sanitizeVisibleText,
             shouldRenderParentRunOverlay,
+        } = scope.controllerFacades.parentRunLifecycle;
+        const {
+            finiteNumber,
+            measureTextWidth,
+            sanitizeVisibleText,
             stringify,
             warn,
-        } = Object.fromEntries([
-            'attachOverlayAfterSource',
-            'copySpriteColorEffects',
-            'createOverlaySprite',
-            'drawTextToBitmap',
-            'ensureParentRunState',
-            'finiteNumber',
-            'hasRenderedTranslation',
-            'hideRunSources',
-            'isActiveParentRunSlot',
-            'logOverlayDraw',
-            'measureTextWidth',
-            'refreshParentRunRenderable',
-            'removeParentRun',
-            'sanitizeVisibleText',
-            'shouldRenderParentRunOverlay',
-            'stringify',
-            'warn',
-        ].map((name) => [name, callScope(name)]));
+        } = scope.controllerFacades.utils;
 
         /**
          * Render a translated parent glyph run as a parent-level overlay.

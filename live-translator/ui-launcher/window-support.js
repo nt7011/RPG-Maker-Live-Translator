@@ -2,7 +2,7 @@
 //
 // The launcher decides which UI windows exist and when they open. This support
 // file owns the cross-runtime details: URL construction, NW/browser window
-// handles, screen-fit geometry, and stale-handle detection.
+// handles, window sizing geometry, and stale-handle detection.
 (() => {
     'use strict';
 
@@ -230,9 +230,18 @@
             return !win
                 || win.closed === true
                 || (win.window && win.window.closed === true);
-        } catch (_) {
+        } catch (error) {
+            if (isWindowClosedAccessBlocked(error)) return false;
             return true;
         }
+    }
+
+    function isWindowClosedAccessBlocked(error) {
+        const name = String(error && error.name || '');
+        const message = String(error && error.message || '');
+        return name === 'SecurityError'
+            || /Cross-Origin-Opener-Policy/iu.test(message)
+            || /Permission denied/iu.test(message);
     }
 
     function resolveWindowGeometry(config) {
@@ -245,33 +254,70 @@
             y: null,
             position: 'center',
         };
-        const screenFit = config && config.screenFit && typeof config.screenFit === 'object'
-            ? config.screenFit
+        const sizePolicy = config && config.sizePolicy && typeof config.sizePolicy === 'object'
+            ? config.sizePolicy
             : null;
-        if (!screenFit) return geometry;
+        if (!sizePolicy) return geometry;
 
         const workArea = getCurrentScreenWorkArea();
         if (!workArea) return geometry;
 
-        geometry.width = resolveRatioDimension(workArea.width, screenFit.widthRatio, fallbackWidth);
-        geometry.height = resolveRatioDimension(workArea.height, screenFit.heightRatio, fallbackHeight);
-        geometry.position = null;
+        const constrained = resolveConstrainedWindowSize(fallbackWidth, fallbackHeight, workArea, sizePolicy);
+        geometry.width = constrained.width;
+        geometry.height = constrained.height;
 
-        if (screenFit.anchor === 'top-right') {
-            geometry.x = workArea.x + Math.max(0, workArea.width - geometry.width);
-            geometry.y = workArea.y;
+        const anchoredPosition = resolveAnchoredPosition(workArea, geometry, sizePolicy.anchor);
+        if (anchoredPosition) {
+            geometry.x = anchoredPosition.x;
+            geometry.y = anchoredPosition.y;
+            geometry.position = null;
         }
 
         return geometry;
     }
 
-    function resolveRatioDimension(available, ratio, fallback) {
-        const availableSize = Number(available);
-        const ratioValue = Number(ratio);
-        if (!Number.isFinite(availableSize) || availableSize <= 0 || !Number.isFinite(ratioValue) || ratioValue <= 0) {
-            return fallback;
+    function resolveConstrainedWindowSize(defaultWidth, defaultHeight, workArea, sizePolicy) {
+        const availableWidth = normalizePositiveInteger(workArea && workArea.width, 0);
+        const availableHeight = normalizePositiveInteger(workArea && workArea.height, 0);
+        if (availableWidth <= 0 || availableHeight <= 0) {
+            return {
+                width: defaultWidth,
+                height: defaultHeight,
+            };
         }
-        return Math.max(1, Math.min(Math.round(availableSize), Math.round(availableSize * ratioValue)));
+
+        // Width gets an explicit share cap so the monitor can still show the
+        // game. Height only needs to stay inside the usable work area.
+        return {
+            width: Math.max(1, Math.min(
+                defaultWidth,
+                resolveAvailableWidthLimit(availableWidth, sizePolicy.maxAvailableWidthRatio)
+            )),
+            height: Math.max(1, Math.min(defaultHeight, availableHeight)),
+        };
+    }
+
+    function resolveAvailableWidthLimit(availableWidth, maxAvailableWidthRatio) {
+        const ratio = Number(maxAvailableWidthRatio);
+        if (!Number.isFinite(ratio) || ratio <= 0) return availableWidth;
+        return Math.max(1, Math.min(availableWidth, Math.round(availableWidth * Math.min(ratio, 1))));
+    }
+
+    function resolveAnchoredPosition(workArea, geometry, anchor) {
+        const normalizedAnchor = String(anchor || '').toLowerCase();
+        if (normalizedAnchor === 'top-right') {
+            return {
+                x: workArea.x + Math.max(0, workArea.width - geometry.width),
+                y: workArea.y,
+            };
+        }
+        if (normalizedAnchor === 'top-left') {
+            return {
+                x: workArea.x,
+                y: workArea.y,
+            };
+        }
+        return null;
     }
 
     function getCurrentScreenWorkArea() {
@@ -387,8 +433,8 @@
             if (typeof win.resizeTo === 'function') win.resizeTo(geometry.width, geometry.height);
         } catch (_) {}
         try {
-            if (Number.isFinite(Number(geometry.x))
-                && Number.isFinite(Number(geometry.y))
+            if (isFiniteCoordinate(geometry.x)
+                && isFiniteCoordinate(geometry.y)
                 && typeof win.moveTo === 'function') {
                 win.moveTo(Math.round(Number(geometry.x)), Math.round(Number(geometry.y)));
             }
@@ -400,12 +446,16 @@
             `width=${geometry.width}`,
             `height=${geometry.height}`,
         ];
-        if (Number.isFinite(Number(geometry.x)) && Number.isFinite(Number(geometry.y))) {
+        if (isFiniteCoordinate(geometry.x) && isFiniteCoordinate(geometry.y)) {
             const x = Math.round(Number(geometry.x));
             const y = Math.round(Number(geometry.y));
             features.push(`left=${x}`, `top=${y}`, `screenX=${x}`, `screenY=${y}`);
         }
         return features.join(',');
+    }
+
+    function isFiniteCoordinate(value) {
+        return value !== null && value !== undefined && Number.isFinite(Number(value));
     }
 
     function isEditableTarget(target) {

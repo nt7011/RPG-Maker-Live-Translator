@@ -10,30 +10,27 @@
     if (typeof defineRuntimeModule !== 'function') {
         throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/sprite-text/visibility.js.');
     }
+    const requireRuntimeModule = globalScope.LiveTranslatorRequire;
+    if (typeof requireRuntimeModule !== 'function') {
+        throw new Error('[LiveTranslator] runtime module require is unavailable before adapters/sprite-text/visibility.js.');
+    }
+    const displayStateModule = requireRuntimeModule('runtime.displayState');
 
     function createController(scope = {}) {
-        const callScope = (name) => (...args) => scope[name](...args);
+        const displayState = displayStateModule.createDisplayStateService(scope.globalScope || globalScope);
+        const { shouldRenderParentRunOverlay } = scope.controllerFacades.parentRunLifecycle;
+        const { observeRun } = scope.controllerFacades.parentRunRecords;
+        const { shouldRenderSpriteOverlay } = scope.controllerFacades.overlaySprite;
         const {
             getRecordStatus,
             getSpriteObservationStatus,
             hasRenderedTranslation,
             isRecordActive,
             observeEntry,
-            observeRun,
-            shouldRenderParentRunOverlay,
-            shouldRenderSpriteOverlay,
+        } = scope.controllerFacades.entries;
+        const {
             stringify,
-        } = Object.fromEntries([
-            'getRecordStatus',
-            'getSpriteObservationStatus',
-            'hasRenderedTranslation',
-            'isRecordActive',
-            'observeEntry',
-            'observeRun',
-            'shouldRenderParentRunOverlay',
-            'shouldRenderSpriteOverlay',
-            'stringify',
-        ].map((name) => [name, callScope(name)]));
+        } = scope.controllerFacades.utils;
 
         /**
          * Terminal sprite records are often redrawn every frame. Once the same
@@ -261,25 +258,14 @@
          * belong to that tree before considering them visible.
          */
         function isDisplayObjectInCurrentScene(displayObject) {
-            const scene = scope.globalScope.SceneManager && scope.globalScope.SceneManager._scene;
-            if (!scene || !displayObject) return true;
-            let cursor = displayObject;
-            let depth = 0;
-            while (cursor && depth < 128) {
-                if (cursor === scene) return true;
-                cursor = cursor.parent || null;
-                depth += 1;
-            }
-            return false;
+            return displayState.isDisplayObjectInCurrentScene(displayObject);
         }
         
         /**
          * Return true when child is still present in parent.children.
          */
         function isChildInParent(child, parent) {
-            if (!child || !parent || child.parent !== parent) return false;
-            const children = Array.isArray(parent.children) ? parent.children : null;
-            return children ? children.indexOf(child) >= 0 : true;
+            return displayState.isChildInParent(child, parent);
         }
         
         /**

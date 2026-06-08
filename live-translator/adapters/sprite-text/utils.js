@@ -12,7 +12,6 @@
     }
 
     function createController(scope = {}) {
-        const callScope = (name) => (...args) => scope[name](...args);
         /**
          * Find a property descriptor through the prototype chain.
          */
@@ -31,17 +30,7 @@
          */
         function measureTextWidth(bitmap, text, maxWidth) {
             const clean = String(text ?? '');
-            let measured = 0;
-            try {
-                if (bitmap && typeof bitmap.measureTextWidth === 'function') {
-                    const value = bitmap.measureTextWidth(clean);
-                    if (Number.isFinite(Number(value))) measured = Math.ceil(Number(value));
-                }
-            } catch (_) {}
-            if (!measured) {
-                const fontSize = bitmap && Number.isFinite(Number(bitmap.fontSize)) ? Number(bitmap.fontSize) : 24;
-                measured = Math.ceil(clean.length * Math.max(6, fontSize * 0.6));
-            }
+            const measured = scope.measuredBounds.measureBitmapTextWidth(bitmap, clean);
             const limit = Number(maxWidth);
             if (Number.isFinite(limit) && limit > 0 && limit !== Infinity) return Math.max(1, Math.max(measured, Math.ceil(limit)));
             return Math.max(1, measured);

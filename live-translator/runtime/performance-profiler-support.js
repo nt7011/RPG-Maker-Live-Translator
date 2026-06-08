@@ -49,26 +49,25 @@
     function resolveProfilerOptions(raw = {}) {
         const defaultOptions = createDefaultProfilerOptions();
         const src = raw && typeof raw === 'object' ? raw : {};
-        const next = Object.assign({}, defaultOptions, src);
+        const next = Object.assign({}, defaultOptions);
         const targetFpsValue = Object.prototype.hasOwnProperty.call(src, 'targetFps')
             ? src.targetFps
-            : (Object.prototype.hasOwnProperty.call(src, 'targetFPS') ? src.targetFPS : defaultOptions.targetFps);
+            : defaultOptions.targetFps;
         const targetFps = resolveTargetFps(targetFpsValue);
         const targetFrameMs = 1000 / targetFps;
-        next.enabled = next.enabled === true;
+        next.enabled = src.enabled === true;
         next.targetFps = targetFps;
-        delete next.targetFPS;
-        next.rollingFrames = Math.max(DEFAULT_ROLLING_FRAMES, Math.min(5000, Number(next.rollingFrames) || defaultOptions.rollingFrames));
+        next.rollingFrames = Math.max(DEFAULT_ROLLING_FRAMES, Math.min(5000, Number(src.rollingFrames) || defaultOptions.rollingFrames));
         next.slowFrameMs = targetFrameMs;
         next.targetFrameMs = targetFrameMs;
-        next.droppedFrameMultiplier = Math.max(1.1, Number(next.droppedFrameMultiplier) || defaultOptions.droppedFrameMultiplier);
-        next.autoDumpMinFrameMs = resolveAutoDumpMinFrameMs(next.autoDumpMinFrameMs, targetFrameMs, next.droppedFrameMultiplier);
+        next.droppedFrameMultiplier = Math.max(1.1, Number(src.droppedFrameMultiplier) || defaultOptions.droppedFrameMultiplier);
+        next.autoDumpMinFrameMs = resolveAutoDumpMinFrameMs(src.autoDumpMinFrameMs, targetFrameMs, next.droppedFrameMultiplier);
         next.autoDumpSlowFrames = true;
         next.autoDumpIncludeFrames = true;
         next.autoDumpToFile = true;
-        next.autoDumpDirectory = typeof next.autoDumpDirectory === 'string' ? next.autoDumpDirectory.trim() : '';
-        next.autoDumpIntervalMs = Math.max(250, Number(next.autoDumpIntervalMs) || DEFAULT_AUTO_DUMP_INTERVAL_MS);
-        next.topLimit = Math.max(DEFAULT_TOP_LIMIT, Math.min(100, Number(next.topLimit) || defaultOptions.topLimit));
+        next.autoDumpDirectory = typeof src.autoDumpDirectory === 'string' ? src.autoDumpDirectory.trim() : '';
+        next.autoDumpIntervalMs = Math.max(250, Number(src.autoDumpIntervalMs) || DEFAULT_AUTO_DUMP_INTERVAL_MS);
+        next.topLimit = Math.max(DEFAULT_TOP_LIMIT, Math.min(100, Number(src.topLimit) || defaultOptions.topLimit));
         return next;
     }
 

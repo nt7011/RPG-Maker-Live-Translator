@@ -12,9 +12,10 @@
     }
 
     function createController(scope = {}) {
-        const { noop, clampPriority, createAbortError, isAbortErrorLike, createDeferred, decorateHandle, provider, requestTimeoutMs, completed, subscribersByRecordId } = scope;
-        const callScope = (name) => (...args) => scope[name](...args);
-        const { logTranslationEvent, requestContext, recomputeJobPriority, removeQueuedJob, forgetJobKey, request, schedulePump } = Object.fromEntries(['logTranslationEvent', 'requestContext', 'recomputeJobPriority', 'removeQueuedJob', 'forgetJobKey', 'request', 'schedulePump'].map((name) => [name, callScope(name)]));
+        const { noop, clampPriority, createAbortError, isAbortErrorLike, createDeferred, decorateHandle, requestTimeoutMs, subscribersByRecordId } = scope;
+        const { logTranslationEvent, requestContext } = scope.controllerFacades.eligibility;
+        const { recomputeJobPriority, removeQueuedJob, forgetJobKey } = scope.controllerFacades.jobs;
+        const { schedulePump } = scope.controllerFacades.queue;
 
         function unregisterSubscriber(subscriber) {
             if (!subscriber || !subscriber.recordId) return;

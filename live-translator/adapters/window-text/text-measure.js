@@ -11,9 +11,10 @@
     }
 
     function createTextMeasureController(context = {}) {
-    const callContext = (name) => (...args) => context[name](...args);
-    const { logger, telemetry, adapterContract, windowRegistry, registeredWindows, windowLifecycle, ensureWindowRegistered, pruneDetachedRegisteredWindows, generateKey, captureBitmapDrawState, applyBitmapDrawState, createWindowTextScaleScope, preview, diag, dbg, perf, drawCaptureTrace, bitmapReplay, settings, stripControls, encodeText, restoreText, entriesByRecordId, redrawSettings, textScaleOthers, ADAPTER_ID, ADAPTER_LABEL, RENDER_STRATEGY, WINDOW_PRIORITY_VISIBLE, WINDOW_WRAPPER_TOKEN, REDRAW_DIAGNOSTIC_ITEM_LIMIT, MAX_BACKGROUND_SNAPSHOT_PIXELS } = context;
-    const { install, installOrchestratorSubscription, getRenderGeneration, isRenderTargetCurrent, handleRenderRejected, installWindowBaseWrappers, hasHookInChain, handleDrawText, handleDrawTextEx, createObservedEntry, recordSkippedEntry, createEntry, refreshEntry, requestEntryTranslation, observeEntry, syncEntryFromObservedItem, getEntryStatus, isEntryActive, isEntryRequestActive, isEntryCompleted, firstNonEmptyString, recordDrawTrace, windowTraceDetails, getRegisteredWindowData, markEntryObservedInRefresh, safeStripRpgmEscapes, describeWindowScreenState, buildOrchestratorPayload, applyRenderCommand, markRequestSkipped, markRequestFailed, updateOrchestratorItem, beginPendingRenderCommand, markPendingRenderDeferred, completePendingRenderCommand, rejectPendingRender, clearPendingRenderCommand, getPendingRenderDetails, redrawTranslatedText, drawTranslatedEntry, calculateRedrawBounds, drawTranslatedWindowText, invokeCompletedEntry, invokeOriginalDrawText, invokeOriginalDrawTextEx, withTranslatedWindowTextScale, withWindowTranslatedDrawScope, isWindowTranslatedDrawActive, withWindowDrawTextExReplayScope, findExistingEntry, retireEntriesInSameSlot, markEntryStale, cancelEntryTranslation, markRecordDisappeared, recordDecision, queuePendingRedraw, clearPendingInvalidation, getCurrentEntry, getTextEntryKey, dropPendingRedraw, resolveWindowData, resolveTargetWindow, isWindowReadyForRedraw, refreshEntryBounds, mergeBounds, isValidRect, roundDiagnosticNumber, cloneDiagnosticRect, cloneDiagnosticArea, withWindowRedrawClear, withWindowContents, isUsableBitmap, getRedrawContents, wasDrawnToDetachedContents, isTransientRefreshWindow, isCoreRefreshWindowType, getBitmapReplayApi, assignWindowTextDrawOrder, createClearRectFromArea, getReplayItemRect, mergeReplayRect, expandReplayDirtyRect, replayRectsOverlap, collectWindowTextReplayItems, windowEntryBelongsToContents, combineReplayItems, filterReplayForEntry, replayMixedItems, replayWindowTextEntry, getWindowReplayText, getBitmapCanvasContext, supportsBitmapReplayClip, withBitmapReplayClip, getReplayClipArea, getBitmapSnapshotContext, captureWindowEntryBackground, ensureWindowEntryBackground, getWindowEntryBackgroundSnapshotStatus, restoreWindowEntryBackground, getEntryContentsRevision, getSnapshotContentsRevision, getWindowDataContentsRevision, getEntrySnapshotPadding, getSnapshotArea, getSnapshotDiagnostics, summarizeReplayItemsForDiagnostics, summarizeReplayStateForDiagnostics } = Object.fromEntries(['install', 'installOrchestratorSubscription', 'getRenderGeneration', 'isRenderTargetCurrent', 'handleRenderRejected', 'installWindowBaseWrappers', 'hasHookInChain', 'handleDrawText', 'handleDrawTextEx', 'createObservedEntry', 'recordSkippedEntry', 'createEntry', 'refreshEntry', 'requestEntryTranslation', 'observeEntry', 'syncEntryFromObservedItem', 'getEntryStatus', 'isEntryActive', 'isEntryRequestActive', 'isEntryCompleted', 'firstNonEmptyString', 'recordDrawTrace', 'windowTraceDetails', 'getRegisteredWindowData', 'markEntryObservedInRefresh', 'safeStripRpgmEscapes', 'describeWindowScreenState', 'buildOrchestratorPayload', 'applyRenderCommand', 'markRequestSkipped', 'markRequestFailed', 'updateOrchestratorItem', 'beginPendingRenderCommand', 'markPendingRenderDeferred', 'completePendingRenderCommand', 'rejectPendingRender', 'clearPendingRenderCommand', 'getPendingRenderDetails', 'redrawTranslatedText', 'drawTranslatedEntry', 'calculateRedrawBounds', 'drawTranslatedWindowText', 'invokeCompletedEntry', 'invokeOriginalDrawText', 'invokeOriginalDrawTextEx', 'withTranslatedWindowTextScale', 'withWindowTranslatedDrawScope', 'isWindowTranslatedDrawActive', 'withWindowDrawTextExReplayScope', 'findExistingEntry', 'retireEntriesInSameSlot', 'markEntryStale', 'cancelEntryTranslation', 'markRecordDisappeared', 'recordDecision', 'queuePendingRedraw', 'clearPendingInvalidation', 'getCurrentEntry', 'getTextEntryKey', 'dropPendingRedraw', 'resolveWindowData', 'resolveTargetWindow', 'isWindowReadyForRedraw', 'refreshEntryBounds', 'mergeBounds', 'isValidRect', 'roundDiagnosticNumber', 'cloneDiagnosticRect', 'cloneDiagnosticArea', 'withWindowRedrawClear', 'withWindowContents', 'isUsableBitmap', 'getRedrawContents', 'wasDrawnToDetachedContents', 'isTransientRefreshWindow', 'isCoreRefreshWindowType', 'getBitmapReplayApi', 'assignWindowTextDrawOrder', 'createClearRectFromArea', 'getReplayItemRect', 'mergeReplayRect', 'expandReplayDirtyRect', 'replayRectsOverlap', 'collectWindowTextReplayItems', 'windowEntryBelongsToContents', 'combineReplayItems', 'filterReplayForEntry', 'replayMixedItems', 'replayWindowTextEntry', 'getWindowReplayText', 'getBitmapCanvasContext', 'supportsBitmapReplayClip', 'withBitmapReplayClip', 'getReplayClipArea', 'getBitmapSnapshotContext', 'captureWindowEntryBackground', 'ensureWindowEntryBackground', 'getWindowEntryBackgroundSnapshotStatus', 'restoreWindowEntryBackground', 'getEntryContentsRevision', 'getSnapshotContentsRevision', 'getWindowDataContentsRevision', 'getEntrySnapshotPadding', 'getSnapshotArea', 'getSnapshotDiagnostics', 'summarizeReplayItemsForDiagnostics', 'summarizeReplayStateForDiagnostics'].map((name) => [name, callContext(name)]));
+    const { perf, textCodec, stripControls, createTextSource, restoreText, ADAPTER_ID } = context;
+    const { lifecycle: lifecycleService, surface: surfaceService } = context.services;
+    const { entryRecords } = context.facades;
+    const { getEntryStatus } = entryRecords;
 
     const WINDOW_TEXT_PERF_DOMAIN = 'translator-render.windowText';
 
@@ -64,6 +65,10 @@
                 perfCount('windowText.measure.estimateEntryBounds.calls');
                 perfTop('windowText.measure.estimateEntryBounds.type', type || 'unknown');
                 try {
+                    const drawX = normalizeDrawableCoordinate(x);
+                    const drawY = normalizeDrawableCoordinate(y);
+                    if (drawX === null || drawY === null) return null;
+
                     const contents = windowInstance && windowInstance.contents ? windowInstance.contents : null;
                     const lineHeight = type === 'drawTextEx'
                         ? getDrawTextExBaseLineHeight(windowInstance, contents, originalParams)
@@ -106,11 +111,11 @@
                     if (!height || !Number.isFinite(height)) height = lineHeight;
                     if (type === 'drawTextEx') {
                         height = Math.max(height, estimateDrawTextExFallbackHeight(richText, lineHeight));
-                        height = Math.max(height, measureDrawTextExHeight(windowInstance, text, x, y, originalParams, lineHeight));
+                        height = Math.max(height, measureDrawTextExHeight(windowInstance, text, drawX, drawY, originalParams, lineHeight));
                     }
     
-                    let x1 = Number.isFinite(Number(x)) ? Number(x) : 0;
-                    const y1 = Number.isFinite(Number(y)) ? Number(y) : 0;
+                    let x1 = drawX;
+                    const y1 = drawY;
                     let drawWidth = Math.max(0, width);
                     if (type === 'drawText' && originalParams) {
                         const maxWidth = Number(originalParams.maxWidth);
@@ -180,6 +185,7 @@
                         return fallbackLineHeight;
                     }
                     const textState = createDrawTextExMeasureState(windowInstance, text, x, y, originalParams, fallbackLineHeight);
+                    if (!textState) return fallbackLineHeight;
                     const measured = Number(windowInstance.calcTextHeight(textState, true));
                     return Number.isFinite(measured) && measured > 0 ? Math.ceil(measured) : fallbackLineHeight;
                 } catch (_) {
@@ -188,8 +194,9 @@
             }
 
     function createDrawTextExMeasureState(windowInstance, text, x, y, originalParams, fallbackLineHeight) {
-                const drawX = Number.isFinite(Number(x)) ? Number(x) : 0;
-                const drawY = Number.isFinite(Number(y)) ? Number(y) : 0;
+                const drawX = normalizeDrawableCoordinate(x);
+                const drawY = normalizeDrawableCoordinate(y);
+                if (drawX === null || drawY === null) return null;
                 const maxWidth = Number(originalParams && originalParams.maxWidth);
                 if (windowInstance && typeof windowInstance.createTextState === 'function') {
                     try {
@@ -279,31 +286,14 @@
             }
     
     function countDrawTextExIcons(text) {
-                const matches = String(text || '').match(/(?:\x1b|\\)i\[[^\]]*\]/gi);
-                return matches ? matches.length : 0;
+                return textCodec.countIconEscapes(text);
             }
     
     function prepareTranslationSource(text) {
                 try {
-                    const encoded = encodeText(String(text ?? '')) || {};
-                    const source = encoded && typeof encoded === 'object' ? encoded : {};
-                    return {
-                        originalText: String(source.originalText ?? text ?? ''),
-                        visibleText: String(source.visibleText ?? stripControls(text ?? '')).trim(),
-                        translationText: String(source.translationText ?? text ?? ''),
-                        normalizedText: String(source.normalizedText ?? source.translationText ?? text ?? '').trim(),
-                        tokens: Array.isArray(source.tokens)
-                            ? source.tokens.map((token) => Object.assign({}, token))
-                            : [],
-                    };
+                    return createTextSource(String(text ?? ''), { surfaceType: 'window' });
                 } catch (_) {
-                    return {
-                        originalText: String(text ?? ''),
-                        visibleText: stripControls(text ?? '').trim(),
-                        translationText: String(text ?? ''),
-                        normalizedText: String(text ?? '').trim(),
-                        tokens: [],
-                    };
+                    return textCodec.createPlainTextSource(text, { surfaceType: 'window' });
                 }
             }
     
@@ -321,20 +311,214 @@
     
     function sanitizeDrawTextOutput(text, type) {
                 if (typeof text !== 'string') return '';
-                return type === 'drawText' ? stripControls(text) : text;
+                return textCodec.sanitizeDrawTextOutput(text, { methodName: type || 'drawText' });
             }
     
     function convertWindowText(windowInstance, text) {
                 try {
                     if (windowInstance && typeof windowInstance.convertEscapeCharacters === 'function') {
-                        return windowInstance.convertEscapeCharacters(text);
+                        const receiver = createConversionWindowBranch(windowInstance);
+                        return windowInstance.convertEscapeCharacters.call(receiver || windowInstance, text);
                     }
                 } catch (_) {}
                 return text;
             }
+
+    /**
+     * Escape conversion may run plugin code. Observe through a disposable
+     * receiver so reads still see window state, while writes and UI calls do
+     * not mutate live contents before the native draw is observed.
+     */
+    function createConversionWindowBranch(windowInstance) {
+                if (!isObjectLike(windowInstance)) return windowInstance;
+                const seen = new WeakMap();
+                const branch = createConversionWindowSink(windowInstance, seen);
+                try { branch._trEvaluationOnly = true; } catch (_) {}
+                return branch;
+            }
+
+    function copyConversionProperties(source, target, seen, options = {}) {
+                if (!isObjectLike(source) || !isObjectLike(target)) return target;
+                getOwnKeys(source).forEach((key) => {
+                    try {
+                        const descriptor = Object.getOwnPropertyDescriptor(source, key);
+                        if (!descriptor) return;
+                        const cloned = Object.assign({}, descriptor);
+                        if (Object.prototype.hasOwnProperty.call(cloned, 'value')) {
+                            cloned.value = createConversionValue(cloned.value, seen, options);
+                        }
+                        Object.defineProperty(target, key, cloned);
+                    } catch (_) {
+                        try { target[key] = createConversionValue(source[key], seen, options); } catch (_) {}
+                    }
+                });
+                return target;
+            }
+
+    function createConversionValue(value, seen, options = {}) {
+                if (!isObjectLike(value)) return value;
+                if (options.uiSinks === true && isWindowLikeValue(value)) return createConversionWindowSink(value, seen);
+                if (options.uiSinks === true && isBitmapLikeValue(value)) return createConversionBitmapSink(value, seen);
+                if (Array.isArray(value)) return cloneConversionArray(value, seen, options);
+                if (isPlainObject(value)) return cloneConversionPlainObject(value, seen, options);
+                return value;
+            }
+
+    function cloneConversionArray(value, seen, options = {}) {
+                if (!Array.isArray(value)) return value;
+                if (seen.has(value)) return seen.get(value);
+                const clone = [];
+                seen.set(value, clone);
+                value.forEach((item, index) => {
+                    clone[index] = createConversionValue(item, seen, options);
+                });
+                return clone;
+            }
+
+    function cloneConversionPlainObject(value, seen, options = {}) {
+                if (!isObjectLike(value)) return value;
+                if (seen.has(value)) return seen.get(value);
+                const clone = Object.create(Object.getPrototypeOf(value) || null);
+                seen.set(value, clone);
+                return copyConversionProperties(value, clone, seen, options);
+            }
+
+    function createConversionWindowSink(windowLike, seen = new WeakMap()) {
+                if (!isObjectLike(windowLike)) return windowLike;
+                if (seen.has(windowLike)) return seen.get(windowLike);
+                const sink = Object.create(windowLike);
+                seen.set(windowLike, sink);
+                copyConversionProperties(windowLike, sink, seen, { uiSinks: true });
+                defineConversionDataProperty(sink, 'contents', createConversionBitmapSink(windowLike.contents, seen));
+                sink.setText = function(value) {
+                    this._text = String(value || '');
+                    this.text = this._text;
+                    return this;
+                };
+                sink.refresh = function() { return undefined; };
+                sink.drawText = function() { return 0; };
+                sink.drawTextEx = function() { return 0; };
+                sink.drawTextEx2 = function() { return 0; };
+                sink.createContents = function() {
+                    if (!this.contents) this.contents = createConversionBitmapSink(windowLike.contents, seen);
+                    return this.contents;
+                };
+                sink.show = function() {
+                    this.visible = true;
+                    return this;
+                };
+                sink.hide = function() {
+                    this.visible = false;
+                    return this;
+                };
+                sink.open = function() {
+                    this.openness = 255;
+                    this._openness = 255;
+                    return this;
+                };
+                sink.close = function() {
+                    this.openness = 0;
+                    this._openness = 0;
+                    return this;
+                };
+                sink.activate = function() {
+                    this.active = true;
+                    return this;
+                };
+                sink.deactivate = function() {
+                    this.active = false;
+                    return this;
+                };
+                sink.update = function() { return undefined; };
+                sink.setBackgroundType = function(value) {
+                    this._background = value;
+                    return this;
+                };
+                return sink;
+            }
+
+    function defineConversionDataProperty(target, key, value) {
+                try {
+                    // RPG Maker MV exposes Window#contents through an accessor
+                    // that writes _windowContentsSprite.bitmap. Shadow it on
+                    // the branch so conversion sinks never replace live ink.
+                    Object.defineProperty(target, key, {
+                        value,
+                        writable: true,
+                        configurable: true,
+                        enumerable: true,
+                    });
+                    return true;
+                } catch (_) {
+                    try { target[key] = value; } catch (_) {}
+                    return false;
+                }
+            }
+
+    function createConversionBitmapSink(bitmapLike, seen = new WeakMap()) {
+                if (!isObjectLike(bitmapLike)) {
+                    return {
+                        clear() {},
+                        clearRect() {},
+                        drawText() { return 0; },
+                        blt() {},
+                        measureTextWidth(value) { return String(value || '').length; },
+                    };
+                }
+                if (seen.has(bitmapLike)) return seen.get(bitmapLike);
+                const sink = Object.create(bitmapLike);
+                seen.set(bitmapLike, sink);
+                copyConversionProperties(bitmapLike, sink, seen, { uiSinks: false });
+                sink.clear = function() { return undefined; };
+                sink.clearRect = function() { return undefined; };
+                sink.drawText = function() { return 0; };
+                sink.blt = function() { return undefined; };
+                sink.measureTextWidth = typeof bitmapLike.measureTextWidth === 'function'
+                    ? function(value) {
+                        try { return bitmapLike.measureTextWidth.call(bitmapLike, value); } catch (_) { return String(value || '').length; }
+                    }
+                    : function(value) { return String(value || '').length; };
+                return sink;
+            }
+
+    function getOwnKeys(value) {
+                const keys = Object.getOwnPropertyNames(value);
+                if (typeof Object.getOwnPropertySymbols === 'function') {
+                    return keys.concat(Object.getOwnPropertySymbols(value));
+                }
+                return keys;
+            }
+
+    function isObjectLike(value) {
+                return !!value && (typeof value === 'object' || typeof value === 'function');
+            }
+
+    function isPlainObject(value) {
+                if (!value || typeof value !== 'object') return false;
+                const prototype = Object.getPrototypeOf(value);
+                return prototype === Object.prototype || prototype === null;
+            }
+
+    function isWindowLikeValue(value) {
+                return isObjectLike(value)
+                    && (typeof value.open === 'function'
+                        || typeof value.close === 'function'
+                        || typeof value.activate === 'function'
+                        || typeof value.deactivate === 'function'
+                        || typeof value.drawText === 'function'
+                        || typeof value.drawTextEx === 'function');
+            }
+
+    function isBitmapLikeValue(value) {
+                return isObjectLike(value)
+                    && (typeof value.clearRect === 'function'
+                        || typeof value.drawText === 'function'
+                        || typeof value.blt === 'function'
+                        || typeof value.measureTextWidth === 'function');
+            }
     
     function describeWindowTextEligibility(rawText, visibleText, methodName) {
-                return adapterContract.describeTextEligibility({
+                return lifecycleService.describeTextEligibility({
                     sourceAdapter: ADAPTER_ID,
                     hook: methodName || 'window',
                     rawText,
@@ -347,7 +531,7 @@
                 if (!entry) {
                     return { eligible: true, skip: false, category: 'eligible', reason: '' };
                 }
-                return adapterContract.describeTextEligibility({
+                return lifecycleService.describeTextEligibility({
                     sourceAdapter: ADAPTER_ID,
                     hook: entry.type || 'window',
                     rawText: entry.rawText,
@@ -376,17 +560,6 @@
                 } catch (_) {}
                 const name = ctor && ctor.name ? String(ctor.name) : '';
                 return /^Window_Message(?:$|_)/.test(name);
-            }
-    
-    function rememberMessageStart(windowInstance, x, y) {
-                try {
-                    const session = windowInstance._trMessageSession || windowInstance._trSessionId || 0;
-                    if (session && windowInstance._trMsgStartSession !== session) {
-                        windowInstance._trMsgStartX = x;
-                        windowInstance._trMsgStartY = y;
-                        windowInstance._trMsgStartSession = session;
-                    }
-                } catch (_) {}
             }
     
     function getSurfaceId(windowData) {
@@ -443,14 +616,12 @@
             }
 
     function isSurfaceIdentityInUse(surfaceId, currentWindow) {
-                if (!surfaceId || !registeredWindows || typeof registeredWindows.forEach !== 'function') return false;
+                if (!surfaceId) return false;
                 let inUse = false;
                 try {
-                    registeredWindows.forEach((candidate) => {
+                    surfaceService.forEachRegisteredWindow((candidate) => {
                         if (inUse || !candidate || candidate === currentWindow) return;
-                        const data = windowRegistry && typeof windowRegistry.get === 'function'
-                            ? windowRegistry.get(candidate)
-                            : null;
+                        const data = surfaceService.getWindowData(candidate);
                         if (!data || data._trUnregistered) return;
                         if (candidate._destroyed || candidate.destroyed) return;
                         if (data.identitySurfaceId === surfaceId) inUse = true;
@@ -489,8 +660,46 @@
                 return String(Math.round(numeric * 1000) / 1000);
             }
     
-    function createSlotKey(type, x, y) {
-                return `${type || 'text'}:${normalizeSlotNumber(x)}:${normalizeSlotNumber(y)}`;
+    function createSlotKey(type, x, y, params = null) {
+                const parts = [
+                    type || 'text',
+                    normalizeSlotNumber(x),
+                    normalizeSlotNumber(y),
+                ];
+                const signature = createDrawParameterSlotSignature(params);
+                if (signature) parts.push(signature);
+                return parts.join(':');
+            }
+
+    function createDrawParameterSlotSignature(params) {
+                if (!params || typeof params !== 'object') return '';
+                const parts = [];
+                if (hasOwn(params, 'maxWidth')) {
+                    const maxWidth = normalizeOptionalSlotNumber(params.maxWidth);
+                    if (maxWidth) parts.push(`w=${maxWidth}`);
+                }
+                if (hasOwn(params, 'lineHeight')) {
+                    const lineHeight = normalizeOptionalSlotNumber(params.lineHeight);
+                    if (lineHeight) parts.push(`lh=${lineHeight}`);
+                }
+                if (hasOwn(params, 'align')) {
+                    const align = normalizeDrawTextAlignValue(params.align);
+                    // Left alignment is the engine default. Keeping it implicit
+                    // preserves the older compact key while still separating
+                    // right/center overlays that share x/y with a left label.
+                    if (align && align !== 'left') parts.push(`a=${align}`);
+                }
+                return parts.join(':');
+            }
+
+    function hasOwn(source, key) {
+                return !!(source && Object.prototype.hasOwnProperty.call(source, key));
+            }
+
+    function normalizeOptionalSlotNumber(value) {
+                const numeric = normalizeDrawableCoordinate(value);
+                if (numeric === null) return '';
+                return normalizeSlotNumber(numeric);
             }
     
     function createWindowTextRecordId(surfaceId, slotKey, sourceText) {
@@ -518,8 +727,19 @@
             }
     
     function normalizeSlotNumber(value) {
-                const numeric = Number(value);
-                return Number.isFinite(numeric) ? String(Math.round(numeric * 1000) / 1000) : '0';
+                const numeric = normalizeDrawableCoordinate(value);
+                return numeric === null ? 'invalid' : String(Math.round(numeric * 1000) / 1000);
+            }
+
+    function normalizeDrawableCoordinate(value) {
+                if (value === null || value === undefined) return null;
+                if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+                if (typeof value === 'string') {
+                    if (!value.trim()) return null;
+                    const numeric = Number(value);
+                    return Number.isFinite(numeric) ? numeric : null;
+                }
+                return null;
             }
     
     function getWindowTypeName(windowInstance, windowData) {
@@ -541,7 +761,7 @@
                 return 'left';
             }
     
-        return { estimateEntryBounds, measurePlainTextWidth, estimateDrawTextExFallbackWidth, estimateDrawTextExFallbackHeight, estimateMaxDrawTextExFallbackHeight, getDrawTextExLineCount, getLineHeight, getWindowIconWidth, countDrawTextExIcons, prepareTranslationSource, restoreTranslatedWindowText, sanitizeDrawTextOutput, convertWindowText, describeWindowTextEligibility, describeEntryEligibility, isDedicatedMessageWindow, rememberMessageStart, getSurfaceId, getIdentitySurfaceId, createSlotKey, createWindowTextRecordId, safeRecordIdPart, hashTextForRecordId, normalizeSlotNumber, getWindowTypeName, getWindowCtorName, normalizeDrawTextAlignValue };
+        return { estimateEntryBounds, measurePlainTextWidth, estimateDrawTextExFallbackWidth, estimateDrawTextExFallbackHeight, estimateMaxDrawTextExFallbackHeight, getDrawTextExLineCount, getLineHeight, getWindowIconWidth, countDrawTextExIcons, prepareTranslationSource, restoreTranslatedWindowText, sanitizeDrawTextOutput, convertWindowText, describeWindowTextEligibility, describeEntryEligibility, isDedicatedMessageWindow, getSurfaceId, getIdentitySurfaceId, createSlotKey, createWindowTextRecordId, safeRecordIdPart, hashTextForRecordId, normalizeSlotNumber, getWindowTypeName, getWindowCtorName, normalizeDrawTextAlignValue };
     }
     
     defineRuntimeModule('adapters.windowTextTextMeasure', { create: createTextMeasureController });

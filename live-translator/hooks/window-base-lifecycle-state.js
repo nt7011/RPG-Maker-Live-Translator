@@ -1,4 +1,4 @@
-// Window_Base lifecycle support: registry state, visibility, and redraw queues.
+// Window_Base lifecycle support: registry state, visibility, and render queues.
 (() => {
     'use strict';
 
@@ -10,13 +10,24 @@
     if (typeof defineRuntimeModule !== 'function') {
         throw new Error('[LiveTranslator] runtime module registry is unavailable before hooks/window-base-lifecycle-state.js.');
     }
+    const requireRuntimeModule = globalScope.LiveTranslatorRequire;
+    if (typeof requireRuntimeModule !== 'function') {
+        throw new Error('[LiveTranslator] runtime module require is unavailable before hooks/window-base-lifecycle-state.js.');
+    }
+    const displayStateModule = requireRuntimeModule('runtime.displayState');
+    const entryLifecycle = requireRuntimeModule('runtime.entryLifecycle');
+    if (!entryLifecycle || typeof entryLifecycle.isStale !== 'function') {
+        throw new Error('[LiveTranslator] runtime.entryLifecycle is unavailable before hooks/window-base-lifecycle-state.js.');
+    }
 
     function createWindowData(windowInstance, isOpen) {
         return {
             texts: new Map(),
             isOpen,
-            pendingRedraws: new Map(),
+            renderQueue: new Map(),
             recentlyRedrawn: new Map(),
+            _trRenderDrainDepth: 0,
+            _trRenderDrainReason: '',
             windowType: windowInstance && windowInstance.constructor
                 ? windowInstance.constructor.name
                 : undefined,
@@ -34,6 +45,7 @@
             windowLifecycle,
         } = context;
         const debug = typeof dbg === 'function' ? dbg : () => {};
+        const displayState = displayStateModule.createDisplayStateService(globalScope);
 
         function isWindowEntryActive(entry) {
             return !!(entry
@@ -71,10 +83,16 @@
                         windowType,
                     });
                 } else {
-                    entry._trSurfaceVisible = visible === true;
+                    entryLifecycle.setSurfaceVisible(entry, visible === true, {
+                        reason: reason || (visible ? 'window-visible' : 'window-offscreen'),
+                        screenState: visible ? 'visible' : 'hidden',
+                    });
                 }
             } catch (_) {
-                entry._trSurfaceVisible = visible === true;
+                entryLifecycle.setSurfaceVisible(entry, visible === true, {
+                    reason: reason || (visible ? 'window-visible' : 'window-offscreen'),
+                    screenState: visible ? 'visible' : 'hidden',
+                });
             }
         }
 
@@ -102,7 +120,10 @@
                 : getWindowDrawHelpers;
             const windowTextHelpers = typeof helperGetter === 'function' ? helperGetter() : null;
             if (windowTextHelpers && typeof windowTextHelpers.rejectPendingRender === 'function') {
-                try { return windowTextHelpers.rejectPendingRender(entry, reason, details) === true; } catch (_) {}
+                try {
+                    const result = windowTextHelpers.rejectPendingRender(entry, reason, details);
+                    return !!(result && result.handled === true);
+                } catch (_) {}
             }
             return false;
         }
@@ -120,6 +141,8 @@
 
         function getWindowScreenState(windowInstance, data) {
             if (!windowInstance) return 'removed';
+            const chainState = displayState.describeDisplayChain(windowInstance);
+            if (chainState.state === 'inactive-scene') return 'inactive-scene';
             const visible = windowInstance.visible !== false;
             const openness = Number(windowInstance.openness);
             const hasOpenArea = Number.isFinite(openness)
@@ -131,7 +154,8 @@
                 ? data.isOpen !== false
                 : true;
             if (!visible) return 'hidden';
-            if (!hasOpenArea || !isOpenState) return 'closed';
+            if (!hasOpenArea) return isOpenState ? 'opening' : 'closed';
+            if (!isOpenState) return 'closed';
             if (!textOpacityVisible) return 'transparent';
             return 'visible';
         }
@@ -154,9 +178,10 @@
             const removed = [];
             try {
                 data.texts.forEach((entry, key) => {
-                    if (!entry || !entry._trPendingInvalidation) return;
-                    if (entry._trPendingInvalidation.reason !== 'window-entry-stale') return;
-                    removed.push({ key, entry, pending: entry._trPendingInvalidation });
+                    const pending = entryLifecycle.getPendingInvalidation(entry);
+                    if (!entry || !pending) return;
+                    if (pending.reason !== 'window-entry-stale') return;
+                    removed.push({ key, entry, pending });
                 });
             } catch (_) {}
             removed.forEach(({ key, entry, pending }) => {
@@ -169,9 +194,11 @@
                         key: String(key || ''),
                         windowType,
                     };
-                    entry._trStale = true;
-                    entry.canceledReason = staleReason;
-                    entry.canceledAt = (pending && pending.at) || Date.now();
+                    entryLifecycle.markStale(entry, staleReason, {
+                        at: (pending && pending.at) || Date.now(),
+                        surfaceVisible: false,
+                        screenState: 'hidden',
+                    });
                     rejectWindowPendingRender(entry, staleReason, entryDetails);
                     if (isWindowEntryActive(entry)) {
                         retireWindowEntry(entry, staleReason, Object.assign({}, entryDetails, {
@@ -179,12 +206,15 @@
                         }));
                     }
                     forgetWindowEntryRecord(entry, staleReason, entryDetails);
-                    entry._trSurfaceVisible = false;
+                    entryLifecycle.setSurfaceVisible(entry, false, {
+                        reason: staleReason,
+                        screenState: 'hidden',
+                    });
                 } catch (_) {}
                 try { data.texts.delete(key); } catch (_) {}
                 try {
-                    if (data.pendingRedraws && typeof data.pendingRedraws.delete === 'function') {
-                        data.pendingRedraws.delete(key);
+                    if (data.renderQueue && typeof data.renderQueue.delete === 'function') {
+                        data.renderQueue.delete(key);
                     }
                 } catch (_) {}
             });
@@ -209,6 +239,11 @@
                     warn('[Window_Base.refresh pending invalidation error]', error);
                 } finally {
                     finishWindowRefresh(windowInstance, refreshToken);
+                    try {
+                        flushWindowRenderQueue(windowInstance, 'window-refresh-complete');
+                    } catch (error) {
+                        warn('[Window_Base.refresh render queue error]', error);
+                    }
                 }
             }
         }
@@ -222,88 +257,151 @@
             }
         }
 
-        // Completed translations may arrive after Window_Base.refresh() has
-        // cleared the bitmap. The pending queue redraws only still-current
-        // entries and rejects everything that became stale or replaced.
-        function flushPendingWindowRedraws(windowInstance) {
+        // Completed translations may arrive while a source draw, refresh, or
+        // visibility transition is still in progress. The render queue retries
+        // only still-current entries and rejects replaced or invalidated ones.
+        function flushWindowRenderQueue(windowInstance, reason = 'window-update') {
             const data = windowRegistry.get(windowInstance);
-            if (!data || !data.pendingRedraws || data.pendingRedraws.size === 0) return;
+            if (!data || !data.renderQueue || data.renderQueue.size === 0) return;
             const ready = !!(windowInstance
                 && windowInstance.visible
                 && (typeof windowInstance.isOpen !== 'function' || windowInstance.isOpen())
                 && windowInstance.contents);
             if (!ready) return;
 
-            const keys = Array.from(data.pendingRedraws.keys());
-            for (const key of keys) {
-                const entry = data.pendingRedraws.get(key);
-                if (!entry) {
-                    data.pendingRedraws.delete(key);
-                    continue;
-                }
+            const flush = () => {
+                const keys = Array.from(data.renderQueue.keys());
+                for (const key of keys) {
+                    const queued = data.renderQueue.get(key);
+                    const entry = queued && queued.entry ? queued.entry : null;
+                    if (!entry) {
+                        data.renderQueue.delete(key);
+                        continue;
+                    }
 
-                const current = data.texts.get(key);
-                if (current !== entry) {
-                    data.pendingRedraws.delete(key);
-                    rejectWindowPendingRender(entry, 'window-entry-replaced', {
-                        key,
-                        windowType: data.windowType || '',
-                    });
-                    debug(`[Redraw Queue Drop] replaced at ${key}`);
-                    continue;
-                }
+                    const current = data.texts.get(key);
+                    if (current !== entry) {
+                        data.renderQueue.delete(key);
+                        rejectWindowPendingRender(entry, 'window-entry-replaced', {
+                            key,
+                            windowType: data.windowType || '',
+                        });
+                        debug(`[Redraw Queue Drop] replaced at ${key}`);
+                        continue;
+                    }
 
-                if (entry._trPendingInvalidation) {
-                    data.pendingRedraws.delete(key);
-                    rejectWindowPendingRender(entry, 'window-redraw-invalidated', {
-                        key,
-                        reason: entry._trPendingInvalidation.reason || '',
-                        windowType: data.windowType || '',
-                    });
-                    debug(`[Redraw Queue Drop] pending invalidation at ${key}`);
-                    continue;
-                }
+                    const pendingInvalidation = entryLifecycle.getPendingInvalidation(entry);
+                    if (pendingInvalidation) {
+                        data.renderQueue.delete(key);
+                        rejectWindowPendingRender(entry, 'window-redraw-invalidated', {
+                            key,
+                            reason: pendingInvalidation.reason || '',
+                            windowType: data.windowType || '',
+                        });
+                        debug(`[Redraw Queue Drop] pending invalidation at ${key}`);
+                        continue;
+                    }
 
-                if (isWindowEntryCompleted(entry) && entry.renderedText) {
-                    const helperGetter = typeof getWindowTextHelpers === 'function'
-                        ? getWindowTextHelpers
-                        : getWindowDrawHelpers;
-                    const windowTextHelpers = typeof helperGetter === 'function' ? helperGetter() : null;
-                    if (windowTextHelpers && typeof windowTextHelpers.redrawTranslatedText === 'function') {
-                        const result = windowTextHelpers.redrawTranslatedText(entry, data);
-                        if (result !== 'drawn' && data.pendingRedraws && data.pendingRedraws.get(key) === entry) {
-                            rejectWindowPendingRender(entry, 'window-redraw-failed', {
-                                key,
-                                windowType: data.windowType || '',
-                            });
+                    if (isWindowEntryCompleted(entry) && entry.renderedText) {
+                        const helperGetter = typeof getWindowTextHelpers === 'function'
+                            ? getWindowTextHelpers
+                            : getWindowDrawHelpers;
+                        const windowTextHelpers = typeof helperGetter === 'function' ? helperGetter() : null;
+                        if (windowTextHelpers && typeof windowTextHelpers.redrawTranslatedText === 'function') {
+                            const result = windowTextHelpers.redrawTranslatedText(entry, data);
+                            const stillQueued = data.renderQueue && data.renderQueue.get(key);
+                            if ((!result || result.status !== 'accepted') && stillQueued && stillQueued.entry === entry) {
+                                rejectWindowPendingRender(entry, 'window-redraw-failed', {
+                                    key,
+                                    windowType: data.windowType || '',
+                                });
+                            }
                         }
+                        const stillQueued = data.renderQueue && data.renderQueue.get(key);
+                        if (stillQueued && stillQueued.entry === entry) {
+                            data.renderQueue.delete(key);
+                        }
+                    } else {
+                        data.renderQueue.delete(key);
+                        rejectWindowPendingRender(entry, 'window-redraw-not-completed', {
+                            key,
+                            windowType: data.windowType || '',
+                        });
+                        debug(`[Redraw Queue Drop] not completed at ${key}`);
                     }
-                    if (data.pendingRedraws && data.pendingRedraws.get(key) === entry) {
-                        data.pendingRedraws.delete(key);
-                    }
-                } else {
-                    data.pendingRedraws.delete(key);
-                    rejectWindowPendingRender(entry, 'window-redraw-not-completed', {
-                        key,
-                        windowType: data.windowType || '',
-                    });
-                    debug(`[Redraw Queue Drop] not completed at ${key}`);
                 }
+            };
+
+            if (windowLifecycle && typeof windowLifecycle.withRenderDrain === 'function') {
+                return windowLifecycle.withRenderDrain(windowInstance, data, reason || 'window-update', flush);
             }
+            return flush();
         }
 
         function markWindowEntriesOffscreen(windowInstance, data, reason) {
             if (!data || !data.texts || typeof data.texts.forEach !== 'function') return;
-            data.texts.forEach((entry) => {
-                if (!isWindowEntryActive(entry) || entry._trStale || entry._trSurfaceVisible === false) return;
-                setWindowDrawRecordVisible(windowInstance, data, entry, false, reason || 'window-offscreen');
+            const completed = [];
+            const screenState = getWindowScreenState(windowInstance, data);
+            data.texts.forEach((entry, key) => {
+                if (!isWindowEntryActive(entry) || entryLifecycle.isStale(entry)) return;
+                if (entryLifecycle.getSurfaceVisible(entry) !== false) {
+                    setWindowDrawRecordVisible(windowInstance, data, entry, false, reason || 'window-offscreen');
+                }
+                if (isWindowEntryCompleted(entry) && shouldRetireOffscreenCompletedEntry(screenState)) {
+                    completed.push({ key, entry });
+                }
             });
+            completed.forEach(({ key, entry }) => {
+                retireOffscreenCompletedWindowEntry(windowInstance, data, key, entry, reason || 'window-offscreen');
+            });
+        }
+
+        function shouldRetireOffscreenCompletedEntry(screenState) {
+            // Opening is transient: RPG Maker may draw text while openness is 0
+            // and reveal the same contents on later updates. Retiring here loses
+            // the active source-draw owner even though the text is about to be
+            // visible.
+            return String(screenState || '') !== 'opening';
+        }
+
+        function retireOffscreenCompletedWindowEntry(windowInstance, data, key, entry, reason) {
+            if (!entry || entryLifecycle.isStale(entry) || !isWindowEntryActive(entry) || !isWindowEntryCompleted(entry)) return false;
+            const entryDetails = {
+                key: String(key || ''),
+                windowType: getWindowType(windowInstance, data),
+                screenState: getWindowScreenState(windowInstance, data),
+                wasCompleted: true,
+            };
+            const staleReason = reason || 'window-offscreen';
+            entryLifecycle.markStale(entry, staleReason, {
+                surfaceVisible: false,
+                screenState: 'hidden',
+            });
+            rejectWindowPendingRender(entry, staleReason, entryDetails);
+            retireWindowEntry(entry, staleReason, entryDetails, {
+                cancelTranslation: false,
+            });
+            // Completed hidden window text already has a cached translation and
+            // is no longer an on-screen owner. Future redraws can hydrate from
+            // the source cache instead of keeping this physical window active.
+            forgetWindowEntryRecord(entry, staleReason, entryDetails);
+            entryLifecycle.setSurfaceVisible(entry, false, {
+                reason: staleReason,
+                screenState: 'hidden',
+            });
+            try { data.texts.delete(key); } catch (_) {}
+            try {
+                if (data.renderQueue && typeof data.renderQueue.delete === 'function') {
+                    data.renderQueue.delete(key);
+                }
+            } catch (_) {}
+            return true;
         }
 
         function markWindowEntriesVisible(windowInstance, data, reason) {
             if (!data || !data.texts || typeof data.texts.forEach !== 'function') return;
             data.texts.forEach((entry) => {
-                if (!isWindowEntryActive(entry) || entry._trStale || entry._trSurfaceVisible !== false) return;
+                if (!isWindowEntryActive(entry) || entryLifecycle.isStale(entry) || entryLifecycle.getSurfaceVisible(entry) !== false) return;
                 setWindowDrawRecordVisible(windowInstance, data, entry, true, reason || 'window-visible');
             });
         }
@@ -329,12 +427,13 @@
             beginWindowRefresh,
             finishWindowRefresh,
             rejectWindowPendingRender,
+            forgetWindowEntryRecord,
             getWindowScreenState,
             syncWindowTextScreenState,
             commitPendingWindowEntryStaleRecords,
             withWindowRefreshDepth,
             unregisterWindowSafely,
-            flushPendingWindowRedraws,
+            flushWindowRenderQueue,
         };
     }
 

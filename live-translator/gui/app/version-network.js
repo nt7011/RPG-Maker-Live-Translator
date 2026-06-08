@@ -9,6 +9,7 @@ function fetchRemoteText(url) {
 
 function fetchRemoteTextWithNode(rawUrl, redirectCount) {
     return new Promise((resolve, reject) => {
+        const updatePolicy = getGuiConfiguredPolicy().updates;
         let url;
         try {
             url = new URL(rawUrl);
@@ -28,7 +29,7 @@ function fetchRemoteTextWithNode(rawUrl, redirectCount) {
 
         const request = https.request(url, {
             method: 'GET',
-            timeout: VERSION_CHECK_TIMEOUT_MS,
+            timeout: updatePolicy.timeoutMs,
             headers: {
                 Accept: 'application/json, text/plain;q=0.8, */*;q=0.1',
                 'Cache-Control': 'no-cache',
@@ -38,7 +39,7 @@ function fetchRemoteTextWithNode(rawUrl, redirectCount) {
             const status = Number(response.statusCode) || 0;
             if (isRedirectStatus(status) && response.headers && response.headers.location) {
                 response.resume();
-                if (redirectCount >= VERSION_CHECK_MAX_REDIRECTS) {
+                if (redirectCount >= updatePolicy.maxRedirects) {
                     finish(new Error('too many update check redirects'));
                     return;
                 }
@@ -68,7 +69,7 @@ function fetchRemoteTextWithNode(rawUrl, redirectCount) {
             response.setEncoding('utf8');
             response.on('data', (chunk) => {
                 total += getTextByteLength(chunk);
-                if (total > VERSION_CHECK_MAX_BYTES) {
+                if (total > updatePolicy.maxBytes) {
                     response.destroy();
                     finish(new Error('version response too large'));
                     return;
@@ -92,10 +93,11 @@ async function fetchRemoteTextWithBrowser(rawUrl) {
 
     const url = new URL(rawUrl);
     validateVersionCheckUrl(url);
+    const updatePolicy = getGuiConfiguredPolicy().updates;
 
     const controller = typeof AbortController === 'function' ? new AbortController() : null;
     const timer = controller
-        ? setTimeout(() => controller.abort(), VERSION_CHECK_TIMEOUT_MS)
+        ? setTimeout(() => controller.abort(), updatePolicy.timeoutMs)
         : null;
     try {
         const response = await fetch(url.href, {
@@ -117,6 +119,7 @@ async function fetchRemoteTextWithBrowser(rawUrl) {
 }
 
 async function readLimitedResponseText(response) {
+    const maxBytes = getGuiConfiguredPolicy().updates.maxBytes;
     if (response.body
         && typeof response.body.getReader === 'function'
         && typeof TextDecoder === 'function') {
@@ -130,7 +133,7 @@ async function readLimitedResponseText(response) {
                 if (result.done) break;
                 const value = result.value || new Uint8Array(0);
                 total += Number(value.byteLength || value.length || 0);
-                if (total > VERSION_CHECK_MAX_BYTES) {
+                if (total > maxBytes) {
                     if (typeof reader.cancel === 'function') reader.cancel();
                     throw new Error('version response too large');
                 }
@@ -144,7 +147,7 @@ async function readLimitedResponseText(response) {
     }
 
     const text = await response.text();
-    if (getTextByteLength(text) > VERSION_CHECK_MAX_BYTES) {
+    if (getTextByteLength(text) > maxBytes) {
         throw new Error('version response too large');
     }
     return text;
@@ -161,6 +164,9 @@ function validateVersionCheckUrl(url) {
     if (url.username || url.password) {
         throw new Error('update check URL credentials are not allowed');
     }
+    if (isBlockedVersionCheckHost(url.hostname)) {
+        throw new Error('update check URL local hosts are not allowed');
+    }
 }
 
 function getTextByteLength(value) {
@@ -169,4 +175,49 @@ function getTextByteLength(value) {
         return Buffer.byteLength(text, 'utf8');
     }
     return text.length;
+}
+
+function isBlockedVersionCheckHost(rawHostname) {
+    const hostname = normalizeVersionCheckHostname(rawHostname);
+    if (!hostname) return true;
+    if (hostname === 'localhost' || hostname.endsWith('.localhost')) return true;
+    if (isBlockedVersionCheckIpv4(hostname)) return true;
+    if (isBlockedVersionCheckIpv6(hostname)) return true;
+    return false;
+}
+
+function normalizeVersionCheckHostname(rawHostname) {
+    const hostname = String(rawHostname || '').trim().toLowerCase();
+    if (hostname.startsWith('[') && hostname.endsWith(']')) {
+        return hostname.slice(1, -1);
+    }
+    return hostname;
+}
+
+function isBlockedVersionCheckIpv4(hostname) {
+    const match = hostname.match(/^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$/u);
+    if (!match) return false;
+    const octets = match.slice(1).map((value) => Number(value));
+    if (octets.some((value) => !Number.isInteger(value) || value < 0 || value > 255)) return true;
+
+    const first = octets[0];
+    const second = octets[1];
+    return first === 0
+        || first === 10
+        || first === 127
+        || (first === 100 && second >= 64 && second <= 127)
+        || (first === 169 && second === 254)
+        || (first === 172 && second >= 16 && second <= 31)
+        || (first === 192 && second === 168)
+        || (first === 198 && (second === 18 || second === 19))
+        || first >= 224;
+}
+
+function isBlockedVersionCheckIpv6(hostname) {
+    if (!hostname.includes(':')) return false;
+    if (hostname === '::' || hostname === '::1') return true;
+    if (hostname.startsWith('fc') || hostname.startsWith('fd')) return true;
+    if (/^fe[89ab][0-9a-f]*:/u.test(hostname)) return true;
+    if (hostname.startsWith('::ffff:')) return true;
+    return false;
 }

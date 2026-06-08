@@ -61,6 +61,13 @@
         return Number.isFinite(numeric) ? numeric : fallback;
     }
 
+    function firstDefined(...values) {
+        for (const value of values) {
+            if (value !== undefined && value !== null) return value;
+        }
+        return undefined;
+    }
+
     function positiveInteger(value, fallback) {
         const numeric = Number(value);
         return Number.isInteger(numeric) && numeric > 0 ? numeric : fallback;
@@ -120,11 +127,11 @@
             port: positiveInteger(source.port || source.Port, 1234),
             model: typeof source.model === 'string' ? source.model.trim() : '',
             system_prompt: source.system_prompt || source.systemPrompt || source.SystemPrompt || '',
-            temperature: finiteNumber(source.temperature || source.Temperature, 0.2),
-            top_k: finiteNumber(source.top_k || source.TopK, null),
-            repeat_penalty: finiteNumber(source.repeat_penalty || source.repeatPenalty || source.repetition_penalty, null),
-            min_p: finiteNumber(source.min_p || source.MinP, null),
-            top_p: finiteNumber(source.top_p || source.TopP, 0.95),
+            temperature: finiteNumber(firstDefined(source.temperature, source.Temperature), 0.2),
+            top_k: finiteNumber(firstDefined(source.top_k, source.TopK), null),
+            repeat_penalty: finiteNumber(firstDefined(source.repeat_penalty, source.repeatPenalty, source.repetition_penalty), null),
+            min_p: finiteNumber(firstDefined(source.min_p, source.MinP), null),
+            top_p: finiteNumber(firstDefined(source.top_p, source.TopP), 0.95),
             max_output_tokens: resolveLocalMaxOutputTokens(source, settings),
             model_catalog_ttl_ms: positiveInteger(
                 source.model_catalog_ttl_ms || source.modelCatalogTtlMs,

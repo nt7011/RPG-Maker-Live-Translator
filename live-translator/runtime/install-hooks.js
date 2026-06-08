@@ -195,6 +195,7 @@
             const bitmapServices = createBitmapServices({
                 settings,
                 logger,
+                perf,
                 captureBitmapDrawState: hookContext.captureBitmapDrawState,
             });
             const bitmapAdapterServices = bitmapServices.forBitmapAdapter();
@@ -220,8 +221,9 @@
                 dbg,
                 diag,
                 preview,
+                textCodec: hookContext.textCodec,
                 stripControls: hookContext.stripControls,
-                encodeText: hookContext.encodeText,
+                createTextSource: hookContext.createTextSource,
                 restoreText: hookContext.restoreText,
                 telemetry,
                 settings,
@@ -233,6 +235,7 @@
                 createWindowTextScaleScope: hookContext.createWindowTextScaleScope,
                 generateKey: hookContext.generateKey,
                 contentsOwners: hookContext.contentsOwners,
+                surfaceOwnership: hookContext.surfaceOwnership,
                 windowRegistry: hookContext.windowRegistry,
                 registeredWindows: hookContext.registeredWindows,
                 windowLifecycle: hookContext.windowLifecycle,
@@ -252,15 +255,20 @@
             const pixiTextAdapterInstaller = resolvePixiTextInstaller();
             let gameMessageHelpers = null;
             let windowTextAdapterHelpers = null;
+            if (hookContext && typeof hookContext.setWindowTextHelpersProvider === 'function') {
+                hookContext.setWindowTextHelpersProvider(() => windowTextAdapterHelpers);
+            }
 
             function installWindowLifecycleHooks() {
                 return windowLifecycleInstaller({
                     logger,
                     dbg,
                     windowLifecycle: hookContext.windowLifecycle,
+                    surfaceOwnership: hookContext.surfaceOwnership,
                     windowRegistry: hookContext.windowRegistry,
                     registeredWindows: hookContext.registeredWindows,
                     addWindowToRegistry: hookContext.addWindowToRegistry,
+                    registerWindowLifecyclePrototypeInstaller: hookContext.registerWindowLifecyclePrototypeInstaller,
                     unregisterWindow: hookContext.unregisterWindow,
                     pruneDetachedRegisteredWindows: hookContext.pruneDetachedRegisteredWindows,
                     getWindowTextHelpers: () => windowTextAdapterHelpers,
@@ -284,8 +292,9 @@
                     applyBitmapDrawState: hookContext.applyBitmapDrawState,
                     resolveTextScalePercent: hookContext.resolveTextScalePercent,
                     createWindowTextScaleScope: hookContext.createWindowTextScaleScope,
+                    textCodec: hookContext.textCodec,
                     stripControls: hookContext.stripControls,
-                    encodeText: hookContext.encodeText,
+                    createTextSource: hookContext.createTextSource,
                     restoreText: hookContext.restoreText,
                     preview,
                     settings,
@@ -294,6 +303,7 @@
                     perf,
                     drawCaptureTrace,
                     contentsOwners: hookContext.contentsOwners,
+                    surfaceOwnership: hookContext.surfaceOwnership,
                     bitmapReplay: windowBitmapReplay,
                     bitmapDraws: windowBitmapReplay,
                 }) || null;

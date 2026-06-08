@@ -149,9 +149,11 @@
 
         function createFallbackDiagnosticsPolicy(optionsArg = {}) {
             const guiState = globalScope.LiveTranslatorGuiState;
-            const guiActive = !guiState || typeof guiState !== 'object'
+            const guiActive = (optionsArg.forceDiagnosticsSurface === true
+                || !guiState
+                || typeof guiState !== 'object')
                 ? true
-                : guiState.translatorOpen === true;
+                : guiState.translatorOpen === true || isClosedGuiDiagnosticsEnabled();
             const diagnostics = runtimeSettings.diagnostics && typeof runtimeSettings.diagnostics === 'object'
                 ? runtimeSettings.diagnostics
                 : null;
@@ -169,7 +171,9 @@
         }
 
         function resolveFallbackLevel(diagnostics, optionsArg = {}, guiActive = true) {
-            if (!guiActive || optionsArg.surface === false || optionsArg.enabled === false) return 'none';
+            if ((!guiActive && optionsArg.forceDiagnosticsSurface !== true)
+                || optionsArg.surface === false
+                || optionsArg.enabled === false) return 'none';
             const requested = normalizeFallbackLevel(optionsArg.mode || optionsArg.level || optionsArg.diagnosticsMode)
                 || normalizeFallbackLevel(diagnostics && (diagnostics.mode || diagnostics.level));
             let level = requested
@@ -183,6 +187,13 @@
                 level = 'performance';
             }
             return level;
+        }
+
+        function isClosedGuiDiagnosticsEnabled() {
+            const diagnostics = runtimeSettings.diagnostics && typeof runtimeSettings.diagnostics === 'object'
+                ? runtimeSettings.diagnostics
+                : null;
+            return !!(diagnostics && diagnostics.captureWhenGuiClosed === true);
         }
 
         function normalizeFallbackLevel(value) {

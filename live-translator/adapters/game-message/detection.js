@@ -13,8 +13,14 @@
 
     function createController(scope = {}) {
         const { MESSAGE_RENDER_STRATEGY, MESSAGE_ACTIVE_PRIORITY, FORESIGHT_BASE_PRIORITY, diag, preview, telemetry, adapterContract } = scope;
-        const callScope = (name) => (...args) => scope[name](...args);
-        const { markDedicatedMessageWindow, createEscapeAwarePayload, isSessionCurrent, getVerifiedMessageOrigin, createForesightPayload, requestForesightTranslation, pruneForesightRecords, getForesightSourceKey, applyStreamDelta, detachCurrentMessageRecord, detectMessageRecord, detectSkippedMessageRecord, describeMessageEligibility, getWindowType, setRecordPriority, clearCurrentRequestToken, markRenderFailed, resetStreamState, isAdapterContractFailure, errorLog } = Object.fromEntries(['markDedicatedMessageWindow', 'createEscapeAwarePayload', 'isSessionCurrent', 'getVerifiedMessageOrigin', 'createForesightPayload', 'requestForesightTranslation', 'pruneForesightRecords', 'getForesightSourceKey', 'applyStreamDelta', 'detachCurrentMessageRecord', 'detectMessageRecord', 'detectSkippedMessageRecord', 'describeMessageEligibility', 'getWindowType', 'setRecordPriority', 'clearCurrentRequestToken', 'markRenderFailed', 'resetStreamState', 'isAdapterContractFailure', 'errorLog'].map((name) => [name, callScope(name)]));
+        const { markDedicatedMessageWindow } = scope.controllerFacades.install;
+        const { createEscapeAwarePayload } = scope.controllerFacades.text;
+        const { isSessionCurrent, resetStreamState, beginMessageStreamPreview, setMessageTranslationSession, markMessageTranslationRequested, getMessageRenderSession, setMessageRequestSession } = scope.controllerFacades.session;
+        const { getVerifiedMessageOrigin } = scope.controllerFacades.foresightHooks;
+        const { createForesightPayload, requestForesightTranslation, pruneForesightRecords, getForesightSourceKey, applyStreamDelta } = scope.controllerFacades.foresightRecords;
+        const { detachCurrentMessageRecord } = scope.controllerFacades.clear;
+        const { detectMessageRecord, detectSkippedMessageRecord, describeMessageEligibility, getWindowType, setRecordPriority } = scope.controllerFacades.records;
+        const { clearCurrentRequestToken, markRenderFailed, isAdapterContractFailure, errorLog } = scope.controllerFacades.render;
 
         /**
          * Observe and request translation for one complete narrative message.
@@ -53,40 +59,38 @@
                 }
 
                 detachCurrentMessageRecord(windowInstance, 'message-translation-replaced');
-                windowInstance._trSessionId = sessionId;
+                setMessageTranslationSession(windowInstance, sessionId);
+                markMessageTranslationRequested(windowInstance);
                 const record = detectMessageRecord(windowInstance, payload, sessionId);
                 if (!record) {
                     resetStreamState(windowInstance);
                     return;
                 }
                 const recordId = record.id || '';
-                resetStreamState(windowInstance);
-                windowInstance._trStreamText = '';
-                windowInstance._trStreamSessionId = sessionId;
-                windowInstance._trStreamLoopActive = false;
-                windowInstance._trStreamDeferredLogged = false;
+                beginMessageStreamPreview(windowInstance, sessionId);
 
-                const requestToken = { __trMessageRequestToken: true };
-                windowInstance._trMessageRequestToken = requestToken;
-                windowInstance._trMessageTranslationSessionId = sessionId;
-                windowInstance._trMessageTranslationRecordId = recordId;
-                windowInstance._trMessageTranslationPriority = MESSAGE_ACTIVE_PRIORITY;
+                const requestToken = { __messageRenderRequestToken: true };
+                setMessageRequestSession(windowInstance, requestToken, sessionId, recordId, MESSAGE_ACTIVE_PRIORITY);
 
                 let requested = false;
                 try {
-                    requested = adapterContract.requestItemTranslation(record, {
+                    const streamEnabled = scope.disableStreaming !== true;
+                    const requestOptions = {
                         hook: 'message',
-                        stream: true,
+                        stream: streamEnabled,
                         priority: MESSAGE_ACTIVE_PRIORITY,
                         renderStrategy: MESSAGE_RENDER_STRATEGY,
-                        onDelta: (partial) => applyStreamDelta(windowInstance, payload, sessionId, partial),
                         metadata: {
                             sessionId,
                             windowType: getWindowType(windowInstance),
                             detachedCacheable: true,
                         },
-                    });
-                    if (!requested) {
+                    };
+                    if (streamEnabled) {
+                        requestOptions.onDelta = (partial) => applyStreamDelta(windowInstance, payload, sessionId, partial);
+                    }
+                    requested = adapterContract.requestItemTranslation(record, requestOptions);
+                    if (!requested || requested.handled !== true) {
                         clearCurrentRequestToken(windowInstance, requestToken);
                         markRenderFailed(record, 'translation request failed', {
                             sessionId,
@@ -105,14 +109,12 @@
                     return;
                 }
 
-                if (windowInstance._trMessageRequestToken === requestToken
-                    && windowInstance._trMessageRecordId === recordId
-                    && windowInstance._trMessageRecordSessionId === sessionId
+                const renderSession = getMessageRenderSession(windowInstance);
+                if (renderSession.requestToken === requestToken
+                    && renderSession.recordId === recordId
+                    && renderSession.recordSessionId === sessionId
                     && isSessionCurrent(windowInstance, sessionId)) {
-                    windowInstance._trMessageRequestToken = requestToken;
-                    windowInstance._trMessageTranslationSessionId = sessionId;
-                    windowInstance._trMessageTranslationRecordId = recordId;
-                    windowInstance._trMessageTranslationPriority = MESSAGE_ACTIVE_PRIORITY;
+                    setMessageRequestSession(windowInstance, requestToken, sessionId, recordId, MESSAGE_ACTIVE_PRIORITY);
                 }
                 setRecordPriority(record, MESSAGE_ACTIVE_PRIORITY, 'message-visible');
                 scheduleForesightTranslations(windowInstance, payload, sessionId);

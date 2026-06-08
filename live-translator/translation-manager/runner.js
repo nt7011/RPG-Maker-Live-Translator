@@ -12,9 +12,11 @@
     }
 
     function createController(scope = {}) {
-        const { createAbortError, isAbortErrorLike, logger, preview, provider, maxRetries, retryBaseMs, retryMaxMs, requestTimeoutMs, normalizeCacheKey, completed } = scope;
-        const callScope = (name) => (...args) => scope[name](...args);
-        const { finalizeProviderSuccess, forgetJobKey, settleSubscriber, schedulePump } = Object.fromEntries(['finalizeProviderSuccess', 'forgetJobKey', 'settleSubscriber', 'schedulePump'].map((name) => [name, callScope(name)]));
+        const { createAbortError, isAbortErrorLike, logger, preview, provider, maxRetries, retryBaseMs, retryMaxMs, requestTimeoutMs, normalizeCacheKey } = scope;
+        const { finalizeProviderSuccess } = scope.controllerFacades.eligibility;
+        const { forgetJobKey } = scope.controllerFacades.jobs;
+        const { settleSubscriber } = scope.controllerFacades.subscribers;
+        const { schedulePump } = scope.controllerFacades.queue;
 
         function createJobController(job) {
             if (typeof AbortController !== 'function') return null;
@@ -72,6 +74,7 @@
 
             runProviderWithRetries(job, controller ? controller.signal : undefined)
                 .then((translated) => {
+                    scope.recordProviderAvailability('provider-success');
                     finalizeProviderSuccess(job, translated);
                     job.status = 'completed';
                     scope.translationDiagnostics.increment('completed');
@@ -90,6 +93,7 @@
                     });
                 })
                 .catch((error) => {
+                    scope.recordProviderAvailability('provider-failed', error);
                     job.status = isAbortErrorLike(error) ? 'canceled' : 'failed';
                     job.lastError = error;
                     if (job.status === 'failed') scope.translationDiagnostics.increment('failed');

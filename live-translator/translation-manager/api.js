@@ -12,9 +12,19 @@
     }
 
     function createController(scope = {}) {
-        const { DEFAULT_PRIORITY, completed, jobsByKey } = scope;
-        const callScope = (name) => (...args) => scope[name](...args);
-        const { describeIgnoreTranslationRegex, describeOverrideTranslationRegex, describeSkip, describeEligibility, shouldSkip, shouldIgnoreTranslation, storeCompletedTranslation, forgetCompletedTranslation, cancelByRecordId, setPriorityByRecordId, lookup, request } = Object.fromEntries(['describeIgnoreTranslationRegex', 'describeOverrideTranslationRegex', 'describeSkip', 'describeEligibility', 'shouldSkip', 'shouldIgnoreTranslation', 'storeCompletedTranslation', 'forgetCompletedTranslation', 'cancelByRecordId', 'setPriorityByRecordId', 'lookup', 'request'].map((name) => [name, callScope(name)]));
+        const { DEFAULT_PRIORITY, completed, controllerFacades, jobsByKey } = scope;
+        const {
+            describeIgnoreTranslationRegex,
+            describeOverrideTranslationRegex,
+            describeSkip,
+            describeEligibility,
+            shouldSkip,
+            shouldIgnoreTranslation,
+            storeCompletedTranslation,
+            forgetCompletedTranslation,
+        } = controllerFacades.eligibility;
+        const { cancelByRecordId, setPriorityByRecordId } = controllerFacades.subscribers;
+        const { lookup, request } = controllerFacades.requests;
 
         function getStats() {
             const diagnostics = scope.translationDiagnostics.getSnapshot({ jobLimit: 1 });

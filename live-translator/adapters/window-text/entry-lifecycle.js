@@ -6,32 +6,44 @@
         ? window
         : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
     const defineRuntimeModule = globalScope.LiveTranslatorDefine;
+    const requireRuntimeModule = globalScope.LiveTranslatorRequire;
     if (typeof defineRuntimeModule !== 'function') {
         throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/window-text/entry-lifecycle.js.');
     }
+    if (typeof requireRuntimeModule !== 'function') {
+        throw new Error('[LiveTranslator] runtime module require is unavailable before adapters/window-text/entry-lifecycle.js.');
+    }
+    const renderTransaction = requireRuntimeModule('runtime.renderTransaction');
 
     function createEntryLifecycleController(context = {}) {
-    const callContext = (name) => (...args) => context[name](...args);
-    const { logger, telemetry, adapterContract, windowRegistry, registeredWindows, windowLifecycle, ensureWindowRegistered, pruneDetachedRegisteredWindows, generateKey, captureBitmapDrawState, applyBitmapDrawState, createWindowTextScaleScope, preview, diag, dbg, drawCaptureTrace, bitmapReplay, settings, stripControls, encodeText, restoreText, entriesByRecordId, detachedEntriesByRecordId, redrawSettings, textScaleOthers, ADAPTER_ID, ADAPTER_LABEL, RENDER_STRATEGY, WINDOW_PRIORITY_VISIBLE, WINDOW_WRAPPER_TOKEN, REDRAW_DIAGNOSTIC_ITEM_LIMIT, MAX_BACKGROUND_SNAPSHOT_PIXELS, DETACHED_ENTRY_LIMIT } = context;
-    const { install, installOrchestratorSubscription, getRenderGeneration, isRenderTargetCurrent, handleRenderRejected, installWindowBaseWrappers, hasHookInChain, handleDrawText, handleDrawTextEx, createObservedEntry, recordSkippedEntry, createEntry, refreshEntry, requestEntryTranslation, observeEntry, syncEntryFromObservedItem, getEntryStatus, isEntryActive, isEntryRequestActive, isEntryCompleted, firstNonEmptyString, recordDrawTrace, windowTraceDetails, getRegisteredWindowData, markEntryObservedInRefresh, safeStripRpgmEscapes, describeWindowScreenState, buildOrchestratorPayload, applyRenderCommand, markRequestSkipped, markRequestFailed, updateOrchestratorItem, beginPendingRenderCommand, markPendingRenderDeferred, completePendingRenderCommand, rejectPendingRender, clearPendingRenderCommand, getPendingRenderDetails, redrawTranslatedText, drawTranslatedEntry, calculateRedrawBounds, drawTranslatedWindowText, invokeCompletedEntry, invokeOriginalDrawText, invokeOriginalDrawTextEx, withTranslatedWindowTextScale, withWindowTranslatedDrawScope, isWindowTranslatedDrawActive, withWindowDrawTextExReplayScope, estimateEntryBounds, measurePlainTextWidth, estimateDrawTextExFallbackWidth, estimateDrawTextExFallbackHeight, estimateMaxDrawTextExFallbackHeight, getDrawTextExLineCount, getLineHeight, getWindowIconWidth, countDrawTextExIcons, prepareTranslationSource, restoreTranslatedWindowText, sanitizeDrawTextOutput, convertWindowText, describeWindowTextEligibility, describeEntryEligibility, isDedicatedMessageWindow, rememberMessageStart, getSurfaceId, createSlotKey, createWindowTextRecordId, safeRecordIdPart, hashTextForRecordId, normalizeSlotNumber, getWindowTypeName, getWindowCtorName, normalizeDrawTextAlignValue, mergeBounds, isValidRect, roundDiagnosticNumber, cloneDiagnosticRect, cloneDiagnosticArea, withWindowRedrawClear, withWindowContents, isUsableBitmap, getRedrawContents, wasDrawnToDetachedContents, isTransientRefreshWindow, isCoreRefreshWindowType, getBitmapReplayApi, assignWindowTextDrawOrder, createClearRectFromArea, getReplayItemRect, mergeReplayRect, expandReplayDirtyRect, replayRectsOverlap, collectWindowTextReplayItems, windowEntryBelongsToContents, combineReplayItems, filterReplayForEntry, replayMixedItems, replayWindowTextEntry, getWindowReplayText, getBitmapCanvasContext, supportsBitmapReplayClip, withBitmapReplayClip, getReplayClipArea, getBitmapSnapshotContext, captureWindowEntryBackground, ensureWindowEntryBackground, getWindowEntryBackgroundSnapshotStatus, restoreWindowEntryBackground, getEntryContentsRevision, getSnapshotContentsRevision, getWindowDataContentsRevision, getEntrySnapshotPadding, getSnapshotArea, getSnapshotDiagnostics, summarizeReplayItemsForDiagnostics, summarizeReplayStateForDiagnostics } = Object.fromEntries(['install', 'installOrchestratorSubscription', 'getRenderGeneration', 'isRenderTargetCurrent', 'handleRenderRejected', 'installWindowBaseWrappers', 'hasHookInChain', 'handleDrawText', 'handleDrawTextEx', 'createObservedEntry', 'recordSkippedEntry', 'createEntry', 'refreshEntry', 'requestEntryTranslation', 'observeEntry', 'syncEntryFromObservedItem', 'getEntryStatus', 'isEntryActive', 'isEntryRequestActive', 'isEntryCompleted', 'firstNonEmptyString', 'recordDrawTrace', 'windowTraceDetails', 'getRegisteredWindowData', 'markEntryObservedInRefresh', 'safeStripRpgmEscapes', 'describeWindowScreenState', 'buildOrchestratorPayload', 'applyRenderCommand', 'markRequestSkipped', 'markRequestFailed', 'updateOrchestratorItem', 'beginPendingRenderCommand', 'markPendingRenderDeferred', 'completePendingRenderCommand', 'rejectPendingRender', 'clearPendingRenderCommand', 'getPendingRenderDetails', 'redrawTranslatedText', 'drawTranslatedEntry', 'calculateRedrawBounds', 'drawTranslatedWindowText', 'invokeCompletedEntry', 'invokeOriginalDrawText', 'invokeOriginalDrawTextEx', 'withTranslatedWindowTextScale', 'withWindowTranslatedDrawScope', 'isWindowTranslatedDrawActive', 'withWindowDrawTextExReplayScope', 'estimateEntryBounds', 'measurePlainTextWidth', 'estimateDrawTextExFallbackWidth', 'estimateDrawTextExFallbackHeight', 'estimateMaxDrawTextExFallbackHeight', 'getDrawTextExLineCount', 'getLineHeight', 'getWindowIconWidth', 'countDrawTextExIcons', 'prepareTranslationSource', 'restoreTranslatedWindowText', 'sanitizeDrawTextOutput', 'convertWindowText', 'describeWindowTextEligibility', 'describeEntryEligibility', 'isDedicatedMessageWindow', 'rememberMessageStart', 'getSurfaceId', 'createSlotKey', 'createWindowTextRecordId', 'safeRecordIdPart', 'hashTextForRecordId', 'normalizeSlotNumber', 'getWindowTypeName', 'getWindowCtorName', 'normalizeDrawTextAlignValue', 'mergeBounds', 'isValidRect', 'roundDiagnosticNumber', 'cloneDiagnosticRect', 'cloneDiagnosticArea', 'withWindowRedrawClear', 'withWindowContents', 'isUsableBitmap', 'getRedrawContents', 'wasDrawnToDetachedContents', 'isTransientRefreshWindow', 'isCoreRefreshWindowType', 'getBitmapReplayApi', 'assignWindowTextDrawOrder', 'createClearRectFromArea', 'getReplayItemRect', 'mergeReplayRect', 'expandReplayDirtyRect', 'replayRectsOverlap', 'collectWindowTextReplayItems', 'windowEntryBelongsToContents', 'combineReplayItems', 'filterReplayForEntry', 'replayMixedItems', 'replayWindowTextEntry', 'getWindowReplayText', 'getBitmapCanvasContext', 'supportsBitmapReplayClip', 'withBitmapReplayClip', 'getReplayClipArea', 'getBitmapSnapshotContext', 'captureWindowEntryBackground', 'ensureWindowEntryBackground', 'getWindowEntryBackgroundSnapshotStatus', 'restoreWindowEntryBackground', 'getEntryContentsRevision', 'getSnapshotContentsRevision', 'getWindowDataContentsRevision', 'getEntrySnapshotPadding', 'getSnapshotArea', 'getSnapshotDiagnostics', 'summarizeReplayItemsForDiagnostics', 'summarizeReplayStateForDiagnostics'].map((name) => [name, callContext(name)]));
-    
-    function findExistingEntry(windowData, type, rawText, convertedTrimmed, x, y) {
+    const { telemetry, pruneDetachedRegisteredWindows, generateKey, entriesByRecordId, detachedEntriesByRecordId, ADAPTER_ID, DETACHED_ENTRY_LIMIT, entryLifecycleState } = context;
+    const { lifecycle: lifecycleService, surface: surfaceService } = context.services;
+    const { entryRecords, renderCompletion, textMetrics } = context.facades;
+    const { getEntryStatus, isEntryActive } = entryRecords;
+    const { updateOrchestratorItem, rejectPendingRender } = renderCompletion;
+    const { estimateEntryBounds, createSlotKey, getWindowTypeName } = textMetrics;
+
+    function findExistingEntry(windowData, type, rawText, convertedTrimmed, x, y, params = null) {
                 if (!windowData || !windowData.texts) return null;
-                const key = generateKey(type, x, y, windowData.windowType, convertedTrimmed);
+                const slotKey = createSlotKey(type, x, y, params);
+                const key = generateKey(type, x, y, windowData.windowType, convertedTrimmed, slotKey);
                 const entry = windowData.texts.get(key);
-                if (!entry || entry._trStale) return null;
+                if (!entry || entryLifecycleState.isStale(entry)) return null;
+                if ((entry.slotKey || createSlotKey(entry.type, entry.position && entry.position.x, entry.position && entry.position.y, entry.originalParams)) !== slotKey) {
+                    return null;
+                }
                 return entry.rawText === rawText && entry.convertedText === convertedTrimmed ? entry : null;
             }
     
-    function retireEntriesInSameSlot(windowData, type, x, y, exceptEntry = null, reason = 'window-entry-replaced') {
+    function retireEntriesInSameSlot(windowData, type, x, y, exceptEntry = null, reason = 'window-entry-replaced', params = null) {
                 if (!windowData || !windowData.texts || typeof windowData.texts.forEach !== 'function') return 0;
                 const stale = [];
-                const slotKey = createSlotKey(type, x, y);
+                const slotKey = createSlotKey(type, x, y, params);
                 try {
                     windowData.texts.forEach((entry, key) => {
-                        if (!entry || entry._trStale) return;
+                        if (!entry || entryLifecycleState.isStale(entry)) return;
                         if (exceptEntry && entry === exceptEntry) return;
-                        if ((entry.slotKey || createSlotKey(entry.type, entry.position && entry.position.x, entry.position && entry.position.y)) === slotKey) {
+                        if ((entry.slotKey || createSlotKey(entry.type, entry.position && entry.position.x, entry.position && entry.position.y, entry.originalParams)) === slotKey) {
                             stale.push({ entry, key });
                         }
                     });
@@ -55,18 +67,15 @@
             }
 
     function markEntryPendingStale(windowData, entry, reason) {
-                if (!entry || entry._trStale) return;
+                if (!entry || entryLifecycleState.isStale(entry)) return;
                 const at = Date.now();
-                entry._trPendingInvalidation = {
-                    reason: 'window-entry-stale',
+                entryLifecycleState.markPendingInvalidation(entry, 'window-entry-stale', {
                     sourceReason: reason || 'window-entry-replaced',
                     at,
                     contentsRevision: windowData && Number.isFinite(Number(windowData.contentsRevision))
                         ? Number(windowData.contentsRevision)
                         : 0,
-                };
-                entry.canceledReason = reason || 'window-entry-replaced';
-                entry.canceledAt = at;
+                });
             }
     
     function markEntryStale(windowData, key, entry, reason = 'window-entry-stale') {
@@ -75,9 +84,10 @@
                     key: String(key || ''),
                     windowType: windowData && windowData.windowType ? windowData.windowType : '',
                 });
-                entry._trStale = true;
-                entry.canceledReason = reason;
-                entry.canceledAt = Date.now();
+                entryLifecycleState.markStale(entry, reason, {
+                    surfaceVisible: false,
+                    screenState: 'hidden',
+                });
                 forgetEntryRecord(entry, reason, {
                     key: String(key || ''),
                     windowType: windowData && windowData.windowType ? windowData.windowType : '',
@@ -85,8 +95,8 @@
                 if (windowData && windowData.texts) {
                     try { windowData.texts.delete(key); } catch (_) {}
                 }
-                if (windowData && windowData.pendingRedraws) {
-                    try { windowData.pendingRedraws.delete(key); } catch (_) {}
+                if (windowData && windowData.renderQueue) {
+                    try { windowData.renderQueue.delete(key); } catch (_) {}
                 }
                 markRecordDisappeared(entry, reason, {
                     key: String(key || ''),
@@ -99,15 +109,7 @@
                 if (!entry.normalizedSource && !entry.translationSource) return false;
                 const recordId = String(entry.recordId || '');
                 if (!recordId) return false;
-                entry._trDetachedAt = Date.now();
-                entry._trDetachedReason = String(reason || entry.canceledReason || 'window-entry-detached');
-                if (details && typeof details === 'object') {
-                    entry._trDetachedDetails = {
-                        key: String(details.key || ''),
-                        windowType: String(details.windowType || ''),
-                        allowDetachedReattach: details.allowDetachedReattach === true,
-                    };
-                }
+                entryLifecycleState.markDetached(entry, reason || entryLifecycleState.getCanceledReason(entry) || 'window-entry-detached', details);
                 try {
                     detachedEntriesByRecordId.delete(recordId);
                     detachedEntriesByRecordId.set(recordId, entry);
@@ -172,7 +174,8 @@
     function cancelEntryTranslation(entry, reason = 'window-entry-stale') {
                 let canceled = false;
                 if (isEntryActive(entry)) {
-                    canceled = adapterContract.cancelItemTranslation(entry, reason) === true;
+                    const result = lifecycleService.cancelItemTranslation(entry, reason);
+                    canceled = !!(result && result.changed === true);
                 }
                 return canceled;
             }
@@ -180,38 +183,56 @@
     function markRecordDisappeared(entry, reason, details = null) {
                 if (!isEntryActive(entry)) return;
                 rejectPendingRender(entry, reason || 'window-entry-disappeared', details);
-                adapterContract.retireItem(entry, 'disappeared', {
+                lifecycleService.retireItem(entry, 'disappeared', {
                     eventType: 'item.disappeared',
                     message: reason || '',
                     details,
                 });
-                entry._trSurfaceVisible = false;
+                entryLifecycleState.setSurfaceVisible(entry, false, {
+                    reason: reason || 'window-entry-disappeared',
+                    screenState: 'hidden',
+                });
             }
     
     function recordDecision(entry, type, message = '', details = null) {
-                adapterContract.recordDecision(entry, type, message, details);
+                lifecycleService.recordDecision(entry, type, message, details);
             }
     
-    function queuePendingRedraw(targetWindow, windowData, entry, key) {
+    function queueRenderRetry(targetWindow, windowData, entry, key, plan = null) {
                 if (!windowData) return;
-                if (!windowData.pendingRedraws) windowData.pendingRedraws = new Map();
-                windowData.pendingRedraws.set(key, entry);
+                if (!windowData.renderQueue) windowData.renderQueue = new Map();
+                const queueKey = key || getTextEntryKey(windowData, entry);
+                if (!queueKey) return;
+                windowData.renderQueue.set(queueKey, createRenderQueueRecord(targetWindow, windowData, entry, queueKey, plan));
                 if (entry._queueLogged) return;
                 telemetry.logDraw('queue', entry.renderedText || entry.convertedText, entry.position.x, entry.position.y, {
                     windowType: getWindowTypeName(targetWindow, windowData),
                 });
                 recordDecision(entry, 'draw.queued', 'window redraw queued', {
                     windowType: getWindowTypeName(targetWindow, windowData),
+                    queue: plan && plan.queue ? String(plan.queue) : '',
+                    reason: plan && plan.reason ? String(plan.reason) : '',
                 });
                 entry._queueLogged = true;
             }
+
+    function createRenderQueueRecord(targetWindow, windowData, entry, key, plan = null) {
+                const pending = entry && entry.renderTransaction;
+                return {
+                    key: String(key || ''),
+                    entry,
+                    queue: plan && plan.queue ? String(plan.queue) : 'on-update-ready',
+                    reason: plan && plan.reason ? String(plan.reason) : 'window-redraw-deferred',
+                    commandId: pending && pending.commandId ? String(pending.commandId) : '',
+                    commandGeneration: Number(pending && pending.commandGeneration) || 0,
+                    entryGeneration: Number(entry && entry.surfaceRevision) || 0,
+                    windowType: getWindowTypeName(targetWindow, windowData),
+                    queuedAt: Date.now(),
+                };
+            }
     
     function clearPendingInvalidation(entry) {
-                if (!entry || !entry._trPendingInvalidation) return false;
-                delete entry._trPendingInvalidation;
-                delete entry.canceledReason;
-                delete entry.canceledAt;
-                return true;
+                return entryLifecycleState.clearPendingInvalidation(entry);
             }
     
     function getCurrentEntry(windowData, entry) {
@@ -226,17 +247,95 @@
                     entry.position && entry.position.x,
                     entry.position && entry.position.y,
                     windowData.windowType,
-                    entry.convertedText
+                    entry.convertedText,
+                    entry.slotKey || createSlotKey(entry.type, entry.position && entry.position.x, entry.position && entry.position.y, entry.originalParams)
                 );
             }
     
-    function dropPendingRedraw(windowData, entry, key = null) {
-                if (!windowData || !windowData.pendingRedraws) return;
+    function dropRenderRetry(windowData, entry, key = null) {
+                if (!windowData || !windowData.renderQueue) return;
                 const textKey = key || getTextEntryKey(windowData, entry);
                 if (textKey) {
-                    try { windowData.pendingRedraws.delete(textKey); } catch (_) {}
+                    try { windowData.renderQueue.delete(textKey); } catch (_) {}
                 }
                 if (entry) entry._queueLogged = false;
+            }
+
+    function beginEntryNativeSourceDraw(entry, reason = 'native-source-draw') {
+                if (!entry || entry.skipReason || !entry.translationSource) {
+                    return createSourceDrawTransitionResult('ignored', 'source-draw-not-trackable', null, entry);
+                }
+                const lifecycle = ensureEntryRenderLifecycle(entry);
+                const originBoundary = entry.drawOrigin
+                    && entry.drawOrigin.drawBoundary
+                    && typeof entry.drawOrigin.drawBoundary === 'object'
+                    ? entry.drawOrigin.drawBoundary
+                    : null;
+                const transition = renderTransaction.observeSourceDraw(Object.assign({}, originBoundary || {}, {
+                    adapterId: originBoundary && originBoundary.adapterId ? originBoundary.adapterId : ADAPTER_ID,
+                    itemId: entry.recordId || (originBoundary && originBoundary.itemId) || '',
+                    recordId: entry.recordId || (originBoundary && originBoundary.recordId) || '',
+                    surfaceId: entry.surfaceId || (originBoundary && originBoundary.surfaceId) || '',
+                    identitySurfaceId: entry.identitySurfaceId || (originBoundary && originBoundary.identitySurfaceId) || '',
+                    slotKey: entry.slotKey || (originBoundary && originBoundary.slotKey) || '',
+                    generation: Number(entry.surfaceRevision) || Number(originBoundary && originBoundary.generation) || 0,
+                    reason: String(reason || 'native-source-draw'),
+                    details: Object.assign({}, originBoundary && originBoundary.details || {}, {
+                        method: entry.type || '',
+                    }),
+                }));
+                lifecycle.sourceDraw = transition.state;
+                return createSourceDrawTransitionResult('observed', reason, transition, entry);
+            }
+
+    function completeEntryNativeSourceDraw(entry, reason = 'native-source-draw-complete') {
+                if (!entry || !entry.renderLifecycle || !entry.renderLifecycle.sourceDraw) {
+                    return createSourceDrawTransitionResult('ignored', 'source-draw-missing', null, entry);
+                }
+                const transition = renderTransaction.commitSourceDraw(entry.renderLifecycle.sourceDraw, {
+                    reason: String(reason || 'native-source-draw-complete'),
+                    details: {
+                        method: entry.type || '',
+                    },
+                });
+                entry.renderLifecycle.sourceDraw = transition.state;
+                if (entry.recordId && isEntryActive(entry)) {
+                    updateOrchestratorItem(entry, {
+                        status: getEntryStatus(entry, 'detected'),
+                        translation: entry.renderedText || '',
+                        translationReceived: entry.providerText || '',
+                        translationDrawn: entry.renderedText || '',
+                        drawBoundary: transition.state,
+                    }, 'item.source_draw_committed', {
+                        phase: transition.state && transition.state.phase ? transition.state.phase : '',
+                        previousPhase: transition.previousPhase || '',
+                        reason: String(reason || 'native-source-draw-complete'),
+                    });
+                }
+                return createSourceDrawTransitionResult('committed', reason, transition, entry);
+            }
+
+    function createSourceDrawTransitionResult(status, reason, transition = null, entry = null) {
+                const state = transition && transition.state ? transition.state : null;
+                return Object.freeze({
+                    status,
+                    accepted: status === 'observed' || status === 'committed',
+                    reason: String(reason || status || ''),
+                    phase: state && state.phase ? state.phase : '',
+                    previousPhase: transition && transition.previousPhase ? transition.previousPhase : '',
+                    sourceDraw: state,
+                    recordId: entry && entry.recordId ? String(entry.recordId) : '',
+                    surfaceId: entry && entry.surfaceId ? String(entry.surfaceId) : '',
+                    slotKey: entry && entry.slotKey ? String(entry.slotKey) : '',
+                    generation: state && Number.isFinite(Number(state.generation)) ? Number(state.generation) : 0,
+                });
+            }
+
+    function ensureEntryRenderLifecycle(entry) {
+                if (!entry.renderLifecycle || typeof entry.renderLifecycle !== 'object') {
+                    entry.renderLifecycle = {};
+                }
+                return entry.renderLifecycle;
             }
     
     function resolveWindowData(entry) {
@@ -244,7 +343,7 @@
                 if (entry.windowData) return entry.windowData;
                 const owner = entry.ownerWindow || null;
                 try {
-                    return owner ? windowRegistry.get(owner) : null;
+                    return owner ? surfaceService.getWindowData(owner) : null;
                 } catch (_) {
                     return null;
                 }
@@ -254,16 +353,10 @@
                 if (typeof pruneDetachedRegisteredWindows === 'function') {
                     try { pruneDetachedRegisteredWindows(); } catch (_) {}
                 }
-                if (entry && entry.ownerWindow && (!windowData || windowRegistry.get(entry.ownerWindow) === windowData)) {
+                if (entry && entry.ownerWindow && (!windowData || surfaceService.getWindowData(entry.ownerWindow) === windowData)) {
                     return entry.ownerWindow;
                 }
-                let target = null;
-                try {
-                    registeredWindows.forEach((candidate) => {
-                        if (!target && windowRegistry.get(candidate) === windowData) target = candidate;
-                    });
-                } catch (_) {}
-                return target;
+                return surfaceService.findWindowByData(windowData);
             }
     
     function isWindowReadyForRedraw(windowInstance, contents) {
@@ -291,7 +384,7 @@
                 return entry.bounds;
             }
     
-        return { findExistingEntry, retireEntriesInSameSlot, markEntryStale, rememberDetachedEntry, takeDetachedEntry, peekDetachedEntry, forgetEntryRecord, cancelEntryTranslation, markRecordDisappeared, recordDecision, queuePendingRedraw, clearPendingInvalidation, getCurrentEntry, getTextEntryKey, dropPendingRedraw, resolveWindowData, resolveTargetWindow, isWindowReadyForRedraw, refreshEntryBounds };
+        return { findExistingEntry, retireEntriesInSameSlot, markEntryStale, rememberDetachedEntry, takeDetachedEntry, peekDetachedEntry, forgetEntryRecord, cancelEntryTranslation, markRecordDisappeared, recordDecision, queueRenderRetry, clearPendingInvalidation, getCurrentEntry, getTextEntryKey, dropRenderRetry, beginEntryNativeSourceDraw, completeEntryNativeSourceDraw, resolveWindowData, resolveTargetWindow, isWindowReadyForRedraw, refreshEntryBounds };
     }
     
     defineRuntimeModule('adapters.windowTextEntryLifecycle', { create: createEntryLifecycleController });

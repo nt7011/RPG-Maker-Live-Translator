@@ -1,0 +1,958 @@
+:root {
+    color-scheme: light;
+    font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+
+    /* Core shell tokens. Each dark value sits below its light source value. */
+    --gui-bg-light: #f6f7f9;
+    --gui-bg-dark: #0f1115;
+    --gui-surface-light: #ffffff;
+    --gui-surface-dark: #191d23;
+    --gui-surface-soft-light: #fbfcfe;
+    --gui-surface-soft-dark: #15191f;
+    --gui-surface-muted-light: #f8fafc;
+    --gui-surface-muted-dark: #20252d;
+    --gui-surface-pill-light: #eef1f5;
+    --gui-surface-pill-dark: #242a33;
+    --gui-border-light: #d9dee7;
+    --gui-border-dark: #333a46;
+    --gui-border-soft-light: #e3e7ee;
+    --gui-border-soft-dark: #2a303a;
+    --gui-border-control-light: #cbd4df;
+    --gui-border-control-dark: #3c4654;
+    --gui-border-dashed-light: #ccd4df;
+    --gui-border-dashed-dark: #4a5564;
+    --gui-border-button-light: #b9c2cf;
+    --gui-border-button-dark: #4d5868;
+    --gui-border-hover-light: #8d98a7;
+    --gui-border-hover-dark: #6b7788;
+    --gui-text-light: #20242c;
+    --gui-text-dark: #e7ebf0;
+    --gui-text-secondary-light: #27313d;
+    --gui-text-secondary-dark: #f1f4f8;
+    --gui-text-muted-light: #52606d;
+    --gui-text-muted-dark: #abb5c2;
+    --gui-text-subtle-light: #4b5563;
+    --gui-text-subtle-dark: #c8d0da;
+    --gui-text-faint-light: #9aa4b2;
+    --gui-text-faint-dark: #7f8b9a;
+    --gui-contrast-bg-light: #27313d;
+    --gui-contrast-bg-dark: #e7ebf0;
+    --gui-contrast-text-light: #ffffff;
+    --gui-contrast-text-dark: #101318;
+    --gui-translucent-surface-light: rgba(255, 255, 255, 0.72);
+    --gui-translucent-surface-dark: rgba(32, 37, 45, 0.76);
+    --gui-translucent-control-light: rgba(255, 255, 255, 0.78);
+    --gui-translucent-control-dark: rgba(32, 37, 45, 0.84);
+    --gui-code-bg-light: #f1f4f8;
+    --gui-code-bg-dark: #252b34;
+    --gui-inactive-sheen-light: rgba(255, 255, 255, 0.42);
+    --gui-inactive-sheen-dark: rgba(255, 255, 255, 0.08);
+    --gui-inactive-sheen-clear-light: rgba(255, 255, 255, 0);
+    --gui-inactive-sheen-clear-dark: rgba(255, 255, 255, 0);
+    --gui-rail-border-light: rgba(32, 36, 44, 0.10);
+    --gui-rail-border-dark: rgba(255, 255, 255, 0.13);
+    --gui-hover-filter-light: brightness(0.985);
+    --gui-hover-filter-dark: brightness(1.08);
+    --gui-theme-toggle-bg-light: #eee8d5;
+    --gui-theme-toggle-bg-dark: #eee8d5;
+    --gui-theme-toggle-fg-light: #586e75;
+    --gui-theme-toggle-fg-dark: #586e75;
+    --gui-theme-toggle-border-light: #d3af86;
+    --gui-theme-toggle-border-dark: #d3af86;
+    --gui-secondary-bg-light: #505a66;
+    --gui-secondary-bg-dark: #323944;
+    --gui-secondary-border-light: #444d57;
+    --gui-secondary-border-dark: #4a5564;
+    --gui-secondary-text-light: #ffffff;
+    --gui-secondary-text-dark: #f1f4f8;
+    --gui-disclosure-icon-light: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cpolyline%20points='7.4%208%2012%2016%2016.6%208'%20fill='none'%20stroke='%237f8a99'%20stroke-width='3'%20stroke-linecap='round'%20stroke-linejoin='round'/%3E%3C/svg%3E");
+    --gui-disclosure-icon-dark: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cpolyline%20points='7.4%208%2012%2016%2016.6%208'%20fill='none'%20stroke='%23abb5c2'%20stroke-width='3'%20stroke-linecap='round'%20stroke-linejoin='round'/%3E%3C/svg%3E");
+    --gui-disabled-icon-light: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cpath%20d='M7%207l10%2010M17%207L7%2017'%20fill='none'%20stroke='%237f8a99'%20stroke-width='3'%20stroke-linecap='round'/%3E%3C/svg%3E");
+    --gui-disabled-icon-dark: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cpath%20d='M7%207l10%2010M17%207L7%2017'%20fill='none'%20stroke='%23abb5c2'%20stroke-width='3'%20stroke-linecap='round'/%3E%3C/svg%3E");
+
+    /* Shared state and emphasis tokens used by active/copy/focus/status UI. */
+    --gui-accent-light: #326dd8;
+    --gui-accent-dark: #5f8fe6;
+    --gui-accent-ring-light: rgba(50, 109, 216, 0.14);
+    --gui-accent-ring-dark: rgba(95, 143, 230, 0.28);
+    --gui-success-accent-light: #009f5a;
+    --gui-success-accent-dark: #32c784;
+    --gui-success-ring-light: rgba(0, 159, 90, 0.20);
+    --gui-success-ring-dark: rgba(50, 199, 132, 0.28);
+    --gui-danger-accent-light: #d71920;
+    --gui-danger-accent-dark: #ee6f72;
+    --gui-danger-ring-light: rgba(215, 25, 32, 0.18);
+    --gui-danger-ring-dark: rgba(238, 111, 114, 0.26);
+    --gui-neutral-accent-light: #9aa4b2;
+    --gui-neutral-accent-dark: #7f8b9a;
+    --gui-on-solid-light: #ffffff;
+    --gui-on-solid-dark: #ffffff;
+    --gui-on-status-light: #20242c;
+    --gui-on-status-dark: #eff5fb;
+    --gui-on-status-secondary-light: #27313d;
+    --gui-on-status-secondary-dark: #d6e0ec;
+    --gui-status-meta-bg-light: rgba(255, 255, 255, 0.72);
+    --gui-status-meta-bg-dark: rgba(15, 18, 23, 0.68);
+    --gui-status-meta-text-light: #52606d;
+    --gui-status-meta-text-dark: #b7c3d2;
+
+    /* Runtime status pills and small summary badges. */
+    --gui-pill-neutral-bg-light: #eef1f5;
+    --gui-pill-neutral-bg-dark: #28303a;
+    --gui-pill-neutral-text-light: #4b5563;
+    --gui-pill-neutral-text-dark: #c5ced9;
+    --gui-pill-ok-bg-light: #dff3ed;
+    --gui-pill-ok-bg-dark: #173a32;
+    --gui-pill-ok-text-light: #166354;
+    --gui-pill-ok-text-dark: #8de0c7;
+    --gui-pill-warn-bg-light: #fff0d4;
+    --gui-pill-warn-bg-dark: #45310f;
+    --gui-pill-warn-text-light: #7a4b00;
+    --gui-pill-warn-text-dark: #ffd48a;
+    --gui-pill-bad-bg-light: #fbe1dd;
+    --gui-pill-bad-bg-dark: #4a2524;
+    --gui-pill-bad-text-light: #8a2e1d;
+    --gui-pill-bad-text-dark: #ffb1a5;
+
+    /* Translation rails and lifecycle-tinted text records. */
+    --gui-rail-neutral-bg-light: #7f8a99;
+    --gui-rail-neutral-bg-dark: #4d5868;
+    --gui-rail-queued-bg-light: #fdf0f6;
+    --gui-rail-queued-bg-dark: #0f1115;
+    --gui-rail-queued-text-light: #9a2f5d;
+    --gui-rail-queued-text-dark: #ffc1df;
+    --gui-rail-translating-bg-light: #d64f8a;
+    --gui-rail-translating-bg-dark: #2a3038;
+    --gui-rail-completed-bg-light: #009f5a;
+    --gui-rail-completed-bg-dark: #17734d;
+    --gui-rail-failed-bg-light: #d71920;
+    --gui-rail-failed-bg-dark: #9e2f35;
+    --gui-rail-skipped-bg-light: #687382;
+    --gui-rail-skipped-bg-dark: #11151b;
+    --gui-text-status-detected-bg-light: #eef1f5;
+    --gui-text-status-detected-bg-dark: #0f1115;
+    --gui-text-status-pending-bg-light: #92cace;
+    --gui-text-status-pending-bg-dark: #0f1115;
+    --gui-text-status-translating-bg-light: #a1ecf1;
+    --gui-text-status-translating-bg-dark: #2a3038;
+    --gui-text-status-completed-bg-light: #ddf7f3;
+    --gui-text-status-completed-bg-dark: #0f1115;
+    --gui-text-status-skipped-bg-light: #e8ebef;
+    --gui-text-status-skipped-bg-dark: #11151b;
+    --gui-text-status-stale-bg-light: #eee7ff;
+    --gui-text-status-stale-bg-dark: #0f1115;
+    --gui-text-status-removed-bg-light: #efe2d2;
+    --gui-text-status-removed-bg-dark: #0f1115;
+    --gui-text-status-disappeared-bg-light: #f4eaff;
+    --gui-text-status-disappeared-bg-dark: #0f1115;
+    --gui-text-status-failed-bg-light: #fce1e1;
+    --gui-text-status-failed-bg-dark: #4a2525;
+
+    /* Text source hook rails. */
+    --gui-hook-bitmap-light: #1f2328;
+    --gui-hook-bitmap-dark: #8a95a3;
+    --gui-hook-sprite-light: #236a3b;
+    --gui-hook-sprite-dark: #3fa060;
+    --gui-hook-choice-light: #b76e00;
+    --gui-hook-choice-dark: #d08a1f;
+    --gui-hook-message-light: #d64f8a;
+    --gui-hook-message-dark: #d75d92;
+    --gui-hook-pixi-light: #73639d;
+    --gui-hook-pixi-dark: #8e7cc0;
+    --gui-hook-window-light: #326dd8;
+    --gui-hook-window-dark: #6696e8;
+    --gui-hook-unknown-light: #7f8a99;
+    --gui-hook-unknown-dark: #7f8b9a;
+
+    /* Diagnostic job states. */
+    --gui-job-running-border-light: #50a5b1;
+    --gui-job-running-border-dark: #4fadb9;
+    --gui-job-running-bg-light: #dff7f8;
+    --gui-job-running-bg-dark: #17383e;
+    --gui-job-queued-border-light: #c9a24d;
+    --gui-job-queued-border-dark: #d2a94c;
+    --gui-job-queued-bg-light: #fff5d9;
+    --gui-job-queued-bg-dark: #403112;
+    --gui-job-completed-border-light: #57a58f;
+    --gui-job-completed-border-dark: #3b987d;
+    --gui-job-completed-bg-light: #dff3ed;
+    --gui-job-completed-bg-dark: #173a32;
+    --gui-job-failed-border-light: #d17a70;
+    --gui-job-failed-border-dark: #c96f67;
+    --gui-job-failed-bg-light: #fbe1dd;
+    --gui-job-failed-bg-dark: #4a2524;
+    --gui-job-muted-border-light: #9aa4b2;
+    --gui-job-muted-border-dark: #697583;
+    --gui-job-muted-bg-light: #eef1f5;
+    --gui-job-muted-bg-dark: #2a3038;
+
+    /* Foresight graph classes, route accents, and stop markers. */
+    --gui-foresight-linear-border-light: #1d7d63;
+    --gui-foresight-linear-border-dark: #32a785;
+    --gui-foresight-linear-bg-light: #f5fffb;
+    --gui-foresight-linear-bg-dark: #122f2a;
+    --gui-foresight-continuation-border-light: #3f8f9f;
+    --gui-foresight-continuation-border-dark: #4fa7b7;
+    --gui-foresight-continuation-bg-light: #f3fbfd;
+    --gui-foresight-continuation-bg-dark: #143139;
+    --gui-foresight-nesting-border-light: #bf7a00;
+    --gui-foresight-nesting-border-dark: #d09322;
+    --gui-foresight-nesting-bg-light: #fffaf0;
+    --gui-foresight-nesting-bg-dark: #3d2c10;
+    --gui-foresight-branching-border-light: #5b5cc8;
+    --gui-foresight-branching-border-dark: #7878db;
+    --gui-foresight-branching-bg-light: #f7f7ff;
+    --gui-foresight-branching-bg-dark: #292947;
+    --gui-foresight-terminal-border-light: #687382;
+    --gui-foresight-terminal-border-dark: #768394;
+    --gui-foresight-terminal-bg-light: #f8fafc;
+    --gui-foresight-terminal-bg-dark: #252b33;
+    --gui-foresight-external-border-light: #c64232;
+    --gui-foresight-external-border-dark: #db6c5e;
+    --gui-foresight-external-bg-light: #fff6f4;
+    --gui-foresight-external-bg-dark: #432522;
+    --gui-foresight-message-border-light: #d64f8a;
+    --gui-foresight-message-border-dark: #d96398;
+    --gui-foresight-message-bg-light: #fff7fb;
+    --gui-foresight-message-bg-dark: #0f1115;
+    --gui-foresight-action-text-light: #20242c;
+    --gui-foresight-action-text-dark: #f1f5f9;
+    --gui-foresight-action-meta-light: #52606d;
+    --gui-foresight-action-meta-dark: #b7c5d3;
+    --gui-foresight-action-meta-bg-light: rgba(241, 244, 248, 0.95);
+    --gui-foresight-action-meta-bg-dark: rgba(20, 24, 30, 0.92);
+    --gui-foresight-badge-continuation-bg-light: #ddf1f5;
+    --gui-foresight-badge-continuation-bg-dark: #173842;
+    --gui-foresight-badge-continuation-text-light: #276977;
+    --gui-foresight-badge-continuation-text-dark: #9eddeb;
+    --gui-foresight-badge-nesting-bg-light: #fff0d4;
+    --gui-foresight-badge-nesting-bg-dark: #402e10;
+    --gui-foresight-badge-nesting-text-light: #7a4b00;
+    --gui-foresight-badge-nesting-text-dark: #ffd48a;
+    --gui-foresight-badge-branching-bg-light: #e8e7ff;
+    --gui-foresight-badge-branching-bg-dark: #2b2a53;
+    --gui-foresight-badge-branching-text-light: #37349a;
+    --gui-foresight-badge-branching-text-dark: #b9b5ff;
+    --gui-foresight-badge-terminal-bg-light: #eef1f5;
+    --gui-foresight-badge-terminal-bg-dark: #2b313a;
+    --gui-foresight-badge-terminal-text-light: #4b5563;
+    --gui-foresight-badge-terminal-text-dark: #c9d2dd;
+    --gui-foresight-control-border-light: #d7d3f2;
+    --gui-foresight-control-border-dark: #48457e;
+    --gui-foresight-control-accent-light: #5b5cc8;
+    --gui-foresight-control-accent-dark: #8d91ff;
+    --gui-foresight-control-bg-light: rgba(247, 247, 255, 0.78);
+    --gui-foresight-control-bg-dark: rgba(39, 39, 76, 0.78);
+    --gui-foresight-control-text-light: #27313d;
+    --gui-foresight-control-text-dark: #e5e7ff;
+    --gui-foresight-control-key-light: #37349a;
+    --gui-foresight-control-key-dark: #b9b5ff;
+    --gui-foresight-stop-border-light: #f0c8c3;
+    --gui-foresight-stop-border-dark: #6a3935;
+    --gui-foresight-stop-accent-light: #c64232;
+    --gui-foresight-stop-accent-dark: #db6c5e;
+    --gui-foresight-stop-bg-light: #fff6f4;
+    --gui-foresight-stop-bg-dark: #432522;
+    --gui-foresight-stop-text-light: #27313d;
+    --gui-foresight-stop-text-dark: #f5dedb;
+    --gui-foresight-stop-code-light: #8a2e1d;
+    --gui-foresight-stop-code-dark: #ffb1a5;
+
+    /* Logs are intentionally console-dark in both themes, but still tokenized. */
+    --gui-log-border-light: #252b33;
+    --gui-log-border-dark: #1d232b;
+    --gui-log-bg-light: #171b21;
+    --gui-log-bg-dark: #10141a;
+    --gui-log-text-light: #f3f6f9;
+    --gui-log-text-dark: #eef3f7;
+
+    --gui-bg: var(--gui-bg-light);
+    --gui-surface: var(--gui-surface-light);
+    --gui-surface-soft: var(--gui-surface-soft-light);
+    --gui-surface-muted: var(--gui-surface-muted-light);
+    --gui-surface-pill: var(--gui-surface-pill-light);
+    --gui-border: var(--gui-border-light);
+    --gui-border-soft: var(--gui-border-soft-light);
+    --gui-border-control: var(--gui-border-control-light);
+    --gui-border-dashed: var(--gui-border-dashed-light);
+    --gui-border-button: var(--gui-border-button-light);
+    --gui-border-hover: var(--gui-border-hover-light);
+    --gui-text: var(--gui-text-light);
+    --gui-text-secondary: var(--gui-text-secondary-light);
+    --gui-text-muted: var(--gui-text-muted-light);
+    --gui-text-subtle: var(--gui-text-subtle-light);
+    --gui-text-faint: var(--gui-text-faint-light);
+    --gui-contrast-bg: var(--gui-contrast-bg-light);
+    --gui-contrast-text: var(--gui-contrast-text-light);
+    --gui-translucent-surface: var(--gui-translucent-surface-light);
+    --gui-translucent-control: var(--gui-translucent-control-light);
+    --gui-code-bg: var(--gui-code-bg-light);
+    --gui-inactive-sheen: var(--gui-inactive-sheen-light);
+    --gui-inactive-sheen-clear: var(--gui-inactive-sheen-clear-light);
+    --gui-rail-border: var(--gui-rail-border-light);
+    --gui-hover-filter: var(--gui-hover-filter-light);
+    --gui-theme-toggle-bg: var(--gui-theme-toggle-bg-light);
+    --gui-theme-toggle-fg: var(--gui-theme-toggle-fg-light);
+    --gui-theme-toggle-border: var(--gui-theme-toggle-border-light);
+    --gui-secondary-bg: var(--gui-secondary-bg-light);
+    --gui-secondary-border: var(--gui-secondary-border-light);
+    --gui-secondary-text: var(--gui-secondary-text-light);
+    --gui-disclosure-icon: var(--gui-disclosure-icon-light);
+    --gui-disabled-icon: var(--gui-disabled-icon-light);
+    --gui-accent: var(--gui-accent-light);
+    --gui-accent-ring: var(--gui-accent-ring-light);
+    --gui-success-accent: var(--gui-success-accent-light);
+    --gui-success-ring: var(--gui-success-ring-light);
+    --gui-danger-accent: var(--gui-danger-accent-light);
+    --gui-danger-ring: var(--gui-danger-ring-light);
+    --gui-neutral-accent: var(--gui-neutral-accent-light);
+    --gui-on-solid: var(--gui-on-solid-light);
+    --gui-on-status: var(--gui-on-status-light);
+    --gui-on-status-secondary: var(--gui-on-status-secondary-light);
+    --gui-status-meta-bg: var(--gui-status-meta-bg-light);
+    --gui-status-meta-text: var(--gui-status-meta-text-light);
+    --gui-pill-neutral-bg: var(--gui-pill-neutral-bg-light);
+    --gui-pill-neutral-text: var(--gui-pill-neutral-text-light);
+    --gui-pill-ok-bg: var(--gui-pill-ok-bg-light);
+    --gui-pill-ok-text: var(--gui-pill-ok-text-light);
+    --gui-pill-warn-bg: var(--gui-pill-warn-bg-light);
+    --gui-pill-warn-text: var(--gui-pill-warn-text-light);
+    --gui-pill-bad-bg: var(--gui-pill-bad-bg-light);
+    --gui-pill-bad-text: var(--gui-pill-bad-text-light);
+    --gui-rail-neutral-bg: var(--gui-rail-neutral-bg-light);
+    --gui-rail-queued-bg: var(--gui-rail-queued-bg-light);
+    --gui-rail-queued-text: var(--gui-rail-queued-text-light);
+    --gui-rail-translating-bg: var(--gui-rail-translating-bg-light);
+    --gui-rail-completed-bg: var(--gui-rail-completed-bg-light);
+    --gui-rail-failed-bg: var(--gui-rail-failed-bg-light);
+    --gui-rail-skipped-bg: var(--gui-rail-skipped-bg-light);
+    --gui-text-status-detected-bg: var(--gui-text-status-detected-bg-light);
+    --gui-text-status-pending-bg: var(--gui-text-status-pending-bg-light);
+    --gui-text-status-translating-bg: var(--gui-text-status-translating-bg-light);
+    --gui-text-status-completed-bg: var(--gui-text-status-completed-bg-light);
+    --gui-text-status-skipped-bg: var(--gui-text-status-skipped-bg-light);
+    --gui-text-status-stale-bg: var(--gui-text-status-stale-bg-light);
+    --gui-text-status-removed-bg: var(--gui-text-status-removed-bg-light);
+    --gui-text-status-disappeared-bg: var(--gui-text-status-disappeared-bg-light);
+    --gui-text-status-failed-bg: var(--gui-text-status-failed-bg-light);
+    --gui-hook-bitmap: var(--gui-hook-bitmap-light);
+    --gui-hook-sprite: var(--gui-hook-sprite-light);
+    --gui-hook-choice: var(--gui-hook-choice-light);
+    --gui-hook-message: var(--gui-hook-message-light);
+    --gui-hook-pixi: var(--gui-hook-pixi-light);
+    --gui-hook-window: var(--gui-hook-window-light);
+    --gui-hook-unknown: var(--gui-hook-unknown-light);
+    --gui-job-running-border: var(--gui-job-running-border-light);
+    --gui-job-running-bg: var(--gui-job-running-bg-light);
+    --gui-job-queued-border: var(--gui-job-queued-border-light);
+    --gui-job-queued-bg: var(--gui-job-queued-bg-light);
+    --gui-job-completed-border: var(--gui-job-completed-border-light);
+    --gui-job-completed-bg: var(--gui-job-completed-bg-light);
+    --gui-job-failed-border: var(--gui-job-failed-border-light);
+    --gui-job-failed-bg: var(--gui-job-failed-bg-light);
+    --gui-job-muted-border: var(--gui-job-muted-border-light);
+    --gui-job-muted-bg: var(--gui-job-muted-bg-light);
+    --gui-foresight-linear-border: var(--gui-foresight-linear-border-light);
+    --gui-foresight-linear-bg: var(--gui-foresight-linear-bg-light);
+    --gui-foresight-continuation-border: var(--gui-foresight-continuation-border-light);
+    --gui-foresight-continuation-bg: var(--gui-foresight-continuation-bg-light);
+    --gui-foresight-nesting-border: var(--gui-foresight-nesting-border-light);
+    --gui-foresight-nesting-bg: var(--gui-foresight-nesting-bg-light);
+    --gui-foresight-branching-border: var(--gui-foresight-branching-border-light);
+    --gui-foresight-branching-bg: var(--gui-foresight-branching-bg-light);
+    --gui-foresight-terminal-border: var(--gui-foresight-terminal-border-light);
+    --gui-foresight-terminal-bg: var(--gui-foresight-terminal-bg-light);
+    --gui-foresight-external-border: var(--gui-foresight-external-border-light);
+    --gui-foresight-external-bg: var(--gui-foresight-external-bg-light);
+    --gui-foresight-message-border: var(--gui-foresight-message-border-light);
+    --gui-foresight-message-bg: var(--gui-foresight-message-bg-light);
+    --gui-foresight-action-text: var(--gui-foresight-action-text-light);
+    --gui-foresight-action-meta: var(--gui-foresight-action-meta-light);
+    --gui-foresight-action-meta-bg: var(--gui-foresight-action-meta-bg-light);
+    --gui-foresight-badge-continuation-bg: var(--gui-foresight-badge-continuation-bg-light);
+    --gui-foresight-badge-continuation-text: var(--gui-foresight-badge-continuation-text-light);
+    --gui-foresight-badge-nesting-bg: var(--gui-foresight-badge-nesting-bg-light);
+    --gui-foresight-badge-nesting-text: var(--gui-foresight-badge-nesting-text-light);
+    --gui-foresight-badge-branching-bg: var(--gui-foresight-badge-branching-bg-light);
+    --gui-foresight-badge-branching-text: var(--gui-foresight-badge-branching-text-light);
+    --gui-foresight-badge-terminal-bg: var(--gui-foresight-badge-terminal-bg-light);
+    --gui-foresight-badge-terminal-text: var(--gui-foresight-badge-terminal-text-light);
+    --gui-foresight-control-border: var(--gui-foresight-control-border-light);
+    --gui-foresight-control-accent: var(--gui-foresight-control-accent-light);
+    --gui-foresight-control-bg: var(--gui-foresight-control-bg-light);
+    --gui-foresight-control-text: var(--gui-foresight-control-text-light);
+    --gui-foresight-control-key: var(--gui-foresight-control-key-light);
+    --gui-foresight-stop-border: var(--gui-foresight-stop-border-light);
+    --gui-foresight-stop-accent: var(--gui-foresight-stop-accent-light);
+    --gui-foresight-stop-bg: var(--gui-foresight-stop-bg-light);
+    --gui-foresight-stop-text: var(--gui-foresight-stop-text-light);
+    --gui-foresight-stop-code: var(--gui-foresight-stop-code-light);
+    --gui-log-border: var(--gui-log-border-light);
+    --gui-log-bg: var(--gui-log-bg-light);
+    --gui-log-text: var(--gui-log-text-light);
+
+    /* Semantic component roles. Keep these value-free so theme blocks own every color. */
+    --gui-copy-button-bg: var(--gui-translucent-control);
+    --gui-copy-button-hover-bg: var(--gui-surface);
+    --gui-runtime-status-neutral-bg: var(--gui-pill-neutral-bg);
+    --gui-runtime-status-neutral-text: var(--gui-pill-neutral-text);
+    --gui-runtime-status-ok-bg: var(--gui-pill-ok-bg);
+    --gui-runtime-status-ok-text: var(--gui-pill-ok-text);
+    --gui-runtime-status-warning-bg: var(--gui-pill-warn-bg);
+    --gui-runtime-status-warning-text: var(--gui-pill-warn-text);
+    --gui-runtime-status-error-bg: var(--gui-pill-bad-bg);
+    --gui-runtime-status-error-text: var(--gui-pill-bad-text);
+    --gui-translation-rail-idle-bg: var(--gui-rail-neutral-bg);
+    --gui-translation-rail-queued-bg: var(--gui-rail-queued-bg);
+    --gui-translation-rail-queued-text: var(--gui-rail-queued-text);
+    --gui-translation-rail-translating-bg: var(--gui-rail-translating-bg);
+    --gui-translation-rail-translated-bg: var(--gui-rail-completed-bg);
+    --gui-translation-rail-failed-bg: var(--gui-rail-failed-bg);
+    --gui-translation-rail-skipped-bg: var(--gui-rail-skipped-bg);
+    --gui-message-state-normal-bg: var(--gui-text-status-detected-bg);
+    --gui-message-state-pending-bg: var(--gui-text-status-pending-bg);
+    --gui-message-state-translating-bg: var(--gui-text-status-translating-bg);
+    --gui-message-state-translated-bg: var(--gui-text-status-completed-bg);
+    --gui-message-state-skipped-bg: var(--gui-text-status-skipped-bg);
+    --gui-message-state-stale-bg: var(--gui-text-status-stale-bg);
+    --gui-message-state-removed-bg: var(--gui-text-status-removed-bg);
+    --gui-message-state-disappeared-bg: var(--gui-text-status-disappeared-bg);
+    --gui-message-state-failed-bg: var(--gui-text-status-failed-bg);
+    --gui-message-state-primary-text: var(--gui-on-status);
+    --gui-message-state-secondary-text: var(--gui-on-status-secondary);
+    --gui-foresight-message-card-border: var(--gui-foresight-message-border);
+    --gui-foresight-message-card-bg: var(--gui-foresight-message-bg);
+
+    background: var(--gui-bg);
+    color: var(--gui-text);
+    line-height: 1.4;
+}
+
+:root.gui-solarized-mode {
+    color-scheme: light;
+
+    /* Solarized profile values are based on VS Code's built-in Solarized Light workbench palette. */
+    --gui-bg: linear-gradient(135deg, #fffbf2 0%, #f7f7f3 62%, #f0f3f6 100%);
+    --gui-surface: #fffbf2;
+    --gui-surface-soft: #fdf6e3;
+    --gui-surface-muted: #eee8d5;
+    --gui-surface-pill: #ddd6c1;
+    --gui-border: #ddd6c1;
+    --gui-border-soft: #e5dec9;
+    --gui-border-control: #d3af86;
+    --gui-border-dashed: #d3af86;
+    --gui-border-button: #ac9d57;
+    --gui-border-hover: #b58900;
+    --gui-text: #586e75;
+    --gui-text-secondary: #073642;
+    --gui-text-muted: #657b83;
+    --gui-text-subtle: #839496;
+    --gui-text-faint: #93a1a1;
+    --gui-contrast-bg: #073642;
+    --gui-contrast-text: #fdf6e3;
+    --gui-translucent-surface: rgba(253, 246, 227, 0.78);
+    --gui-translucent-control: rgba(238, 232, 213, 0.86);
+    --gui-code-bg: #eee8d5;
+    --gui-inactive-sheen: rgba(238, 232, 213, 0.58);
+    --gui-inactive-sheen-clear: rgba(238, 232, 213, 0);
+    --gui-rail-border: rgba(7, 54, 66, 0.13);
+    --gui-hover-filter: brightness(0.985) saturate(1.04);
+    --gui-theme-toggle-bg: #073642;
+    --gui-theme-toggle-fg: #eee8d5;
+    --gui-theme-toggle-border: #073642;
+    --gui-secondary-bg: #ac9d57;
+    --gui-secondary-border: #b58900;
+    --gui-secondary-text: #073642;
+    --gui-disclosure-icon: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cpolyline%20points='7.4%208%2012%2016%2016.6%208'%20fill='none'%20stroke='%23586e75'%20stroke-width='3'%20stroke-linecap='round'%20stroke-linejoin='round'/%3E%3C/svg%3E");
+    --gui-disabled-icon: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cpath%20d='M7%207l10%2010M17%207L7%2017'%20fill='none'%20stroke='%2393a1a1'%20stroke-width='3'%20stroke-linecap='round'/%3E%3C/svg%3E");
+    --gui-accent: #b58900;
+    --gui-accent-ring: rgba(181, 137, 0, 0.24);
+    --gui-success-accent: #859900;
+    --gui-success-ring: rgba(133, 153, 0, 0.23);
+    --gui-danger-accent: #dc322f;
+    --gui-danger-ring: rgba(220, 50, 47, 0.20);
+    --gui-neutral-accent: #93a1a1;
+    --gui-status-meta-bg: rgba(253, 246, 227, 0.74);
+    --gui-status-meta-text: #657b83;
+
+    --gui-pill-neutral-bg: #eee8d5;
+    --gui-pill-neutral-text: #586e75;
+    --gui-pill-ok-bg: #e7ebcb;
+    --gui-pill-ok-text: #586e00;
+    --gui-pill-warn-bg: #efcf96;
+    --gui-pill-warn-text: #7a3300;
+    --gui-pill-bad-bg: #f3d5cf;
+    --gui-pill-bad-text: #a22d1f;
+    --gui-on-status: #073642;
+    --gui-on-status-secondary: #586e75;
+    --gui-text-status-detected-bg: #eef1f5;
+    --gui-text-status-pending-bg: #eef1f5;
+    --gui-text-status-translating-bg: var(--gui-translucent-control);
+    --gui-text-status-completed-bg: var(--gui-foresight-message-bg);
+    --gui-text-status-skipped-bg: #fffbf2;
+    --gui-text-status-stale-bg: #fffbf2;
+    --gui-text-status-removed-bg: #fffbf2;
+    --gui-text-status-disappeared-bg: #fffbf2;
+    --gui-text-status-failed-bg: #fffbf2;
+
+    --gui-hook-bitmap: #073642;
+    --gui-hook-sprite: #859900;
+    --gui-hook-choice: #b58900;
+    --gui-hook-message: #d33682;
+    --gui-hook-pixi: #6c71c4;
+    --gui-hook-window: #268bd2;
+    --gui-hook-unknown: #93a1a1;
+
+    --gui-job-running-border: #2aa198;
+    --gui-job-running-bg: #fffbf2;
+    --gui-job-queued-border: #b58900;
+    --gui-job-queued-bg: #efe2bd;
+    --gui-job-completed-border: #859900;
+    --gui-job-completed-bg: #e7ebcb;
+    --gui-job-failed-border: #dc322f;
+    --gui-job-failed-bg: #f3d5cf;
+    --gui-job-muted-border: #93a1a1;
+    --gui-job-muted-bg: #eee8d5;
+
+    --gui-foresight-linear-border: #859900;
+    --gui-foresight-linear-bg: #eef2d5;
+    --gui-foresight-continuation-border: #2aa198;
+    --gui-foresight-continuation-bg: #fffbf2;
+    --gui-foresight-nesting-border: #b58900;
+    --gui-foresight-nesting-bg: #f2e6c8;
+    --gui-foresight-branching-border: #6c71c4;
+    --gui-foresight-branching-bg: #fffbf2;
+    --gui-foresight-terminal-border: #93a1a1;
+    --gui-foresight-terminal-bg: #eee8d5;
+    --gui-foresight-external-border: #cb4b16;
+    --gui-foresight-external-bg: #f3ddd2;
+    --gui-foresight-message-border: #d33682;
+    --gui-foresight-message-bg: #fffbf2;
+    --gui-foresight-action-text: #073642;
+    --gui-foresight-action-meta: #586e75;
+    --gui-foresight-action-meta-bg: rgba(253, 246, 227, 0.86);
+    --gui-foresight-badge-continuation-bg: #eee8d5;
+    --gui-foresight-badge-continuation-text: #1d6f68;
+    --gui-foresight-badge-nesting-bg: #efe2bd;
+    --gui-foresight-badge-nesting-text: #7a5f00;
+    --gui-foresight-badge-branching-bg: #eee8d5;
+    --gui-foresight-badge-branching-text: #4b4f9e;
+    --gui-foresight-badge-terminal-bg: #eee8d5;
+    --gui-foresight-badge-terminal-text: #586e75;
+    --gui-foresight-control-border: #c7c6ec;
+    --gui-foresight-control-accent: #6c71c4;
+    --gui-foresight-control-bg: rgba(255, 251, 242, 0.88);
+    --gui-foresight-control-text: #073642;
+    --gui-foresight-control-key: #4b4f9e;
+    --gui-foresight-stop-border: #e4b9aa;
+    --gui-foresight-stop-accent: #cb4b16;
+    --gui-foresight-stop-bg: #f3ddd2;
+    --gui-foresight-stop-text: #073642;
+    --gui-foresight-stop-code: #a22d1f;
+}
+
+:root.gui-dark-mode {
+    color-scheme: dark;
+    --gui-bg: var(--gui-bg-dark);
+    --gui-surface: var(--gui-surface-dark);
+    --gui-surface-soft: var(--gui-surface-soft-dark);
+    --gui-surface-muted: var(--gui-surface-muted-dark);
+    --gui-surface-pill: var(--gui-surface-pill-dark);
+    --gui-border: var(--gui-border-dark);
+    --gui-border-soft: var(--gui-border-soft-dark);
+    --gui-border-control: var(--gui-border-control-dark);
+    --gui-border-dashed: var(--gui-border-dashed-dark);
+    --gui-border-button: var(--gui-border-button-dark);
+    --gui-border-hover: var(--gui-border-hover-dark);
+    --gui-text: var(--gui-text-dark);
+    --gui-text-secondary: var(--gui-text-secondary-dark);
+    --gui-text-muted: var(--gui-text-muted-dark);
+    --gui-text-subtle: var(--gui-text-subtle-dark);
+    --gui-text-faint: var(--gui-text-faint-dark);
+    --gui-contrast-bg: var(--gui-contrast-bg-dark);
+    --gui-contrast-text: var(--gui-contrast-text-dark);
+    --gui-translucent-surface: var(--gui-translucent-surface-dark);
+    --gui-translucent-control: var(--gui-translucent-control-dark);
+    --gui-code-bg: var(--gui-code-bg-dark);
+    --gui-inactive-sheen: var(--gui-inactive-sheen-dark);
+    --gui-inactive-sheen-clear: var(--gui-inactive-sheen-clear-dark);
+    --gui-rail-border: var(--gui-rail-border-dark);
+    --gui-hover-filter: var(--gui-hover-filter-dark);
+    --gui-theme-toggle-bg: var(--gui-theme-toggle-bg-dark);
+    --gui-theme-toggle-fg: var(--gui-theme-toggle-fg-dark);
+    --gui-theme-toggle-border: var(--gui-theme-toggle-border-dark);
+    --gui-secondary-bg: var(--gui-secondary-bg-dark);
+    --gui-secondary-border: var(--gui-secondary-border-dark);
+    --gui-secondary-text: var(--gui-secondary-text-dark);
+    --gui-disclosure-icon: var(--gui-disclosure-icon-dark);
+    --gui-disabled-icon: var(--gui-disabled-icon-dark);
+    --gui-accent: var(--gui-accent-dark);
+    --gui-accent-ring: var(--gui-accent-ring-dark);
+    --gui-success-accent: var(--gui-success-accent-dark);
+    --gui-success-ring: var(--gui-success-ring-dark);
+    --gui-danger-accent: var(--gui-danger-accent-dark);
+    --gui-danger-ring: var(--gui-danger-ring-dark);
+    --gui-neutral-accent: var(--gui-neutral-accent-dark);
+    --gui-on-solid: var(--gui-on-solid-dark);
+    --gui-on-status: var(--gui-on-status-dark);
+    --gui-on-status-secondary: var(--gui-on-status-secondary-dark);
+    --gui-status-meta-bg: var(--gui-status-meta-bg-dark);
+    --gui-status-meta-text: var(--gui-status-meta-text-dark);
+    --gui-pill-neutral-bg: var(--gui-pill-neutral-bg-dark);
+    --gui-pill-neutral-text: var(--gui-pill-neutral-text-dark);
+    --gui-pill-ok-bg: var(--gui-pill-ok-bg-dark);
+    --gui-pill-ok-text: var(--gui-pill-ok-text-dark);
+    --gui-pill-warn-bg: var(--gui-pill-warn-bg-dark);
+    --gui-pill-warn-text: var(--gui-pill-warn-text-dark);
+    --gui-pill-bad-bg: var(--gui-pill-bad-bg-dark);
+    --gui-pill-bad-text: var(--gui-pill-bad-text-dark);
+    --gui-rail-neutral-bg: var(--gui-rail-neutral-bg-dark);
+    --gui-rail-queued-bg: var(--gui-rail-queued-bg-dark);
+    --gui-rail-queued-text: var(--gui-rail-queued-text-dark);
+    --gui-rail-translating-bg: var(--gui-rail-translating-bg-dark);
+    --gui-rail-completed-bg: var(--gui-rail-completed-bg-dark);
+    --gui-rail-failed-bg: var(--gui-rail-failed-bg-dark);
+    --gui-rail-skipped-bg: var(--gui-rail-skipped-bg-dark);
+    --gui-text-status-detected-bg: var(--gui-text-status-detected-bg-dark);
+    --gui-text-status-pending-bg: var(--gui-text-status-pending-bg-dark);
+    --gui-text-status-translating-bg: var(--gui-text-status-translating-bg-dark);
+    --gui-text-status-completed-bg: var(--gui-text-status-completed-bg-dark);
+    --gui-text-status-skipped-bg: var(--gui-text-status-skipped-bg-dark);
+    --gui-text-status-stale-bg: var(--gui-text-status-stale-bg-dark);
+    --gui-text-status-removed-bg: var(--gui-text-status-removed-bg-dark);
+    --gui-text-status-disappeared-bg: var(--gui-text-status-disappeared-bg-dark);
+    --gui-text-status-failed-bg: var(--gui-text-status-failed-bg-dark);
+    --gui-hook-bitmap: var(--gui-hook-bitmap-dark);
+    --gui-hook-sprite: var(--gui-hook-sprite-dark);
+    --gui-hook-choice: var(--gui-hook-choice-dark);
+    --gui-hook-message: var(--gui-hook-message-dark);
+    --gui-hook-pixi: var(--gui-hook-pixi-dark);
+    --gui-hook-window: var(--gui-hook-window-dark);
+    --gui-hook-unknown: var(--gui-hook-unknown-dark);
+    --gui-job-running-border: var(--gui-job-running-border-dark);
+    --gui-job-running-bg: var(--gui-job-running-bg-dark);
+    --gui-job-queued-border: var(--gui-job-queued-border-dark);
+    --gui-job-queued-bg: var(--gui-job-queued-bg-dark);
+    --gui-job-completed-border: var(--gui-job-completed-border-dark);
+    --gui-job-completed-bg: var(--gui-job-completed-bg-dark);
+    --gui-job-failed-border: var(--gui-job-failed-border-dark);
+    --gui-job-failed-bg: var(--gui-job-failed-bg-dark);
+    --gui-job-muted-border: var(--gui-job-muted-border-dark);
+    --gui-job-muted-bg: var(--gui-job-muted-bg-dark);
+    --gui-foresight-linear-border: var(--gui-foresight-linear-border-dark);
+    --gui-foresight-linear-bg: var(--gui-foresight-linear-bg-dark);
+    --gui-foresight-continuation-border: var(--gui-foresight-continuation-border-dark);
+    --gui-foresight-continuation-bg: var(--gui-foresight-continuation-bg-dark);
+    --gui-foresight-nesting-border: var(--gui-foresight-nesting-border-dark);
+    --gui-foresight-nesting-bg: var(--gui-foresight-nesting-bg-dark);
+    --gui-foresight-branching-border: var(--gui-foresight-branching-border-dark);
+    --gui-foresight-branching-bg: var(--gui-foresight-branching-bg-dark);
+    --gui-foresight-terminal-border: var(--gui-foresight-terminal-border-dark);
+    --gui-foresight-terminal-bg: var(--gui-foresight-terminal-bg-dark);
+    --gui-foresight-external-border: var(--gui-foresight-external-border-dark);
+    --gui-foresight-external-bg: var(--gui-foresight-external-bg-dark);
+    --gui-foresight-message-border: var(--gui-foresight-message-border-dark);
+    --gui-foresight-message-bg: var(--gui-foresight-message-bg-dark);
+    --gui-foresight-action-text: var(--gui-foresight-action-text-dark);
+    --gui-foresight-action-meta: var(--gui-foresight-action-meta-dark);
+    --gui-foresight-action-meta-bg: var(--gui-foresight-action-meta-bg-dark);
+    --gui-foresight-badge-continuation-bg: var(--gui-foresight-badge-continuation-bg-dark);
+    --gui-foresight-badge-continuation-text: var(--gui-foresight-badge-continuation-text-dark);
+    --gui-foresight-badge-nesting-bg: var(--gui-foresight-badge-nesting-bg-dark);
+    --gui-foresight-badge-nesting-text: var(--gui-foresight-badge-nesting-text-dark);
+    --gui-foresight-badge-branching-bg: var(--gui-foresight-badge-branching-bg-dark);
+    --gui-foresight-badge-branching-text: var(--gui-foresight-badge-branching-text-dark);
+    --gui-foresight-badge-terminal-bg: var(--gui-foresight-badge-terminal-bg-dark);
+    --gui-foresight-badge-terminal-text: var(--gui-foresight-badge-terminal-text-dark);
+    --gui-foresight-control-border: var(--gui-foresight-control-border-dark);
+    --gui-foresight-control-accent: var(--gui-foresight-control-accent-dark);
+    --gui-foresight-control-bg: var(--gui-foresight-control-bg-dark);
+    --gui-foresight-control-text: var(--gui-foresight-control-text-dark);
+    --gui-foresight-control-key: var(--gui-foresight-control-key-dark);
+    --gui-foresight-stop-border: var(--gui-foresight-stop-border-dark);
+    --gui-foresight-stop-accent: var(--gui-foresight-stop-accent-dark);
+    --gui-foresight-stop-bg: var(--gui-foresight-stop-bg-dark);
+    --gui-foresight-stop-text: var(--gui-foresight-stop-text-dark);
+    --gui-foresight-stop-code: var(--gui-foresight-stop-code-dark);
+    --gui-log-border: var(--gui-log-border-dark);
+    --gui-log-bg: var(--gui-log-bg-dark);
+    --gui-log-text: var(--gui-log-text-dark);
+}
+
+* {
+    box-sizing: border-box;
+}
+
+[hidden] {
+    display: none !important;
+}
+
+body {
+    margin: 0;
+    min-width: 780px;
+    background: var(--gui-bg);
+}
+
+button {
+    font: inherit;
+}
+
+h2,
+h3 {
+    margin: 0;
+    line-height: 1.2;
+    letter-spacing: 0;
+}
+
+h2 {
+    font-size: 18px;
+    font-weight: 650;
+}
+
+h3 {
+    font-size: 14px;
+    font-weight: 700;
+}
+
+main {
+    display: grid;
+    gap: 16px;
+    padding: 18px 20px 24px;
+}
+
+.panel {
+    padding: 18px;
+    background: var(--gui-surface);
+    border: 1px solid var(--gui-border);
+    border-radius: 8px;
+}
+
+.collapsible-panel > summary {
+    position: relative;
+    cursor: pointer;
+    list-style: none;
+}
+
+.collapsible-panel > summary.section-title {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: center;
+}
+
+.collapsible-panel > summary.section-title h2 {
+    min-width: 0;
+}
+
+.collapsible-panel > summary.section-title > .section-title-actions,
+.collapsible-panel > summary.section-title > .summary-status {
+    justify-self: end;
+}
+
+.collapsible-panel > summary::-webkit-details-marker {
+    display: none;
+}
+
+.collapsible-panel.collapsible-panel-has-status > summary::after {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    background-image: var(--gui-disclosure-icon);
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: 18px 18px;
+    content: "";
+    transform: rotate(0deg);
+    transition: transform 120ms ease;
+}
+
+.collapsible-panel.collapsible-panel-has-status:not([open]) > summary::after {
+    transform: rotate(-90deg);
+}
+
+#foresight-panel.foresight-panel-disabled > summary {
+    cursor: default;
+}
+
+#foresight-panel.foresight-panel-disabled > summary::after {
+    background-image: var(--gui-disabled-icon);
+    transform: none;
+}
+
+.collapsible-panel:not([open]) > summary {
+    margin-bottom: 0;
+}
+
+.collapsible-panel.collapsible-panel-body-empty > summary {
+    margin-bottom: 0;
+}
+
+.section-title,
+.logs-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 14px;
+}
+
+.section-title.compact {
+    margin-bottom: 12px;
+}
+
+.section-title-actions {
+    display: flex;
+    flex-wrap: wrap;
+    min-width: 0;
+    max-width: 100%;
+    gap: 8px;
+    align-items: center;
+    justify-content: flex-end;
+}
+
+.section-title-actions > .summary-status {
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.foresight-filter-toggle {
+    display: inline-flex;
+    align-items: center;
+    min-height: 30px;
+    padding: 0 9px;
+    gap: 7px;
+    border: 1px solid var(--gui-border-control);
+    border-radius: 999px;
+    background: var(--gui-surface-muted);
+    color: var(--gui-text-secondary);
+    font-size: 12px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.foresight-filter-toggle input {
+    width: 15px;
+    height: 15px;
+    margin: 0;
+    accent-color: var(--gui-accent);
+}
+
+.header-panel {
+    display: grid;
+    gap: 9px;
+    padding: 10px 14px;
+}
+
+.version-panel {
+    padding: 10px 14px;
+}
+
+.version-row,
+.header-status-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 34px;
+    gap: 12px;
+}
+
+.header-status-main {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    flex: 1 1 auto;
+    min-width: 0;
+    gap: 8px;
+}
+
+.header-status-separator {
+    color: var(--gui-text-faint);
+    font-weight: 700;
+}
+
+.version-indicator,
+.version-status-message {
+    min-width: 0;
+    padding: 6px 10px;
+    overflow-wrap: anywhere;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 650;
+}
+
+.lmstudio-status {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+    padding: 6px 10px;
+    overflow-wrap: anywhere;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 650;
+}
+
+.theme-mode-toggle {
+    flex: 0 0 auto;
+    align-self: center;
+    width: 36px;
+    min-width: 36px;
+    min-height: 32px;
+    padding: 0;
+    border-color: var(--gui-theme-toggle-border);
+    background: var(--gui-theme-toggle-bg);
+    color: var(--gui-theme-toggle-fg);
+    font-size: 18px;
+    font-weight: 800;
+}
+
+.theme-mode-toggle:hover {
+    border-color: var(--gui-theme-toggle-border);
+    background: var(--gui-theme-toggle-bg);
+    filter: var(--gui-hover-filter);
+}
+
+.header-complaints {
+    display: grid;
+    gap: 6px;
+    padding-top: 8px;
+    border-top: 1px solid var(--gui-border-soft);
+}
+
+.header-complaint {
+    width: fit-content;
+    max-width: 100%;
+}
+
+.version-status-message {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    min-height: 30px;
+    white-space: nowrap;
+}
+
+button {
+    min-height: 36px;
+    padding: 0 14px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    color: var(--gui-on-solid);
+    cursor: pointer;
+}
+
+button:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+}
+
+.secondary {
+    background: var(--gui-secondary-bg);
+    border-color: var(--gui-secondary-border);
+    color: var(--gui-secondary-text);
+}

@@ -6,21 +6,24 @@
         ? window
         : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
     const defineRuntimeModule = globalScope.LiveTranslatorDefine;
+    const requireRuntimeModule = globalScope.LiveTranslatorRequire;
     if (typeof defineRuntimeModule !== 'function') {
         throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/window-text/bitmap-diagnostics.js.');
     }
+    if (typeof requireRuntimeModule !== 'function') {
+        throw new Error('[LiveTranslator] runtime module require is unavailable before adapters/window-text/bitmap-diagnostics.js.');
+    }
+
+    const measuredBounds = requireRuntimeModule('runtime.measuredBounds');
+    const drawGraph = requireRuntimeModule('runtime.drawGraph');
 
     function createBitmapDiagnosticsController(context = {}) {
-        const {
-            preview = (text) => String(text ?? ''),
-            redrawSettings = {},
-            MAX_BACKGROUND_SNAPSHOT_PIXELS = 262144,
-            REDRAW_DIAGNOSTIC_ITEM_LIMIT = 8,
-        } = context;
+        const { draw: drawService, replay: replayService, snapshot: snapshotService } = context.services;
+        const preview = drawService.preview || ((text) => String(text ?? ''));
+        const MAX_BACKGROUND_SNAPSHOT_PIXELS = snapshotService.maxBackgroundSnapshotPixels;
+        const REDRAW_DIAGNOSTIC_ITEM_LIMIT = snapshotService.redrawDiagnosticItemLimit;
         const getEntryStatus = (...args) => context.getEntryStatus(...args);
-        const applyBitmapDrawState = typeof context.applyBitmapDrawState === 'function'
-            ? context.applyBitmapDrawState
-            : null;
+        const applyBitmapDrawState = drawService.applyBitmapDrawState;
 
     function mergeBounds(a, b) {
                 if (isValidRect(a) && isValidRect(b)) {
@@ -132,13 +135,7 @@
             }
 
     function measureBitmapTextWidth(contents, text) {
-                if (contents && typeof contents.measureTextWidth === 'function') {
-                    try {
-                        const width = Number(contents.measureTextWidth(String(text || '')));
-                        if (Number.isFinite(width) && width > 0) return width;
-                    } catch (_) {}
-                }
-                return 0;
+                return measuredBounds.measureBitmapTextWidth(contents, text);
             }
 
     function hasActualTextMetrics(metrics) {
@@ -162,7 +159,7 @@
                 if (hasActualTextMetrics(sourceMetrics) && hasActualTextMetrics(translatedMetrics)) {
                     const offset = Number(translatedMetrics.ascent) - Number(sourceMetrics.ascent);
                     if (Number.isFinite(offset) && Math.abs(offset) >= 0.01) {
-                        metricOffset = clampNumber(offset, -maxOffset, maxOffset);
+                        metricOffset = measuredBounds.clampNumber(offset, -maxOffset, maxOffset);
                     }
                 }
                 const sourceInkOffset = calculateBitmapSurfaceSourceInkYOffset(contents, entry, renderedText, fontSize);
@@ -180,16 +177,9 @@
             }
 
     function calculateBitmapSurfaceSourceInkYOffset(contents, entry, renderedText, fontSize) {
-                const sourceInk = measureSnapshotInk(entry && entry.backgroundSnapshot, entry && entry.sourceSnapshot);
+                const sourceInk = measuredBounds.measureSnapshotInk(entry && entry.backgroundSnapshot, entry && entry.sourceSnapshot);
                 const translatedInk = measureBitmapSurfaceRenderedInk(contents, entry, renderedText, fontSize, createBitmapCurrentDrawState(contents));
-                if (!sourceInk || !translatedInk) return null;
-                const sourceTop = Number(sourceInk.worldBounds && sourceInk.worldBounds.y1);
-                const translatedTop = Number(translatedInk.worldBounds && translatedInk.worldBounds.y1);
-                if (!Number.isFinite(sourceTop) || !Number.isFinite(translatedTop)) return null;
-                const maxOffset = Math.max(4, Number(fontSize) * 0.75);
-                const offset = sourceTop - translatedTop;
-                if (!Number.isFinite(offset) || Math.abs(offset) < 0.01) return 0;
-                return clampNumber(offset, -maxOffset, maxOffset);
+                return measuredBounds.calculateSourceAlignedYOffset({ sourceInk, translatedInk, fontSize });
             }
 
     function createBitmapCurrentDrawState(contents) {
@@ -253,17 +243,17 @@
                     // Skip translation hooks while still invoking the engine's native
                     // drawText implementation. The scratch bitmap is only a measuring
                     // surface and must not create adapter records.
-                    scratch._trBitmapSkipDepth = (scratch._trBitmapSkipDepth || 0) + 1;
-                    scratch._trSpriteTextReplayDepth = (scratch._trSpriteTextReplayDepth || 0) + 1;
                     scratch._trWindowPipelineDepth = (scratch._trWindowPipelineDepth || 0) + 1;
-                    scratch.drawText(
-                        text,
-                        horizontalPadding,
-                        verticalPadding,
-                        maxWidth,
-                        lineHeight,
-                        String(params.align || 'left')
-                    );
+                    withBitmapSkipAndSpriteReplayGuard(scratch, () => {
+                        scratch.drawText(
+                            text,
+                            horizontalPadding,
+                            verticalPadding,
+                            maxWidth,
+                            lineHeight,
+                            String(params.align || 'left')
+                        );
+                    });
                     const rendered = scratchContext.getImageData(0, 0, width, height);
                     const ink = measureImageDataDifference(before, rendered, width, height);
                     if (!ink) return null;
@@ -280,33 +270,17 @@
                     return null;
                 } finally {
                     if (scratch) {
-                        scratch._trBitmapSkipDepth = Math.max(0, (scratch._trBitmapSkipDepth || 1) - 1);
-                        scratch._trSpriteTextReplayDepth = Math.max(0, (scratch._trSpriteTextReplayDepth || 1) - 1);
                         scratch._trWindowPipelineDepth = Math.max(0, (scratch._trWindowPipelineDepth || 1) - 1);
                     }
                 }
             }
 
-    function measureSnapshotInk(background, source) {
-                if (!background || !source) return null;
-                if (background.x !== source.x || background.y !== source.y
-                    || background.w !== source.w || background.h !== source.h) {
-                    return null;
+    function withBitmapSkipAndSpriteReplayGuard(bitmap, callback) {
+                const bitmapDraws = replayService && replayService.bitmapDraws;
+                if (!bitmapDraws || typeof bitmapDraws.withBitmapSkipAndSpriteReplayGuard !== 'function') {
+                    throw new Error('[WindowText] bitmap replay guard service is required.');
                 }
-                const width = Math.max(0, Math.floor(Number(source.w) || 0));
-                const height = Math.max(0, Math.floor(Number(source.h) || 0));
-                if (width <= 0 || height <= 0) return null;
-                const localBounds = measureImageDataDifference(background.imageData, source.imageData, width, height);
-                if (!localBounds) return null;
-                return {
-                    localBounds,
-                    worldBounds: {
-                        x1: Number(source.x) + localBounds.x1,
-                        y1: Number(source.y) + localBounds.y1,
-                        x2: Number(source.x) + localBounds.x2,
-                        y2: Number(source.y) + localBounds.y2,
-                    },
-                };
+                return bitmapDraws.withBitmapSkipAndSpriteReplayGuard(bitmap, callback);
             }
 
     function createScratchBitmap(BitmapCtor, width, height) {
@@ -335,38 +309,7 @@
             }
 
     function measureImageDataDifference(background, foreground, width, height) {
-                const backgroundData = background && background.data;
-                const foregroundData = foreground && foreground.data;
-                if (!backgroundData || !foregroundData) return null;
-                const expectedBytes = width * height * 4;
-                if (Number(backgroundData.length) < expectedBytes || Number(foregroundData.length) < expectedBytes) return null;
-                let x1 = width;
-                let y1 = height;
-                let x2 = -1;
-                let y2 = -1;
-                for (let y = 0; y < height; y += 1) {
-                    for (let x = 0; x < width; x += 1) {
-                        const index = (y * width + x) * 4;
-                        if (backgroundData[index] === foregroundData[index]
-                            && backgroundData[index + 1] === foregroundData[index + 1]
-                            && backgroundData[index + 2] === foregroundData[index + 2]
-                            && backgroundData[index + 3] === foregroundData[index + 3]) {
-                            continue;
-                        }
-                        if (x < x1) x1 = x;
-                        if (y < y1) y1 = y;
-                        if (x > x2) x2 = x;
-                        if (y > y2) y2 = y;
-                    }
-                }
-                if (x2 < x1 || y2 < y1) return null;
-                return { x1, y1, x2: x2 + 1, y2: y2 + 1 };
-            }
-
-    function clampNumber(value, min, max) {
-                const numeric = Number(value);
-                if (!Number.isFinite(numeric)) return 0;
-                return Math.max(min, Math.min(max, numeric));
+                return measuredBounds.measureImageDataDifference(background, foreground, width, height);
             }
 
     function estimateBitmapSurfaceTextBounds(contents, entry, textOverride = null) {
@@ -374,44 +317,22 @@
                 if (!isBitmapSurfaceTextEntry(entry) || !params) return null;
                 const position = entry.position || {};
                 const existingBounds = isValidRect(entry.bounds) ? entry.bounds : null;
-                const existingWidth = existingBounds
-                    ? Math.abs(Number(existingBounds.x2) - Number(existingBounds.x1))
-                    : 0;
-                const existingHeight = existingBounds
-                    ? Math.abs(Number(existingBounds.y2) - Number(existingBounds.y1))
-                    : 0;
                 const drawState = entry.drawState || {};
                 const text = textOverride !== null && textOverride !== undefined
                     ? String(textOverride)
                     : String(entry.visibleText || entry.convertedText || entry.rawText || '');
                 const metrics = measureCanvasTextMetrics(contents, text);
                 const fontSize = firstPositiveNumber(drawState.fontSize, contents && contents.fontSize, params.fontSize, 24);
-                const lineHeight = firstPositiveNumber(params.lineHeight, existingHeight, fontSize, 24);
-                const x = firstFiniteNumber(position.x, existingBounds && existingBounds.x1, 0);
-                const y = firstFiniteNumber(position.y, existingBounds && existingBounds.y1, 0);
-                const textWidth = firstPositiveNumber(
-                    metrics && metrics.width,
-                    measureBitmapTextWidth(contents, text),
-                    existingWidth,
-                    1
-                );
-                const maxWidth = firstPositiveNumber(params.maxWidth, existingWidth, textWidth, 1);
-                const ascent = Math.max(
-                    firstNonNegativeNumber(metrics && metrics.ascent, 0),
-                    fontSize * 1.15
-                );
-                const descent = Math.max(
-                    firstNonNegativeNumber(metrics && metrics.descent, 0),
-                    fontSize * 0.25
-                );
-                const baseline = y + lineHeight / 2 + fontSize * 0.35;
-                const bounds = {
-                    x1: x,
-                    y1: Math.min(y, baseline - ascent),
-                    x2: x + maxWidth,
-                    y2: Math.max(y + lineHeight, baseline + descent),
-                };
-                return isValidRect(bounds) ? bounds : null;
+                return measuredBounds.createBitmapSurfaceTextBounds({
+                    params,
+                    position,
+                    existingBounds,
+                    drawState,
+                    text,
+                    metrics,
+                    fontSize,
+                    measuredTextWidth: measureBitmapTextWidth(contents, text),
+                });
             }
 
     function createClearRectFromArea(clearArea, replayApi) {
@@ -426,8 +347,14 @@
     function getReplayItemRect(item) {
                 if (!item) return null;
                 if (item.type === 'renderOp' && item.op && item.op.rect) return item.op.rect;
-                if (item.type === 'windowText' && item.entry && item.entry.bounds) return item.entry.bounds;
+                if (item.type === 'windowText' && item.entry) return getWindowTextReplayBounds(item.entry);
                 return null;
+            }
+
+    function getWindowTextReplayBounds(entry) {
+                if (!entry) return null;
+                if (isValidRect(entry.renderedBounds)) return entry.renderedBounds;
+                return isValidRect(entry.bounds) ? entry.bounds : null;
             }
 
     function mergeReplayRect(a, b) {
@@ -532,7 +459,7 @@
                     : NaN;
                 const fromContents = contents && Number.isFinite(Number(contents.outlineWidth))
                     ? Number(contents.outlineWidth)
-                    : redrawSettings.defaultOutline;
+                    : 0;
                 return Math.max(0, Math.ceil(Number.isFinite(fromEntry) ? fromEntry : fromContents));
             }
 
@@ -574,31 +501,10 @@
             }
 
     function summarizeReplayItemsForDiagnostics(items, limit = REDRAW_DIAGNOSTIC_ITEM_LIMIT) {
-                const list = Array.isArray(items) ? items : [];
-                const methods = {};
-                let minOrder = null;
-                let maxOrder = null;
-                list.forEach((item) => {
-                    const order = Number(item && item.drawOrder);
-                    if (Number.isFinite(order)) {
-                        minOrder = minOrder === null ? order : Math.min(minOrder, order);
-                        maxOrder = maxOrder === null ? order : Math.max(maxOrder, order);
-                    }
-                    let key = item && item.type ? String(item.type) : 'unknown';
-                    if (item && item.type === 'renderOp' && item.op && item.op.methodName) {
-                        key = `op:${item.op.methodName}`;
-                    } else if (item && item.type === 'windowText' && item.entry && item.entry.type) {
-                        key = `window:${item.entry.type}`;
-                    }
-                    methods[key] = (methods[key] || 0) + 1;
-                });
-                return {
-                    count: list.length,
-                    omitted: Math.max(0, list.length - limit),
-                    orderMin: minOrder,
-                    orderMax: maxOrder,
-                    methods,
-                    sample: list.slice(0, limit).map((item) => {
+                const graph = drawGraph.createDrawGraph(items);
+                const summary = drawGraph.summarize(graph, limit);
+                return Object.assign(summary, {
+                    sample: graph.items.slice(0, limit).map((item) => {
                         if (!item) return { type: 'null' };
                         const base = {
                             type: item.type || 'unknown',
@@ -629,7 +535,7 @@
                         }
                         return base;
                     }),
-                };
+                });
             }
 
     function summarizeReplayStateForDiagnostics(state) {
@@ -643,7 +549,7 @@
                 };
             }
 
-        return { mergeBounds, isValidRect, roundDiagnosticNumber, cloneDiagnosticRect, cloneDiagnosticArea, calculateBitmapSurfaceTextYOffset, estimateBitmapSurfaceTextBounds, createClearRectFromArea, getReplayItemRect, mergeReplayRect, expandReplayDirtyRect, replayRectsOverlap, getBitmapCanvasContext, supportsBitmapReplayClip, getReplayClipArea, getBitmapSnapshotContext, getEntryContentsRevision, getSnapshotContentsRevision, getWindowDataContentsRevision, getEntrySnapshotPadding, getSnapshotArea, getSnapshotDiagnostics, summarizeReplayItemsForDiagnostics, summarizeReplayStateForDiagnostics };
+        return { mergeBounds, isValidRect, roundDiagnosticNumber, cloneDiagnosticRect, cloneDiagnosticArea, calculateBitmapSurfaceTextYOffset, estimateBitmapSurfaceTextBounds, createClearRectFromArea, getReplayItemRect, mergeReplayRect, expandReplayDirtyRect, replayRectsOverlap, getBitmapCanvasContext, supportsBitmapReplayClip, getReplayClipArea, getBitmapSnapshotContext, getEntryContentsRevision, getSnapshotContentsRevision, getWindowDataContentsRevision, getEntrySnapshotPadding, getSnapshotArea, getSnapshotDiagnostics, measureSnapshotInkDiagnostics: measuredBounds.measureSnapshotInkDiagnostics, summarizeReplayItemsForDiagnostics, summarizeReplayStateForDiagnostics };
     }
 
     defineRuntimeModule('adapters.windowTextBitmapDiagnostics', { create: createBitmapDiagnosticsController });

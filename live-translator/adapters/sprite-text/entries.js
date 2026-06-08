@@ -12,58 +12,23 @@
     }
 
     function createController(scope = {}) {
-        const callScope = (name) => (...args) => scope[name](...args);
+        const renderTransaction = scope.renderTransaction;
+        const { completeRunFromCommand, isRunCommandCurrent } = scope.controllerFacades.parentRunRecords;
+        const { removeParentRun } = scope.controllerFacades.parentRunLifecycle;
+        const { removeSpriteOverlay } = scope.controllerFacades.overlaySprite;
+        const { renderSpriteOverlay } = scope.controllerFacades.overlayBitmap;
+        const { isSpriteEntryScreenVisible, markRecordVisibilitySynced, shouldPublishObservation, createObservationSignature } = scope.controllerFacades.visibility;
+        const { applyEligibilityToSpriteRecord, describeSpriteRecordEligibility, getBitmapState, logTextDetected, restoreTranslatedText, safePrepareText, updateItem } = scope.controllerFacades.state;
         const {
-            applyEligibilityToSpriteRecord,
-            completeRunFromCommand,
-            createObservationSignature,
-            describeSpriteRecordEligibility,
             errorMessage,
-            getBitmapState,
             isAdapterContractFailure,
-            isRunCommandCurrent,
-            isSpriteEntryScreenVisible,
             isValidRect,
-            logTextDetected,
-            markRecordVisibilitySynced,
             rectHasArea,
-            removeParentRun,
-            removeSpriteOverlay,
-            renderSpriteOverlay,
-            restoreTranslatedText,
-            safePrepareText,
             sanitizeVisibleText,
-            shouldPublishObservation,
             stringify,
             textUnitCount,
-            updateItem,
             warn,
-        } = Object.fromEntries([
-            'applyEligibilityToSpriteRecord',
-            'completeRunFromCommand',
-            'createObservationSignature',
-            'describeSpriteRecordEligibility',
-            'errorMessage',
-            'getBitmapState',
-            'isAdapterContractFailure',
-            'isRunCommandCurrent',
-            'isSpriteEntryScreenVisible',
-            'isValidRect',
-            'logTextDetected',
-            'markRecordVisibilitySynced',
-            'rectHasArea',
-            'removeParentRun',
-            'removeSpriteOverlay',
-            'renderSpriteOverlay',
-            'restoreTranslatedText',
-            'safePrepareText',
-            'sanitizeVisibleText',
-            'shouldPublishObservation',
-            'stringify',
-            'textUnitCount',
-            'updateItem',
-            'warn',
-        ].map((name) => [name, callScope(name)]));
+        } = scope.controllerFacades.utils;
 
         /**
          * Group sprite bitmap text ops by line and compatible style.
@@ -189,6 +154,7 @@
                 drawState: dominant.drawState,
                 methodName: dominant.methodName || 'drawText',
                 fontSignature: dominant.fontSignature,
+                drawBoundary: cloneGroupDrawBoundary(ops, dominant),
                 drawOrder: Math.min(...ops.map((op) => Number(op.drawOrder) || 0)),
             };
         }
@@ -202,6 +168,7 @@
                 existing.group = group;
                 existing.bitmapRevision = bitmapState.revision;
                 existing.surfaceRevision = bitmapState.revision;
+                existing.drawBoundary = group.drawBoundary || existing.drawBoundary || null;
                 existing.lastSeenAt = Date.now();
                 existing.deferTracker = shouldDeferSpriteEntry(group);
                 applyEligibilityToSpriteRecord(existing);
@@ -211,10 +178,9 @@
             }
             if (existing) retireSpriteEntry(existing, 'replaced');
         
-            const codecState = safePrepareText(group.rawText);
-            const translationSource = stringify(codecState.translationText !== undefined
-                ? codecState.translationText
-                : group.rawText);
+            const textSource = safePrepareText(group.rawText);
+            const codecState = textSource.codecState;
+            const translationSource = stringify(textSource.translationSource);
             const entry = {
                 id: `ste-${(++scope.nextEntryId).toString(36)}`,
                 key: group.key,
@@ -225,7 +191,7 @@
                 trimmedText: group.trimmedText,
                 codecState,
                 translationSource,
-                normalizedSource: translationSource.trim(),
+                normalizedSource: textSource.normalizedSource,
                 bitmapRevision: bitmapState.revision,
                 surfaceRevision: bitmapState.revision,
                 renderedText: '',
@@ -233,6 +199,7 @@
                 lastSeenAt: Date.now(),
                 recordId: `sprite:${spriteState.id}:${(++scope.nextEntryId).toString(36)}`,
                 recordKind: 'entry',
+                drawBoundary: group.drawBoundary || null,
                 deferTracker: shouldDeferSpriteEntry(group),
                 parentRunId: '',
                 stale: false,
@@ -277,6 +244,7 @@
                 priority: scope.SPRITE_PRIORITY,
                 generation: entry.surfaceRevision,
                 renderStrategy: scope.RENDER_STRATEGY,
+                drawBoundary: createEntryDrawBoundary(entry),
                 visible,
                 screenState: visible ? 'visible' : 'hidden',
                 bounds: entry.group.bounds,
@@ -295,6 +263,32 @@
                 markRecordVisibilitySynced(entry, payload.visible, payload.screenState, payload.priority);
             }
             return payload;
+        }
+
+        function cloneGroupDrawBoundary(ops, dominant) {
+            const source = dominant && dominant.drawBoundary && typeof dominant.drawBoundary === 'object'
+                ? dominant.drawBoundary
+                : (Array.isArray(ops)
+                    ? ops.map((op) => op && op.drawBoundary).find((boundary) => boundary && typeof boundary === 'object')
+                    : null);
+            return source ? renderTransaction.createSourceDrawBoundary(source) : null;
+        }
+
+        function createEntryDrawBoundary(entry) {
+            const source = entry && entry.drawBoundary && typeof entry.drawBoundary === 'object'
+                ? entry.drawBoundary
+                : (entry && entry.group && entry.group.drawBoundary && typeof entry.group.drawBoundary === 'object'
+                    ? entry.group.drawBoundary
+                    : null);
+            if (!source) return null;
+            const spriteState = entry.spriteState || {};
+            return renderTransaction.createSourceDrawBoundary(Object.assign({}, source, {
+                itemId: entry.recordId || source.itemId || '',
+                recordId: entry.recordId || source.recordId || '',
+                surfaceId: `sprite:${spriteState.id || ''}`,
+                slotKey: entry.slotKey || source.slotKey || '',
+                generation: Number(entry.surfaceRevision) || Number(source.generation) || 0,
+            }));
         }
         
         /**
@@ -337,7 +331,7 @@
                         spriteId: entry.spriteState ? entry.spriteState.id : '',
                     },
                 });
-                if (!requested) {
+                if (!requested || requested.handled !== true) {
                     updateItem(entry, { status: 'failed' }, 'item.failed', { reason: 'translation request failed', mode: 'sprite-bitmap' });
                     return false;
                 }

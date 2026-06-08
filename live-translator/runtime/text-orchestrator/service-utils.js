@@ -16,7 +16,7 @@
     }
 
     const base = requireRuntimeModule('runtime.textOrchestratorBaseUtils');
-    const { firstDefined, firstString } = base;
+    const { clampPriority, firstDefined, firstString } = base;
 
     function createProviderDispatchPolicy(options = {}) {
         const providerContext = options.providerContext && typeof options.providerContext === 'object'

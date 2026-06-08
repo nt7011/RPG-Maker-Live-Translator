@@ -1,5 +1,6 @@
 {
     "checkUpdates": true,
+    "disableLiveTranslatorGui": false,
     "enableForesight": true,
     "showForesightSpoilers": false,
     "logging": {
@@ -18,13 +19,6 @@
     "diagnostics": {
         "performanceMode": true
     },
-    "redraw": {
-        "extraPadding": 0,
-        "defaultOutline": 0
-    },
-    "bitmapFallback": {
-        "mode": "redraw"
-    },
     "drawCaptureTrace": {
         "enabled": false,
         "recordCjk": true,
@@ -41,7 +35,8 @@
     "substitutePlaintextBeforeTranslation": [],
     "gameMessage": {
         "textScale": 100,
-        "originAwareLineBreaks": false
+        "originAwareLineBreaks": false,
+        "disableStreaming": false
     },
     "textScaleOthers": 100,
     "diskCache": {

@@ -12,9 +12,8 @@
     }
 
     function createController(scope = {}) {
-        const { MIN_PRIORITY, applySubstitutePlaintextBeforeTranslationRules, clampPriority, preview, provider, requestTimeoutMs, reservedPriorityLanePolicies, substitutePlaintextBeforeTranslationRules, jobsByKey, queuedJobs } = scope;
-        const callScope = (name) => (...args) => scope[name](...args);
-        const { request, schedulePump } = Object.fromEntries(['request', 'schedulePump'].map((name) => [name, callScope(name)]));
+        const { MIN_PRIORITY, applySubstitutePlaintextBeforeTranslationRules, preview, requestTimeoutMs, substitutePlaintextBeforeTranslationRules, jobsByKey, queuedJobs } = scope;
+        const { schedulePump } = scope.controllerFacades.queue;
 
         function createJob(request) {
             const providerText = applySubstitutePlaintextBeforeTranslationRules(request.normalized, substitutePlaintextBeforeTranslationRules);
@@ -105,92 +104,71 @@
             return b.queueSeq - a.queueSeq;
         }
 
+        function getSchedulerPolicy() {
+            if (!scope.schedulerPolicy) {
+                throw new Error('[TranslationService] Scheduler policy is unavailable.');
+            }
+            return scope.schedulerPolicy;
+        }
+
         function getEnabledReservedPriorityLanes() {
-            return reservedPriorityLanePolicies.filter((lane) => scope.providerCapacity >= lane.enabledAtCapacity);
+            return getSchedulerPolicy().getEnabledReservedPriorityLanes();
         }
 
         function subscriberMatchesReservedLane(subscriber, lane) {
-            if (!subscriber || !subscriber.active || !lane) return false;
-            if (clampPriority(subscriber.priority) < lane.priority) return false;
-            if (!lane.hooks.length) return true;
-            const hook = String(subscriber.hook || (subscriber.context && subscriber.context.hook) || '').trim();
-            return lane.hooks.includes(hook);
+            return getSchedulerPolicy().subscriberMatchesReservedLane(subscriber, lane);
         }
 
         function jobMatchesReservedLane(job, lane) {
-            if (!job || !lane) return false;
-            const activeSubscribers = getActiveSubscribers(job);
-            if (activeSubscribers.length) {
-                return activeSubscribers.some((subscriber) => subscriberMatchesReservedLane(subscriber, lane));
-            }
-            const hook = String(job.hook || '').trim();
-            return clampPriority(job.effectivePriority) >= lane.priority
-                && (!lane.hooks.length || lane.hooks.includes(hook));
+            return getSchedulerPolicy().jobMatchesReservedLane(job, lane);
         }
 
         function jobMatchesAnyReservedLane(job, lanes) {
-            return (lanes || getEnabledReservedPriorityLanes()).some((lane) => jobMatchesReservedLane(job, lane));
+            return getSchedulerPolicy().jobMatchesAnyReservedLane(job, lanes);
         }
 
         function countReservedRunningJobs(lanes) {
-            const enabledLanes = lanes || getEnabledReservedPriorityLanes();
-            return Array.from(jobsByKey.values()).filter((job) => {
-                return job && job.status === 'running' && jobMatchesAnyReservedLane(job, enabledLanes);
-            }).length;
+            return getSchedulerPolicy().countReservedRunningJobs(lanes);
         }
 
         function countLaneRunningJobs(lane) {
-            return Array.from(jobsByKey.values()).filter((job) => {
-                return job && job.status === 'running' && jobMatchesReservedLane(job, lane);
-            }).length;
+            return getSchedulerPolicy().countLaneRunningJobs(lane);
         }
 
         function countLaneQueuedJobs(lane) {
-            return queuedJobs.filter((job) => {
-                return job && job.status === 'queued' && hasActiveSubscribers(job) && jobMatchesReservedLane(job, lane);
-            }).length;
+            return getSchedulerPolicy().countLaneQueuedJobs(lane);
         }
 
         function countReservedSlots(lanes) {
-            const total = (lanes || getEnabledReservedPriorityLanes()).reduce((sum, lane) => {
-                return sum + Math.max(0, Math.floor(Number(lane.reservedSlots) || 0));
-            }, 0);
-            return Math.min(scope.providerCapacity, total);
+            return getSchedulerPolicy().countReservedSlots(lanes);
         }
 
         function getNormalDispatchCapacity(lanes) {
-            return Math.max(0, scope.providerCapacity - countReservedSlots(lanes));
+            return getSchedulerPolicy().getNormalDispatchCapacity(lanes);
         }
 
         function countNormalRunningJobs(lanes) {
-            return Math.max(0, scope.activeCount - countReservedRunningJobs(lanes));
+            return getSchedulerPolicy().countNormalRunningJobs(lanes);
         }
 
         function hasBlockingReservedLaneWork(lanes) {
-            return (lanes || getEnabledReservedPriorityLanes()).some((lane) => {
-                return lane.blocksNormalDispatch === true
-                    && (countLaneRunningJobs(lane) > 0 || countLaneQueuedJobs(lane) > 0);
-            });
+            return getSchedulerPolicy().hasBlockingReservedLaneWork(lanes);
+        }
+
+        function getReservedLaneDispatchState(lane) {
+            return getSchedulerPolicy().getReservedLaneDispatchState(lane);
+        }
+
+        function getNormalDispatchState(lanes) {
+            return getSchedulerPolicy().getNormalDispatchState(lanes);
+        }
+
+        function getQueueDispatchState(lanes) {
+            return getSchedulerPolicy().getQueueDispatchState(lanes);
         }
 
         function getReservedPriorityLaneSnapshot() {
-            return reservedPriorityLanePolicies.map((lane) => {
-                const enabled = scope.providerCapacity >= lane.enabledAtCapacity;
-                const running = enabled ? countLaneRunningJobs(lane) : 0;
-                const queued = enabled ? countLaneQueuedJobs(lane) : 0;
-                return {
-                    name: lane.name,
-                    enabled,
-                    enabledAtCapacity: lane.enabledAtCapacity,
-                    reservedSlots: lane.reservedSlots,
-                    priority: lane.priority,
-                    hooks: lane.hooks.slice(),
-                    blocksNormalDispatch: lane.blocksNormalDispatch === true,
-                    queued,
-                    running,
-                    available: enabled ? Math.max(0, lane.reservedSlots - running) : 0,
-                };
-            });
+            return getSchedulerPolicy().getReservedPriorityLaneSnapshot();
         }
 
         return {
@@ -212,6 +190,9 @@
             getNormalDispatchCapacity,
             countNormalRunningJobs,
             hasBlockingReservedLaneWork,
+            getReservedLaneDispatchState,
+            getNormalDispatchState,
+            getQueueDispatchState,
             getReservedPriorityLaneSnapshot,
         };
     }

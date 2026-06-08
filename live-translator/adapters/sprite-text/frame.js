@@ -10,74 +10,28 @@
     if (typeof defineRuntimeModule !== 'function') {
         throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/sprite-text/frame.js.');
     }
+    const requireRuntimeModule = globalScope.LiveTranslatorRequire;
+    if (typeof requireRuntimeModule !== 'function') {
+        throw new Error('[LiveTranslator] runtime module require is unavailable before adapters/sprite-text/frame.js.');
+    }
+    const lifecycleReasons = requireRuntimeModule('runtime.lifecycleReasons').reasons;
 
     function createController(scope = {}) {
-        const callScope = (name) => (...args) => scope[name](...args);
+        const { attachBitmapOwner, detachBitmapOwner, hasActiveSpriteTextState, isBitmapOwned, markParentDirty, markSpriteDirty } = scope.controllerFacades.bitmapOwnership;
+        const { buildTextGroups, createOrUpdateEntry, hasRenderedTranslation, requestEntryTranslation, retireSpriteEntry } = scope.controllerFacades.entries;
+        const { createGlyphCandidate, processParentGlyphRuns } = scope.controllerFacades.glyphCandidates;
+        const { releaseParentRunOverlayCarrier, syncParentRunOverlayCarrier } = scope.controllerFacades.parentRunOverlay;
+        const { removeParentRun, syncParentRun } = scope.controllerFacades.parentRunLifecycle;
+        const { removeSpriteOverlay, syncSpriteOverlay } = scope.controllerFacades.overlaySprite;
+        const { renderSpriteOverlay } = scope.controllerFacades.overlayBitmap;
+        const { getBitmapState, ensureSpriteState, isOverlayBitmap, isWindowOwnedBitmap } = scope.controllerFacades.state;
+        const { isDisplayObjectInCurrentScene, readFrameKey, updateEntryVisibility, updateRunVisibility } = scope.controllerFacades.visibility;
         const {
-            attachBitmapOwner,
             bucketCount,
-            buildTextGroups,
-            createGlyphCandidate,
-            createOrUpdateEntry,
-            detachBitmapOwner,
-            ensureSpriteState,
-            getBitmapState,
-            hasActiveSpriteTextState,
-            hasRenderedTranslation,
             isAdapterContractFailure,
-            isDisplayObjectInCurrentScene,
-            isOverlayBitmap,
-            isWindowOwnedBitmap,
-            markParentDirty,
-            markSpriteDirty,
-            processParentGlyphRuns,
-            readFrameKey,
-            releaseParentRunOverlayCarrier,
-            removeParentRun,
-            removeSpriteOverlay,
-            renderSpriteOverlay,
-            requestEntryTranslation,
-            retireSpriteEntry,
-            syncParentRun,
-            syncParentRunOverlayCarrier,
-            syncSpriteOverlay,
             textUnitCount,
-            updateEntryVisibility,
-            updateRunVisibility,
             warn,
-        } = Object.fromEntries([
-            'attachBitmapOwner',
-            'bucketCount',
-            'buildTextGroups',
-            'createGlyphCandidate',
-            'createOrUpdateEntry',
-            'detachBitmapOwner',
-            'ensureSpriteState',
-            'getBitmapState',
-            'hasActiveSpriteTextState',
-            'hasRenderedTranslation',
-            'isAdapterContractFailure',
-            'isDisplayObjectInCurrentScene',
-            'isOverlayBitmap',
-            'isWindowOwnedBitmap',
-            'markParentDirty',
-            'markSpriteDirty',
-            'processParentGlyphRuns',
-            'readFrameKey',
-            'releaseParentRunOverlayCarrier',
-            'removeParentRun',
-            'removeSpriteOverlay',
-            'renderSpriteOverlay',
-            'requestEntryTranslation',
-            'retireSpriteEntry',
-            'syncParentRun',
-            'syncParentRunOverlayCarrier',
-            'syncSpriteOverlay',
-            'textUnitCount',
-            'updateEntryVisibility',
-            'updateRunVisibility',
-            'warn',
-        ].map((name) => [name, callScope(name)]));
+        } = scope.controllerFacades.utils;
 
         /**
          * Install child add/remove observers on PIXI containers and Sprite.
@@ -363,12 +317,14 @@
         }
 
         function scheduleFallbackFrameFlush(reason = 'fallback-frame') {
-            if (scope.frameFallbackTimer || typeof setTimeout !== 'function') return false;
-            scope.frameFallbackTimer = setTimeout(() => {
-                scope.frameFallbackTimer = null;
-                flushFrame(reason || 'fallback-frame');
-            }, 0);
-            return true;
+            return scope.bitmapServices.scheduleDeferredFlush({
+                token: 'sprite-text:fallback-frame',
+                source: scope.ADAPTER_ID || 'sprite',
+                reason: reason || 'fallback-frame',
+                callback(flushReason) {
+                    flushFrame(flushReason || 'fallback-frame');
+                },
+            });
         }
 
         function flushPendingBitmapOwnerClaims(reason) {
@@ -408,7 +364,7 @@
                     return;
                 }
                 if (!isDisplayObjectInCurrentScene(spriteState.sprite)) {
-                    retireAllSpriteEntries(spriteState, 'not-current-scene');
+                    retireAllSpriteEntries(spriteState, lifecycleReasons.NOT_CURRENT_SCENE);
                     scope.trackedSpriteStates.delete(spriteState);
                     return;
                 }
@@ -428,7 +384,7 @@
                     return;
                 }
                 if (!isDisplayObjectInCurrentScene(run.parent)) {
-                    removeParentRun(run, 'not-current-scene');
+                    removeParentRun(run, lifecycleReasons.NOT_CURRENT_SCENE);
                     return;
                 }
                 if (run.overlaySprite && scope.activeParents.has(run.parent)) return;
@@ -473,7 +429,7 @@
                 return;
             }
             if (!isDisplayObjectInCurrentScene(sprite)) {
-                retireAllSpriteEntries(spriteState, 'not-current-scene');
+                retireAllSpriteEntries(spriteState, lifecycleReasons.NOT_CURRENT_SCENE);
                 return;
             }
         

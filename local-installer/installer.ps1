@@ -59,6 +59,10 @@ function Read-InstallManifest {
     if (-not $manifest.loader) { throw "install-manifest.json missing loader" }
     if (-not $manifest.supportDirectory) { throw "install-manifest.json missing supportDirectory" }
     if (-not $manifest.runtime) { throw "install-manifest.json missing runtime section" }
+    if (-not $manifest.fileInventory) { throw "install-manifest.json missing fileInventory section" }
+    if (-not $manifest.fileInventory.PSObject.Properties["sourceFiles"]) {
+        throw "install-manifest.json missing fileInventory.sourceFiles"
+    }
 
     foreach ($field in @("loaderHelpers", "scriptLoadOrder", "requiredAssets")) {
         if (-not $manifest.runtime.PSObject.Properties[$field]) {
@@ -107,6 +111,10 @@ function Read-SnapshotManifest {
     if (-not $manifest.loader) { throw "snapshot/install-manifest.json missing loader" }
     if (-not $manifest.freezePlugin) { throw "snapshot/install-manifest.json missing freezePlugin" }
     if (-not $manifest.replayRuntime) { throw "snapshot/install-manifest.json missing replayRuntime" }
+    if (-not $manifest.fileInventory) { throw "snapshot/install-manifest.json missing fileInventory section" }
+    if (-not $manifest.fileInventory.PSObject.Properties["sourceFiles"]) {
+        throw "snapshot/install-manifest.json missing fileInventory.sourceFiles"
+    }
 
     return $manifest
 }
@@ -125,6 +133,78 @@ function Resolve-SupportChildPath {
     }
 
     return $childFull
+}
+
+function Resolve-ManifestChildPath {
+    param(
+        [Parameter(Mandatory = $true)][string]$BaseDir,
+        [Parameter(Mandatory = $true)][string]$RelativePath,
+        [Parameter(Mandatory = $true)][string]$Description
+    )
+
+    $relative = [string]$RelativePath
+    if ([string]::IsNullOrWhiteSpace($relative)) {
+        throw "$Description contains an empty file path"
+    }
+    if ([System.IO.Path]::IsPathRooted($relative)) {
+        throw "$Description contains a rooted file path: $relative"
+    }
+
+    $baseFull = Get-FullPath $BaseDir
+    $childFull = Get-FullPath (Join-Path -Path $baseFull -ChildPath $relative)
+    if (-not (Test-IsUnderPath -Path $childFull -Parent $baseFull)) {
+        throw "$Description points outside its base directory: $relative"
+    }
+
+    return $childFull
+}
+
+function Copy-ManifestFileList {
+    param(
+        [Parameter(Mandatory = $true)][string]$SourceDir,
+        [Parameter(Mandatory = $true)][string]$TargetDir,
+        [Parameter(Mandatory = $true)][object[]]$RelativePaths,
+        [Parameter(Mandatory = $true)][string]$Description,
+        [bool]$Required = $true
+    )
+
+    $copied = 0
+    $seen = @{}
+    foreach ($entry in @($RelativePaths)) {
+        $relativePath = [string]$entry
+        if ([string]::IsNullOrWhiteSpace($relativePath)) { continue }
+        $key = $relativePath.Replace("\", "/").ToLowerInvariant()
+        if ($seen.ContainsKey($key)) { continue }
+        $seen[$key] = $true
+
+        $sourcePath = Resolve-ManifestChildPath `
+            -BaseDir $SourceDir `
+            -RelativePath $relativePath `
+            -Description $Description
+        if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
+            if ($Required) {
+                throw "$Description file not found: $relativePath"
+            }
+            continue
+        }
+
+        $targetPath = Resolve-ManifestChildPath `
+            -BaseDir $TargetDir `
+            -RelativePath $relativePath `
+            -Description $Description
+        $targetParent = Split-Path -Path $targetPath -Parent
+        if (-not (Test-Path -LiteralPath $targetParent -PathType Container)) {
+            New-Item -ItemType Directory -Path $targetParent -Force | Out-Null
+        }
+        Copy-Item -LiteralPath $sourcePath -Destination $targetPath -Force
+        $copied++
+    }
+
+    if ($Required -and $copied -eq 0) {
+        throw "$Description did not list any source files"
+    }
+
+    return $copied
 }
 
 function Find-PluginLayout {
@@ -173,7 +253,7 @@ function New-InstallerPackageName {
     }
 
     $timestamp = Get-Date -Format "yyyyMMddHHmmssfff"
-    return "$safeBase-$timestamp"
+    return "live-translator-$safeBase-$timestamp"
 }
 
 function Set-PackageNameInContent {
@@ -243,7 +323,8 @@ function Repair-PackageName {
 function Copy-RuntimeBundle {
     param(
         [Parameter(Mandatory = $true)][string]$ResolvedRuntimeRoot,
-        [Parameter(Mandatory = $true)][string]$SupportTargetDir
+        [Parameter(Mandatory = $true)][string]$SupportTargetDir,
+        [Parameter(Mandatory = $true)]$Manifest
     )
 
     $runtimeFull = Get-FullPath $ResolvedRuntimeRoot
@@ -264,9 +345,22 @@ function Copy-RuntimeBundle {
         Write-Host "Using existing plugin support directory at $supportFull" -ForegroundColor Cyan
     }
 
-    Get-ChildItem -LiteralPath $runtimeFull -Force | ForEach-Object {
-        Copy-Item -LiteralPath $_.FullName -Destination $supportFull -Recurse -Force
-    }
+    Copy-ManifestFileList `
+        -SourceDir $runtimeFull `
+        -TargetDir $supportFull `
+        -RelativePaths @($Manifest.fileInventory.sourceFiles) `
+        -Description "live-translator fileInventory.sourceFiles" `
+        -Required $true | Out-Null
+
+    # Optional runtime assets such as precacher/precache.json are generated
+    # locally. Copy them when present, but do not let unrelated generated logs
+    # sneak into installed games.
+    Copy-ManifestFileList `
+        -SourceDir $runtimeFull `
+        -TargetDir $supportFull `
+        -RelativePaths @($Manifest.runtime.optionalAssets) `
+        -Description "live-translator runtime.optionalAssets" `
+        -Required $false | Out-Null
     Write-Host "Copied live-translator runtime bundle to $supportFull" -ForegroundColor Yellow
 }
 
@@ -306,56 +400,140 @@ function Copy-OptionalSnapshotBundle {
         New-Item -ItemType Directory -Path $snapshotTargetFull -Force | Out-Null
     }
 
-    Get-ChildItem -LiteralPath $snapshotFull -Force | ForEach-Object {
-        Copy-Item -LiteralPath $_.FullName -Destination $snapshotTargetFull -Recurse -Force
-    }
+    Copy-ManifestFileList `
+        -SourceDir $snapshotFull `
+        -TargetDir $snapshotTargetFull `
+        -RelativePaths @($snapshotManifest.fileInventory.sourceFiles) `
+        -Description "snapshot fileInventory.sourceFiles" `
+        -Required $true | Out-Null
     Write-Host "Installed optional snapshot plugin to $snapshotTargetFull" -ForegroundColor Cyan
     return $true
+}
+
+function Resolve-FirstExistingConfigSource {
+    param(
+        [Parameter(Mandatory = $true)][object[]]$Candidates,
+        [Parameter(Mandatory = $true)][string]$Description
+    )
+
+    foreach ($candidate in @($Candidates)) {
+        if ($candidate -and
+            -not [string]::IsNullOrWhiteSpace([string]$candidate.Path) -and
+            (Test-Path -LiteralPath ([string]$candidate.Path) -PathType Leaf)) {
+            return $candidate
+        }
+    }
+
+    $checked = @($Candidates | ForEach-Object { [string]$_.Path }) -join ", "
+    throw "Could not find $Description source. Checked $checked"
 }
 
 function Resolve-SettingsSource {
     param(
         [Parameter(Mandatory = $true)][string]$InstallerRoot,
-        [Parameter(Mandatory = $true)][string]$ResolvedRuntimeRoot
+        [Parameter(Mandatory = $true)][string]$ResolvedRuntimeRoot,
+        [Parameter(Mandatory = $true)][string]$Profile
     )
 
-    $localSettingsPath = Join-Path -Path $InstallerRoot -ChildPath "settings.local.json"
-    if (Test-Path -LiteralPath $localSettingsPath -PathType Leaf) {
-        return [pscustomobject]@{
-            Path = $localSettingsPath
+    $candidates = @()
+    if ($Profile -eq "snapshot") {
+        $candidates += [pscustomobject]@{
+            Path = Join-Path -Path $InstallerRoot -ChildPath "settings.snapshot.json"
+            Label = "local-installer/settings.snapshot.json"
+        }
+        $candidates += [pscustomobject]@{
+            Path = Join-Path -Path $ResolvedRuntimeRoot -ChildPath "config-templates\settings.snapshot.json"
+            Label = "live-translator/config-templates/settings.snapshot.json"
+        }
+    } else {
+        $candidates += [pscustomobject]@{
+            Path = Join-Path -Path $InstallerRoot -ChildPath "settings.local.json"
             Label = "local-installer/settings.local.json"
         }
     }
-
-    $releaseSettingsPath = Join-Path -Path $ResolvedRuntimeRoot -ChildPath "config-templates\settings.release.json"
-    if (Test-Path -LiteralPath $releaseSettingsPath -PathType Leaf) {
-        return [pscustomobject]@{
-            Path = $releaseSettingsPath
-            Label = "live-translator/config-templates/settings.release.json"
-        }
+    $candidates += [pscustomobject]@{
+        Path = Join-Path -Path $ResolvedRuntimeRoot -ChildPath "config-templates\settings.release.json"
+        Label = "live-translator/config-templates/settings.release.json"
     }
 
-    throw "Could not find installer settings source. Checked $localSettingsPath and $releaseSettingsPath"
+    return Resolve-FirstExistingConfigSource -Candidates $candidates -Description "installer settings"
+}
+
+function Resolve-TranslatorConfigSource {
+    param(
+        [Parameter(Mandatory = $true)][string]$InstallerRoot,
+        [Parameter(Mandatory = $true)][string]$ResolvedRuntimeRoot,
+        [Parameter(Mandatory = $true)][string]$Profile
+    )
+
+    $candidates = @()
+    $releaseTranslator = [pscustomobject]@{
+        Path = Join-Path -Path $ResolvedRuntimeRoot -ChildPath "config-templates\translator.release.json"
+        Label = "live-translator/config-templates/translator.release.json"
+    }
+    if ($Profile -eq "snapshot") {
+        $candidates += [pscustomobject]@{
+            Path = Join-Path -Path $InstallerRoot -ChildPath "translator.snapshot.json"
+            Label = "local-installer/translator.snapshot.json"
+        }
+        $candidates += [pscustomobject]@{
+            Path = Join-Path -Path $ResolvedRuntimeRoot -ChildPath "config-templates\translator.snapshot.json"
+            Label = "live-translator/config-templates/translator.snapshot.json"
+        }
+    } else {
+        $candidates += [pscustomobject]@{
+            Path = Join-Path -Path $InstallerRoot -ChildPath "translator.local.json"
+            Label = "local-installer/translator.local.json"
+        }
+    }
+    $candidates += $releaseTranslator
+
+    return Resolve-FirstExistingConfigSource -Candidates $candidates -Description "translator.json"
 }
 
 function Install-SettingsFile {
     param(
         [Parameter(Mandatory = $true)][string]$InstallerRoot,
         [Parameter(Mandatory = $true)][string]$ResolvedRuntimeRoot,
-        [Parameter(Mandatory = $true)][string]$SupportTargetDir
+        [Parameter(Mandatory = $true)][string]$SupportTargetDir,
+        [Parameter(Mandatory = $true)][string]$Profile
     )
 
     # settings.json is environment-specific, so install it explicitly instead
     # of depending on a file bundled inside the shared runtime tree.
     $settingsSource = Resolve-SettingsSource `
         -InstallerRoot $InstallerRoot `
-        -ResolvedRuntimeRoot $ResolvedRuntimeRoot
+        -ResolvedRuntimeRoot $ResolvedRuntimeRoot `
+        -Profile $Profile
     $settingsTarget = Resolve-SupportChildPath `
         -SupportTargetDir $SupportTargetDir `
         -RelativePath "settings.json"
 
     Copy-Item -LiteralPath $settingsSource.Path -Destination $settingsTarget -Force
     Write-Host "Installed settings.json from $($settingsSource.Label)" -ForegroundColor Cyan
+}
+
+function Install-TranslatorConfigFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$InstallerRoot,
+        [Parameter(Mandatory = $true)][string]$ResolvedRuntimeRoot,
+        [Parameter(Mandatory = $true)][string]$SupportTargetDir,
+        [Parameter(Mandatory = $true)][string]$Profile
+    )
+
+    # translator.json is profile-specific in the same way as settings.json:
+    # normal launches use the configured runtime provider, snapshot launches use
+    # the deterministic mock provider.
+    $translatorSource = Resolve-TranslatorConfigSource `
+        -InstallerRoot $InstallerRoot `
+        -ResolvedRuntimeRoot $ResolvedRuntimeRoot `
+        -Profile $Profile
+    $translatorTarget = Resolve-SupportChildPath `
+        -SupportTargetDir $SupportTargetDir `
+        -RelativePath "translator.json"
+
+    Copy-Item -LiteralPath $translatorSource.Path -Destination $translatorTarget -Force
+    Write-Host "Installed translator.json from $($translatorSource.Label)" -ForegroundColor Cyan
 }
 
 function Remove-ObsoleteSupportPaths {
@@ -505,22 +683,203 @@ function Find-MatchingArrayClose {
     throw "Could not find the closing bracket for the plugins array."
 }
 
+function Get-PreviousNonWhitespaceIndex {
+    param(
+        [Parameter(Mandatory = $true)][string]$Content,
+        [Parameter(Mandatory = $true)][int]$Index
+    )
+
+    while ($Index -ge 0 -and [char]::IsWhiteSpace($Content[$Index])) {
+        $Index--
+    }
+    return $Index
+}
+
+function Test-PluginsAssignmentPrefix {
+    param([Parameter(Mandatory = $true)][string]$Prefix)
+
+    return [regex]::IsMatch(
+        $Prefix,
+        '(?s)(?:^|[^A-Za-z0-9_$])(?:(?:var|let|const)\s+)?(?:\$?plugins|[A-Za-z_$][A-Za-z0-9_$]*\s*\.\s*\$?plugins|[A-Za-z_$][A-Za-z0-9_$]*\s*\[\s*[''"]\$?plugins[''"]\s*\])\s*$'
+    )
+}
+
+function Get-LikelyUtf16EncodingName {
+    param([Parameter(Mandatory = $true)][byte[]]$Bytes)
+
+    if ($Bytes.Length -lt 16) { return "" }
+
+    $sampleLength = [Math]::Min($Bytes.Length, 4096)
+    if ($sampleLength % 2 -ne 0) { $sampleLength-- }
+    $pairs = 0
+    $littleEndianScore = 0
+    $bigEndianScore = 0
+
+    for ($index = 0; $index + 1 -lt $sampleLength; $index += 2) {
+        $pairs++
+        if ($Bytes[$index] -ne 0 -and $Bytes[$index + 1] -eq 0) { $littleEndianScore++ }
+        if ($Bytes[$index] -eq 0 -and $Bytes[$index + 1] -ne 0) { $bigEndianScore++ }
+    }
+
+    if ($pairs -lt 8) { return "" }
+    if ($littleEndianScore * 3 -ge $pairs * 2 -and $littleEndianScore -gt $bigEndianScore * 4) { return "UTF-16LE" }
+    if ($bigEndianScore * 3 -ge $pairs * 2 -and $bigEndianScore -gt $littleEndianScore * 4) { return "UTF-16BE" }
+    return ""
+}
+
+function Read-PluginsFileText {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+
+    # Some exported games keep plugins.js in UTF-16. Preserve the original BOM,
+    # and also handle UTF-16 files written without one.
+    if ($bytes.Length -ge 2 -and $bytes[0] -eq 0xff -and $bytes[1] -eq 0xfe) {
+        return [pscustomobject]@{
+            Content = [System.Text.Encoding]::Unicode.GetString($bytes, 2, $bytes.Length - 2)
+            EncodingName = "UTF-16LE"
+            Bom = [byte[]](0xff, 0xfe)
+        }
+    }
+
+    if ($bytes.Length -ge 2 -and $bytes[0] -eq 0xfe -and $bytes[1] -eq 0xff) {
+        return [pscustomobject]@{
+            Content = [System.Text.Encoding]::BigEndianUnicode.GetString($bytes, 2, $bytes.Length - 2)
+            EncodingName = "UTF-16BE"
+            Bom = [byte[]](0xfe, 0xff)
+        }
+    }
+
+    if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xef -and $bytes[1] -eq 0xbb -and $bytes[2] -eq 0xbf) {
+        return [pscustomobject]@{
+            Content = [System.Text.Encoding]::UTF8.GetString($bytes, 3, $bytes.Length - 3)
+            EncodingName = "UTF-8"
+            Bom = [byte[]](0xef, 0xbb, 0xbf)
+        }
+    }
+
+    $detectedEncodingName = Get-LikelyUtf16EncodingName -Bytes $bytes
+    if ($detectedEncodingName -eq "UTF-16LE") {
+        return [pscustomobject]@{
+            Content = [System.Text.Encoding]::Unicode.GetString($bytes)
+            EncodingName = "UTF-16LE"
+            Bom = [byte[]]@()
+        }
+    }
+
+    if ($detectedEncodingName -eq "UTF-16BE") {
+        return [pscustomobject]@{
+            Content = [System.Text.Encoding]::BigEndianUnicode.GetString($bytes)
+            EncodingName = "UTF-16BE"
+            Bom = [byte[]]@()
+        }
+    }
+
+    return [pscustomobject]@{
+        Content = [System.Text.Encoding]::UTF8.GetString($bytes)
+        EncodingName = "UTF-8"
+        Bom = [byte[]]@()
+    }
+}
+
+function Write-PluginsFileText {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Content,
+        [Parameter(Mandatory = $true)][string]$EncodingName,
+        [byte[]]$Bom = @()
+    )
+
+    $body = switch ($EncodingName) {
+        "UTF-16LE" { [System.Text.Encoding]::Unicode.GetBytes($Content); break }
+        "UTF-16BE" { [System.Text.Encoding]::BigEndianUnicode.GetBytes($Content); break }
+        default { [System.Text.Encoding]::UTF8.GetBytes($Content); break }
+    }
+
+    $bytes = if ($Bom.Length -gt 0) { [byte[]]($Bom + $body) } else { [byte[]]$body }
+    [System.IO.File]::WriteAllBytes($Path, $bytes)
+}
+
 function Find-PluginsArrayLiteral {
     param(
         [Parameter(Mandatory = $true)][string]$PluginsContent,
         [Parameter(Mandatory = $true)][string]$PluginsFile
     )
 
-    # RPG Maker normally writes "var $plugins = [...]". Deployed games may keep
-    # the same array under "plugins = [...]"; parse the array instead of splitting
-    # on commas, because plugin parameters can contain nested objects and lists.
-    $assignment = [regex]'(?s)(?:var\s+)?(?:\$)?plugins\s*=\s*\['
-    $match = $assignment.Match($PluginsContent)
-    if (-not $match.Success) {
-        throw "Could not find a plugins = [...] array in $PluginsFile"
+    # RPG Maker normally writes "var $plugins = [...]". Deployed games can
+    # rewrite that as const/let declarations or global assignments such as
+    # "window.$plugins = [...]". Walk the source so comments and strings do not
+    # trick the installer into patching the wrong array.
+    $inString = $false
+    $quote = [char]0
+    $escape = $false
+    $lineComment = $false
+    $blockComment = $false
+    $singleQuote = [char]39
+    $doubleQuote = [char]34
+    $openIndex = -1
+
+    for ($index = 0; $index -lt $PluginsContent.Length; $index++) {
+        $char = $PluginsContent[$index]
+        $next = if ($index + 1 -lt $PluginsContent.Length) { $PluginsContent[$index + 1] } else { [char]0 }
+
+        if ($lineComment) {
+            if ($char -eq "`n") { $lineComment = $false }
+            continue
+        }
+        if ($blockComment) {
+            if ($char -eq "*" -and $next -eq "/") {
+                $blockComment = $false
+                $index++
+            }
+            continue
+        }
+        if ($inString) {
+            if ($escape) {
+                $escape = $false
+            } elseif ($char -eq "\") {
+                $escape = $true
+            } elseif ($char -eq $quote) {
+                $inString = $false
+            }
+            continue
+        }
+
+        if ($char -eq "/" -and $next -eq "/") {
+            $lineComment = $true
+            $index++
+            continue
+        }
+        if ($char -eq "/" -and $next -eq "*") {
+            $blockComment = $true
+            $index++
+            continue
+        }
+        if ($char -eq $singleQuote -or $char -eq $doubleQuote) {
+            $inString = $true
+            $quote = $char
+            continue
+        }
+        if ($char -ne "[") { continue }
+
+        $equalIndex = Get-PreviousNonWhitespaceIndex -Content $PluginsContent -Index ($index - 1)
+        if ($equalIndex -lt 0 -or $PluginsContent[$equalIndex] -ne "=") { continue }
+
+        $beforeEqualIndex = Get-PreviousNonWhitespaceIndex -Content $PluginsContent -Index ($equalIndex - 1)
+        if ($beforeEqualIndex -ge 0 -and "<>!=".IndexOf($PluginsContent[$beforeEqualIndex]) -ge 0) { continue }
+
+        $lookbackStart = [Math]::Max(0, $equalIndex - 512)
+        $prefix = $PluginsContent.Substring($lookbackStart, $equalIndex - $lookbackStart)
+        if (-not (Test-PluginsAssignmentPrefix -Prefix $prefix)) { continue }
+
+        $openIndex = $index
+        break
     }
 
-    $openIndex = $match.Index + $match.Value.LastIndexOf("[")
+    if ($openIndex -lt 0) {
+        throw "Could not find a plugins array assignment in $PluginsFile"
+    }
+
     $closeIndex = Find-MatchingArrayClose -Content $PluginsContent -OpenIndex $openIndex
     return [pscustomobject]@{
         OpenIndex = $openIndex
@@ -651,7 +1010,8 @@ function Sync-PluginEntries {
         throw "$PluginsFile not found"
     }
 
-    $pluginsContent = Get-Content -LiteralPath $PluginsFile -Raw -Encoding UTF8
+    $pluginsFileText = Read-PluginsFileText -Path $PluginsFile
+    $pluginsContent = $pluginsFileText.Content
     $arrayLiteral = Find-PluginsArrayLiteral -PluginsContent $pluginsContent -PluginsFile $PluginsFile
     $entries = Split-PluginsArrayEntries -ArrayContent $arrayLiteral.Inner
     $desiredNames = @($DesiredPlugins | ForEach-Object { [string]$_.Name } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
@@ -712,7 +1072,11 @@ function Sync-PluginEntries {
         ""
     }
     $updatedContent = $prefix + $body + $suffix
-    Set-Content -LiteralPath $PluginsFile -Value $updatedContent -Encoding UTF8 -Force
+    Write-PluginsFileText `
+        -Path $PluginsFile `
+        -Content $updatedContent `
+        -EncodingName $pluginsFileText.EncodingName `
+        -Bom $pluginsFileText.Bom
 
     if ($addedNames.Count -gt 0) {
         Write-Host "Added managed plugin entry: $($addedNames -join ', ')" -ForegroundColor Green
@@ -768,7 +1132,10 @@ try {
     }
 
     Repair-PackageName -ResolvedGameRoot $resolvedGameRoot
-    Copy-RuntimeBundle -ResolvedRuntimeRoot $resolvedRuntimeSource -SupportTargetDir $supportTargetFull
+    Copy-RuntimeBundle `
+        -ResolvedRuntimeRoot $resolvedRuntimeSource `
+        -SupportTargetDir $supportTargetFull `
+        -Manifest $manifest
     if ($PluginProfile -eq "snapshot") {
         Write-Host "Snapshot profile enables the standard live-translator plugin entry before the snapshot harness." -ForegroundColor Cyan
     }
@@ -777,10 +1144,16 @@ try {
             -ResolvedSnapshotRoot $resolvedSnapshotSource `
             -PluginsDir $pluginsDirFull | Out-Null
     }
+    Install-TranslatorConfigFile `
+        -InstallerRoot $scriptRoot `
+        -ResolvedRuntimeRoot $resolvedRuntimeSource `
+        -SupportTargetDir $supportTargetFull `
+        -Profile $PluginProfile
     Install-SettingsFile `
         -InstallerRoot $scriptRoot `
         -ResolvedRuntimeRoot $resolvedRuntimeSource `
-        -SupportTargetDir $supportTargetFull
+        -SupportTargetDir $supportTargetFull `
+        -Profile $PluginProfile
     Remove-ObsoleteSupportPaths -Manifest $manifest -SupportTargetDir $supportTargetFull
     Remove-ObsoleteInstallerCopy -ResolvedGameRoot $resolvedGameRoot
 

@@ -7,14 +7,21 @@
         ? window
         : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
     const defineRuntimeModule = globalScope.LiveTranslatorDefine;
+    const requireRuntimeModule = globalScope.LiveTranslatorRequire;
     if (typeof defineRuntimeModule !== 'function') {
         throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/game-message/records.js.');
     }
+    if (typeof requireRuntimeModule !== 'function') {
+        throw new Error('[LiveTranslator] runtime module require is unavailable before adapters/game-message/records.js.');
+    }
+    const renderTransaction = requireRuntimeModule('runtime.renderTransaction');
 
     function createController(scope = {}) {
         const { MESSAGE_ADAPTER_ID, MESSAGE_RENDER_STRATEGY, MESSAGE_ACTIVE_PRIORITY, MESSAGE_BACKGROUND_PRIORITY, stripControls, adapterContract, messageRecordsById, renderTargets, detachedRecords, bitmapGlyphSources } = scope;
-        const callScope = (name) => (...args) => scope[name](...args);
-        const { resolveMessageStartCoordinates, consumeForesightRecord, applyRenderCommand, getLifecycleRecord, getRenderGeneration, isRenderTargetCurrent, handleRenderRejected, retireDetachedRecord, handleRequestFailed, handleRequestSkipped, getMessageScreenState } = Object.fromEntries(['resolveMessageStartCoordinates', 'consumeForesightRecord', 'applyRenderCommand', 'getLifecycleRecord', 'getRenderGeneration', 'isRenderTargetCurrent', 'handleRenderRejected', 'retireDetachedRecord', 'handleRequestFailed', 'handleRequestSkipped', 'getMessageScreenState'].map((name) => [name, callScope(name)]));
+        const { resolveMessageStartCoordinates } = scope.controllerFacades.install;
+        const { consumeForesightRecord } = scope.controllerFacades.foresightRecords;
+        const { attachMessageRecordSession, getMessageRenderSession, setMessageRenderRetained, getCurrentMessageSessionId } = scope.controllerFacades.session;
+        const { applyRenderCommand, getLifecycleRecord, getRenderGeneration, isRenderTargetCurrent, handleRenderRejected, retireDetachedRecord, handleRequestFailed, handleRequestSkipped, getMessageScreenState } = scope.controllerFacades.render;
 
         /**
          * Subscribe once to orchestrator events needed by this adapter.
@@ -74,15 +81,8 @@
             const observed = observeMessageRecord(record, 'item.detected');
             if (!observed || !observed.id) return '';
             const recordId = observed.id;
-            windowInstance._trMessageRecordId = recordId;
-            windowInstance._trMessageRecord = record;
-            windowInstance._trMessagePayload = payload;
-            windowInstance._trMessageRecordSessionId = sessionId;
-            windowInstance._trMessageSeenVisible = observation.onScreen === true;
-            windowInstance._trMessageOnScreen = observation.onScreen === true;
-            windowInstance._trMessageScreenState = observation.screenState;
-            windowInstance._trMessageRenderRetained = false;
-            windowInstance._trMessageRenderRetainedReason = '';
+            if (record && record.id !== recordId) record.id = recordId;
+            attachMessageRecordSession(windowInstance, record, payload, sessionId, observation);
             rememberRenderTarget(windowInstance, record, payload, sessionId);
             return record;
         }
@@ -127,13 +127,16 @@
             const screenState = getMessageScreenState(windowInstance);
             const onScreen = screenState === 'visible';
             const windowType = getWindowType(windowInstance);
+            const recordId = createRecordId(windowInstance, sessionId, status === 'skipped' ? 'skip' : '');
+            const surfaceId = `message:${getWindowId(windowInstance)}`;
+            const slotKey = `session:${sessionId || 0}`;
             return {
-                id: createRecordId(windowInstance, sessionId, status === 'skipped' ? 'skip' : ''),
+                id: recordId,
                 sourceAdapter: MESSAGE_ADAPTER_ID,
                 hook: 'message',
                 hookLabel: 'Game Message',
-                surfaceId: `message:${getWindowId(windowInstance)}`,
-                slotKey: `session:${sessionId || 0}`,
+                surfaceId,
+                slotKey,
                 surfaceType: 'message',
                 status,
                 rawText: payload && payload.resolved ? payload.resolved : '',
@@ -145,6 +148,16 @@
                 priority: status === 'skipped' ? undefined : MESSAGE_ACTIVE_PRIORITY,
                 generation: sessionId || 0,
                 renderStrategy: MESSAGE_RENDER_STRATEGY,
+                drawBoundary: createMessageDrawBoundary({
+                    recordId,
+                    surfaceId,
+                    slotKey,
+                    sessionId,
+                    status,
+                    onScreen,
+                    screenState,
+                    windowType,
+                }),
                 onScreen,
                 screenState,
                 visible: onScreen,
@@ -158,6 +171,27 @@
                     screenState,
                 },
             };
+        }
+
+        function createMessageDrawBoundary(input = {}) {
+            const source = input && typeof input === 'object' ? input : {};
+            const beforeNativePaint = source.onScreen === true && source.status !== 'skipped';
+            return renderTransaction.createSourceDrawBoundary({
+                beforeNativePaint,
+                adapterId: MESSAGE_ADAPTER_ID,
+                itemId: source.recordId || '',
+                recordId: source.recordId || '',
+                surfaceId: source.surfaceId || '',
+                slotKey: source.slotKey || '',
+                generation: Number(source.sessionId) || 0,
+                reason: beforeNativePaint ? 'message-source-draw-observed' : 'message-source-draw-committed',
+                details: {
+                    surfaceType: 'message',
+                    status: source.status || '',
+                    screenState: source.screenState || '',
+                    windowType: source.windowType || '',
+                },
+            });
         }
 
         function createMessageRecord(observation, payload, sessionId, options = {}) {
@@ -277,7 +311,8 @@
         function setRecordPriority(record, priority, reason) {
             const target = resolveMessageRecord(record);
             if (!target) return false;
-            return adapterContract.setItemTranslationPriority(target, priority, reason) === true;
+            const result = adapterContract.setItemTranslationPriority(target, priority, reason);
+            return !!(result && result.changed === true);
         }
 
         /**
@@ -288,7 +323,7 @@
             return !!(adapterContract
                 && typeof adapterContract.cancelItemTranslation === 'function'
                 && target
-                && adapterContract.cancelItemTranslation(target, reason) === true);
+                && adapterContract.cancelItemTranslation(target, reason).changed === true);
         }
 
         /**
@@ -348,8 +383,7 @@
                 sessionId,
                 windowType: getWindowType(windowInstance),
             });
-            windowInstance._trMessageRenderRetained = false;
-            windowInstance._trMessageRenderRetainedReason = '';
+            setMessageRenderRetained(windowInstance, false, '');
             detachedRecords.delete(recordId);
             rememberBitmapGlyphSource(recordId, payload, sessionId, windowInstance);
             forgetPendingBitmapGlyphSource(windowInstance);
@@ -359,11 +393,12 @@
          * Detach a render target while preserving enough data for diagnostics.
          */
         function forgetRenderTarget(windowInstance, reason, details = {}) {
-            const recordId = windowInstance && windowInstance._trMessageRecordId;
+            const renderSession = getMessageRenderSession(windowInstance);
+            const recordId = renderSession.recordId || '';
             if (!recordId) return '';
-            const record = resolveMessageRecord(windowInstance._trMessageRecord || recordId);
-            const payload = windowInstance._trMessagePayload || null;
-            const sessionId = windowInstance._trMessageRecordSessionId || 0;
+            const record = resolveMessageRecord(renderSession.record || recordId);
+            const payload = renderSession.payload || null;
+            const sessionId = renderSession.recordSessionId || 0;
             renderTargets.delete(recordId);
             forgetBitmapGlyphSource(recordId);
             detachedRecords.set(recordId, Object.assign({
@@ -397,7 +432,7 @@
 
         function rememberPendingBitmapGlyphSource(windowInstance, payload) {
             if (!windowInstance || !payload) return false;
-            return rememberBitmapGlyphSource(getPendingBitmapGlyphSourceKey(windowInstance), payload, windowInstance._trMessageSession || 0, windowInstance);
+            return rememberBitmapGlyphSource(getPendingBitmapGlyphSourceKey(windowInstance), payload, getCurrentMessageSessionId(windowInstance), windowInstance);
         }
 
         function forgetPendingBitmapGlyphSource(windowInstance) {
@@ -413,7 +448,7 @@
 
         function getPendingBitmapGlyphSourceKey(windowInstance) {
             if (!windowInstance) return '';
-            return `pending:${getWindowId(windowInstance)}:${windowInstance._trMessageSession || 0}`;
+            return `pending:${getWindowId(windowInstance)}:${getCurrentMessageSessionId(windowInstance)}`;
         }
 
         function claimMessageGlyphSource(searchText, key, sessionId, windowInstance) {

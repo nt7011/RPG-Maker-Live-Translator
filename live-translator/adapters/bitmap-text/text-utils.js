@@ -13,22 +13,12 @@
 
     function createController(scope = {}) {
         const { ADAPTER_ID, ADAPTER_LABEL, SURFACE_TYPE, RENDER_STRATEGY, BITMAP_PRIORITY, DRAW_WRAPPER_TOKEN, MUTATION_WRAPPER_TOKEN, FRAME_FLUSH_TOKEN, SMALL_TEXT_TOKEN, NORMAL_CHAR_TOKEN, MAX_FRAGMENTS, MAX_REPLAY_OPS, GAP_MIN, GAP_RATIO } = scope;
-        const callScope = (name) => (...args) => scope[name](...args);
-        const { install, installOrchestratorSubscription, registerBitmapCapabilities, exposeAdapterApi, installBitmapDrawWrappers, installBitmapDrawWrapper, scheduleBitmapDrawWrapperRetry, handleBitmapDrawText, shouldBypassBitmapDraw, describeBitmapDrawBypassReason, recordBitmapSurfaceDraw, createFragment, scheduleFlush, scheduleFallbackFlush, flushQueuedBitmaps, flushAggregatedLines, takeFragmentsForFlush, finalizeFragmentOwnership, releaseFragmentOwnership, groupFragmentsIntoLines, canMergeFragments, createEntryFromGroup, registerBitmapEntry, refreshExistingEntry, observeEntry, requestEntryTranslation, applyRenderCommand, getRenderGeneration, isRenderTargetCurrent, handleRenderRejected, restoreTranslatedEntryText, redrawBitmapEntry, markEntryTerminal, isEntryActive, getEntryStatus, isEntryRequestActive, isEntryCompleted, getEntryObservationStatus, retireEntry, shouldKeepRecordAfterRenderRejection, isRenderApplicationFailure, normalizeRenderRejectionReason, installBitmapMutationHooks, installBitmapMutationHook, shouldBypassMutation, getMutationBypassReason, hasMutationObserverInterest, shouldHandleBitmapMutation, hasBitmapStateMutationInterest, hasWindowEntryMutationInterest, hasAnyWindowEntries, recordNativeMutationAttribution, classifyBitmapMutationSurface, bucketBitmapPixels, bucketBitmapDimensions, bucketDimension, sanitizePerfLabel, describeMutation, handleBitmapMutation, flushFragmentsBeforeMutation, invalidateEntriesInRect, discardFragmentsInRect, invalidateWindowEntries, wasWindowEntryObservedInCurrentRefresh, isWindowRefreshMutation, installFrameFlushHooks, installFrameFlushHook, hasHookInChain, installSmallTextMarkers, installSmallTextMarker, installNormalCharacterMarker, isSmallTextDrawActive, isSmallTextScratchBitmap, ensureBitmapState, getBitmapState, nextDrawOrder, recordBitmapRenderOp, recordNativeTextForReplay, discardRenderOpsInRect, withBitmapReplay, collectReplayItems, replayBitmapItems, replayBitmapRenderOp, replayBitmapEntry, drawBitmapTextValue, drawBitmapTextArgs, calculateClearRect } = Object.fromEntries(['install', 'installOrchestratorSubscription', 'registerBitmapCapabilities', 'exposeAdapterApi', 'installBitmapDrawWrappers', 'installBitmapDrawWrapper', 'scheduleBitmapDrawWrapperRetry', 'handleBitmapDrawText', 'shouldBypassBitmapDraw', 'describeBitmapDrawBypassReason', 'recordBitmapSurfaceDraw', 'createFragment', 'scheduleFlush', 'scheduleFallbackFlush', 'flushQueuedBitmaps', 'flushAggregatedLines', 'takeFragmentsForFlush', 'finalizeFragmentOwnership', 'releaseFragmentOwnership', 'groupFragmentsIntoLines', 'canMergeFragments', 'createEntryFromGroup', 'registerBitmapEntry', 'refreshExistingEntry', 'observeEntry', 'requestEntryTranslation', 'applyRenderCommand', 'getRenderGeneration', 'isRenderTargetCurrent', 'handleRenderRejected', 'restoreTranslatedEntryText', 'redrawBitmapEntry', 'markEntryTerminal', 'isEntryActive', 'getEntryStatus', 'isEntryRequestActive', 'isEntryCompleted', 'getEntryObservationStatus', 'retireEntry', 'shouldKeepRecordAfterRenderRejection', 'isRenderApplicationFailure', 'normalizeRenderRejectionReason', 'installBitmapMutationHooks', 'installBitmapMutationHook', 'shouldBypassMutation', 'getMutationBypassReason', 'hasMutationObserverInterest', 'shouldHandleBitmapMutation', 'hasBitmapStateMutationInterest', 'hasWindowEntryMutationInterest', 'hasAnyWindowEntries', 'recordNativeMutationAttribution', 'classifyBitmapMutationSurface', 'bucketBitmapPixels', 'bucketBitmapDimensions', 'bucketDimension', 'sanitizePerfLabel', 'describeMutation', 'handleBitmapMutation', 'flushFragmentsBeforeMutation', 'invalidateEntriesInRect', 'discardFragmentsInRect', 'invalidateWindowEntries', 'wasWindowEntryObservedInCurrentRefresh', 'isWindowRefreshMutation', 'installFrameFlushHooks', 'installFrameFlushHook', 'hasHookInChain', 'installSmallTextMarkers', 'installSmallTextMarker', 'installNormalCharacterMarker', 'isSmallTextDrawActive', 'isSmallTextScratchBitmap', 'ensureBitmapState', 'getBitmapState', 'nextDrawOrder', 'recordBitmapRenderOp', 'recordNativeTextForReplay', 'discardRenderOpsInRect', 'withBitmapReplay', 'collectReplayItems', 'replayBitmapItems', 'replayBitmapRenderOp', 'replayBitmapEntry', 'drawBitmapTextValue', 'drawBitmapTextArgs', 'calculateClearRect'].map((name) => [name, callScope(name)]));
+        const { getEntryStatus, retireEntry } = scope.controllerFacades.records;
+        const { getBitmapState } = scope.controllerFacades.replay;
 
         function estimateTextWidth(bitmap, text, maxWidth) {
             const cleaned = sanitizePerChar(text);
-            let measured = 0;
-            try {
-                if (bitmap && typeof bitmap.measureTextWidth === 'function') {
-                    const value = bitmap.measureTextWidth(cleaned);
-                    if (Number.isFinite(Number(value))) measured = Math.ceil(Number(value));
-                }
-            } catch (_) {}
-            if (!measured) {
-                const fontSize = positiveNumber(bitmap && bitmap.fontSize, 24);
-                measured = Math.ceil(cleaned.length * Math.max(6, fontSize * 0.6));
-            }
+            const measured = scope.measuredBounds.measureBitmapTextWidth(bitmap, cleaned);
             const limit = Number(maxWidth);
             if (Number.isFinite(limit) && limit > 0 && limit !== Infinity) return Math.max(1, Math.max(measured, Math.ceil(limit)));
             return Math.max(1, measured);
@@ -48,7 +38,7 @@
         }
         
         function sanitizeVisibleText(text) {
-            return sanitizePerChar(scope.stripControls(String(text ?? ''))).trim();
+            return scope.textCodec.sanitizeVisibleText(text, { perCharPattern: scope.perCharPattern });
         }
         
         function sanitizePerChar(text) {
@@ -64,29 +54,20 @@
         
         function sanitizeBitmapDrawText(text, methodName) {
             if (typeof text !== 'string') return text;
-            return /^(drawText|drawTextS|drawTextM)$/.test(String(methodName || 'drawText'))
-                ? scope.stripControls(text)
-                : text;
+            return scope.textCodec.sanitizeDrawTextOutput(text, { methodName: methodName || 'drawText' });
         }
         
         function safePrepareText(rawText) {
             try {
-                return scope.encodeText(rawText) || createPlainCodecState(rawText);
+                return scope.createTextSource(rawText, { surfaceType: SURFACE_TYPE });
             } catch (error) {
                 warn('[BitmapText] Failed to prepare text for translation.', error);
-                return createPlainCodecState(rawText);
+                return createPlainTextSource(rawText);
             }
         }
 
-        function createPlainCodecState(rawText) {
-            const text = String(rawText ?? '');
-            return {
-                originalText: text,
-                visibleText: text.trim(),
-                translationText: text,
-                normalizedText: text.trim(),
-                tokens: [],
-            };
+        function createPlainTextSource(rawText) {
+            return scope.textCodec.createPlainTextSource(rawText, { surfaceType: SURFACE_TYPE });
         }
         
         function describeEntryEligibility(entry) {
@@ -131,6 +112,7 @@
         function bitmapTraceDetails(bitmap, methodName, rawText, x, y, extra = {}) {
             if (!isDrawCaptureTraceEnabled()) return null;
             const owner = readBitmapOwner(bitmap);
+            const guardState = scope.bitmapServices.getRenderGuardState(bitmap);
             const ownerType = extra && extra.ownerType ? String(extra.ownerType) : describeOwnerType(owner, bitmap);
             const visibleText = sanitizeVisibleText(rawText);
             const state = getBitmapState(bitmap);
@@ -153,8 +135,9 @@
                     preferWindowPipeline: bitmap._trPreferWindowPipeline === true,
                     windowPipelineDepth: Number(bitmap._trWindowPipelineDepth) || 0,
                     windowRefreshDepth: Number(bitmap._trWindowRefreshDepth) || 0,
-                    bitmapSkipDepth: Number(bitmap._trBitmapSkipDepth) || 0,
-                    bitmapReplayDepth: Number(bitmap._trBitmapReplayDepth) || 0,
+                    bitmapSkipDepth: guardState ? Number(guardState.bitmapSkipDepth) || 0 : 0,
+                    bitmapReplayDepth: guardState ? Number(guardState.bitmapReplayDepth) || 0 : 0,
+                    spriteTextReplayDepth: guardState ? Number(guardState.spriteTextReplayDepth) || 0 : 0,
                     messageContents: bitmap._trMessageContents === true,
                 } : null,
             }, extra || {});
@@ -176,27 +159,20 @@
             return Math.round(numeric * 1000) / 1000;
         }
         
-        function getBitmapFallbackMode() {
-            const config = scope.settings && scope.settings.bitmapFallback && typeof scope.settings.bitmapFallback === 'object'
-                ? scope.settings.bitmapFallback
-                : {};
-            const raw = String(config.mode === undefined ? 'redraw' : config.mode).trim().toLowerCase();
-            if (raw === 'off' || raw === 'disabled' || raw === 'none') return 'off';
-            if (raw === 'detect' || raw === 'observe' || raw === 'detection') return 'detect';
-            return 'redraw';
-        }
-        
-        function isBitmapFallbackCaptureEnabled() {
-            return getBitmapFallbackMode() !== 'off';
-        }
-        
-        function isBitmapFallbackRedrawEnabled() {
-            return getBitmapFallbackMode() === 'redraw';
-        }
-        
         function readBitmapOwner(bitmap) {
-            if (!bitmap || !scope.contentsOwners || typeof scope.contentsOwners.get !== 'function') return null;
-            return safeCall(() => scope.contentsOwners.get(bitmap));
+            const ownership = scope.surfaceOwnership;
+            if (bitmap && ownership && typeof ownership.readContentsOwner === 'function') {
+                return safeCall(() => ownership.readContentsOwner(bitmap));
+            }
+            return null;
+        }
+
+        function resolveBitmapWindowSurface(bitmap) {
+            const ownership = scope.surfaceOwnership;
+            if (bitmap && ownership && typeof ownership.resolveWindowSurfaceForContents === 'function') {
+                return safeCall(() => ownership.resolveWindowSurfaceForContents(bitmap));
+            }
+            return null;
         }
         
         function hasDedicatedOwnerHook(owner) {
@@ -207,14 +183,16 @@
         }
         
         function windowEntryBelongsToBitmap(entry, bitmap, owner, data) {
-            if (!entry || !bitmap) return false;
-            if (entry.contentsBitmap) return entry.contentsBitmap === bitmap;
-            const activeContents = owner && owner.contents ? owner.contents : (data && data.contentsBitmap);
-            return activeContents ? activeContents === bitmap : true;
+            const ownership = scope.surfaceOwnership;
+            if (ownership && typeof ownership.windowEntryBelongsToContents === 'function') {
+                return ownership.windowEntryBelongsToContents(entry, bitmap, owner, data);
+            }
+            return false;
         }
         
         function deriveWindowEntryRect(entry) {
             if (!entry) return null;
+            if (entry.renderedBounds && isValidRect(entry.renderedBounds)) return entry.renderedBounds;
             if (entry.bounds && isValidRect(entry.bounds)) return entry.bounds;
             const x = finiteNumber(entry.position && entry.position.x, 0);
             const y = finiteNumber(entry.position && entry.position.y, 0);
@@ -400,7 +378,7 @@
             return error && error.message ? error.message : String(error || 'translation error');
         }
 
-        return { estimateTextWidth, computeFontSignature, sanitizeVisibleText, sanitizePerChar, isStandaloneGlyphText, sanitizeBitmapDrawText, safePrepareText, describeEntryEligibility, isDrawCaptureTraceEnabled, recordDrawTrace, bitmapTraceDetails, cloneTraceRect, roundTraceNumber, getBitmapFallbackMode, isBitmapFallbackCaptureEnabled, isBitmapFallbackRedrawEnabled, readBitmapOwner, hasDedicatedOwnerHook, windowEntryBelongsToBitmap, deriveWindowEntryRect, deriveEntryRect, fragmentRect, rectFromDimensions, isValidRect, rectHasArea, rectOrNull, rectanglesOverlap, normalizeCanvasTextAlign, describeOwnerType, shouldKeepWindowEntryTranslation, getWindowOwnerScreenState, retireWindowEntry, logTextDetected, updateItem, safeCall, isAdapterContractFailure, warn, stringify, finiteNumber, positiveNumber, pruneArray, errorMessage };
+        return { estimateTextWidth, computeFontSignature, sanitizeVisibleText, sanitizePerChar, isStandaloneGlyphText, sanitizeBitmapDrawText, safePrepareText, describeEntryEligibility, isDrawCaptureTraceEnabled, recordDrawTrace, bitmapTraceDetails, cloneTraceRect, roundTraceNumber, readBitmapOwner, resolveBitmapWindowSurface, hasDedicatedOwnerHook, windowEntryBelongsToBitmap, deriveWindowEntryRect, deriveEntryRect, fragmentRect, rectFromDimensions, isValidRect, rectHasArea, rectOrNull, rectanglesOverlap, normalizeCanvasTextAlign, describeOwnerType, shouldKeepWindowEntryTranslation, getWindowOwnerScreenState, retireWindowEntry, logTextDetected, updateItem, safeCall, isAdapterContractFailure, warn, stringify, finiteNumber, positiveNumber, pruneArray, errorMessage };
     }
 
     defineRuntimeModule('adapters.bitmapTextTextUtils', { create: createController });

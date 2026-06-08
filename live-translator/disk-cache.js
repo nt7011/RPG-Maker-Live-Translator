@@ -279,10 +279,16 @@
             }).filter(Boolean);
         };
 
+        const flush = async () => {
+            if (!enabled) return;
+            await chain;
+        };
+
         return {
             enabled,
             appendRecord,
             loadAll,
+            flush,
             ensureLaunchPrune: prepareOnLaunch,
             getMaxMegabytes: () => maxMegabytes,
         };

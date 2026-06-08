@@ -8,27 +8,14 @@
         : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
 
     const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    if (typeof defineRuntimeModule !== 'function') {
+    const requireRuntimeModule = globalScope.LiveTranslatorRequire;
+    if (typeof defineRuntimeModule !== 'function' || typeof requireRuntimeModule !== 'function') {
         throw new Error('[LiveTranslator] runtime module registry is unavailable before runtime/text-orchestrator/constants.js.');
     }
 
-    const ACTIVE_STATUSES = {
-        detected: true,
-        pending: true,
-        translating: true,
-        completed: true,
-        skipped: true,
-        failed: true,
-    };
-    const STATUS_ALIASES = {
-        requested: 'pending',
-        request: 'pending',
-        failed: 'failed',
-        error: 'failed',
-        canceled: 'stale',
-        cancelled: 'stale',
-        gone: 'disappeared',
-    };
+    const textLifecycle = requireRuntimeModule('runtime.textLifecycle');
+    const ACTIVE_STATUSES = textLifecycle.ACTIVE_STATUSES;
+    const STATUS_ALIASES = textLifecycle.STATUS_ALIASES;
     const DEFAULT_EVENT_LIMIT = 500;
     const DEFAULT_ITEM_EVENT_LIMIT = 80;
     const DEFAULT_ARCHIVED_LIMIT = 300;

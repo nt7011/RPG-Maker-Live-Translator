@@ -11,12 +11,20 @@
     }
 
     function createSubscriptionControllerController(context = {}) {
-    const callContext = (name) => (...args) => context[name](...args);
-    const { logger, telemetry, adapterContract, windowRegistry, registeredWindows, windowLifecycle, ensureWindowRegistered, pruneDetachedRegisteredWindows, generateKey, captureBitmapDrawState, applyBitmapDrawState, createWindowTextScaleScope, preview, diag, dbg, drawCaptureTrace, bitmapReplay, settings, stripControls, encodeText, restoreText, entriesByRecordId, redrawSettings, textScaleOthers, ADAPTER_ID, ADAPTER_LABEL, RENDER_STRATEGY, WINDOW_PRIORITY_VISIBLE, WINDOW_WRAPPER_TOKEN, REDRAW_DIAGNOSTIC_ITEM_LIMIT, MAX_BACKGROUND_SNAPSHOT_PIXELS } = context;
-    const { install, installWindowBaseWrappers, hasHookInChain, handleDrawText, handleDrawTextEx, createObservedEntry, recordSkippedEntry, createEntry, refreshEntry, requestEntryTranslation, observeEntry, syncEntryFromObservedItem, getEntryStatus, isEntryActive, isEntryRequestActive, isEntryCompleted, firstNonEmptyString, recordDrawTrace, windowTraceDetails, getRegisteredWindowData, markEntryObservedInRefresh, safeStripRpgmEscapes, describeWindowScreenState, buildOrchestratorPayload, applyRenderCommand, markRequestSkipped, markRequestFailed, updateOrchestratorItem, beginPendingRenderCommand, markPendingRenderDeferred, completePendingRenderCommand, rejectPendingRender, clearPendingRenderCommand, getPendingRenderDetails, redrawTranslatedText, drawTranslatedEntry, calculateRedrawBounds, drawTranslatedWindowText, invokeCompletedEntry, invokeOriginalDrawText, invokeOriginalDrawTextEx, withTranslatedWindowTextScale, withWindowTranslatedDrawScope, isWindowTranslatedDrawActive, withWindowDrawTextExReplayScope, findExistingEntry, retireEntriesInSameSlot, markEntryStale, rememberDetachedEntry, takeDetachedEntry, peekDetachedEntry, cancelEntryTranslation, markRecordDisappeared, recordDecision, queuePendingRedraw, clearPendingInvalidation, getCurrentEntry, getTextEntryKey, dropPendingRedraw, resolveWindowData, resolveTargetWindow, isWindowReadyForRedraw, refreshEntryBounds, estimateEntryBounds, measurePlainTextWidth, estimateDrawTextExFallbackWidth, estimateDrawTextExFallbackHeight, estimateMaxDrawTextExFallbackHeight, getDrawTextExLineCount, getLineHeight, getWindowIconWidth, countDrawTextExIcons, prepareTranslationSource, restoreTranslatedWindowText, sanitizeDrawTextOutput, convertWindowText, describeWindowTextEligibility, describeEntryEligibility, isDedicatedMessageWindow, rememberMessageStart, getSurfaceId, createSlotKey, createWindowTextRecordId, safeRecordIdPart, hashTextForRecordId, normalizeSlotNumber, getWindowTypeName, getWindowCtorName, normalizeDrawTextAlignValue, mergeBounds, isValidRect, roundDiagnosticNumber, cloneDiagnosticRect, cloneDiagnosticArea, withWindowRedrawClear, withWindowContents, isUsableBitmap, getRedrawContents, wasDrawnToDetachedContents, isTransientRefreshWindow, isCoreRefreshWindowType, getBitmapReplayApi, assignWindowTextDrawOrder, createClearRectFromArea, getReplayItemRect, mergeReplayRect, expandReplayDirtyRect, replayRectsOverlap, collectWindowTextReplayItems, windowEntryBelongsToContents, combineReplayItems, filterReplayForEntry, replayMixedItems, replayWindowTextEntry, getWindowReplayText, getBitmapCanvasContext, supportsBitmapReplayClip, withBitmapReplayClip, getReplayClipArea, getBitmapSnapshotContext, captureWindowEntryBackground, ensureWindowEntryBackground, getWindowEntryBackgroundSnapshotStatus, restoreWindowEntryBackground, getEntryContentsRevision, getSnapshotContentsRevision, getWindowDataContentsRevision, getEntrySnapshotPadding, getSnapshotArea, getSnapshotDiagnostics, summarizeReplayItemsForDiagnostics, summarizeReplayStateForDiagnostics } = Object.fromEntries(['install', 'installWindowBaseWrappers', 'hasHookInChain', 'handleDrawText', 'handleDrawTextEx', 'createObservedEntry', 'recordSkippedEntry', 'createEntry', 'refreshEntry', 'requestEntryTranslation', 'observeEntry', 'syncEntryFromObservedItem', 'getEntryStatus', 'isEntryActive', 'isEntryRequestActive', 'isEntryCompleted', 'firstNonEmptyString', 'recordDrawTrace', 'windowTraceDetails', 'getRegisteredWindowData', 'markEntryObservedInRefresh', 'safeStripRpgmEscapes', 'describeWindowScreenState', 'buildOrchestratorPayload', 'applyRenderCommand', 'markRequestSkipped', 'markRequestFailed', 'updateOrchestratorItem', 'beginPendingRenderCommand', 'markPendingRenderDeferred', 'completePendingRenderCommand', 'rejectPendingRender', 'clearPendingRenderCommand', 'getPendingRenderDetails', 'redrawTranslatedText', 'drawTranslatedEntry', 'calculateRedrawBounds', 'drawTranslatedWindowText', 'invokeCompletedEntry', 'invokeOriginalDrawText', 'invokeOriginalDrawTextEx', 'withTranslatedWindowTextScale', 'withWindowTranslatedDrawScope', 'isWindowTranslatedDrawActive', 'withWindowDrawTextExReplayScope', 'findExistingEntry', 'retireEntriesInSameSlot', 'markEntryStale', 'rememberDetachedEntry', 'takeDetachedEntry', 'peekDetachedEntry', 'cancelEntryTranslation', 'markRecordDisappeared', 'recordDecision', 'queuePendingRedraw', 'clearPendingInvalidation', 'getCurrentEntry', 'getTextEntryKey', 'dropPendingRedraw', 'resolveWindowData', 'resolveTargetWindow', 'isWindowReadyForRedraw', 'refreshEntryBounds', 'estimateEntryBounds', 'measurePlainTextWidth', 'estimateDrawTextExFallbackWidth', 'estimateDrawTextExFallbackHeight', 'estimateMaxDrawTextExFallbackHeight', 'getDrawTextExLineCount', 'getLineHeight', 'getWindowIconWidth', 'countDrawTextExIcons', 'prepareTranslationSource', 'restoreTranslatedWindowText', 'sanitizeDrawTextOutput', 'convertWindowText', 'describeWindowTextEligibility', 'describeEntryEligibility', 'isDedicatedMessageWindow', 'rememberMessageStart', 'getSurfaceId', 'createSlotKey', 'createWindowTextRecordId', 'safeRecordIdPart', 'hashTextForRecordId', 'normalizeSlotNumber', 'getWindowTypeName', 'getWindowCtorName', 'normalizeDrawTextAlignValue', 'mergeBounds', 'isValidRect', 'roundDiagnosticNumber', 'cloneDiagnosticRect', 'cloneDiagnosticArea', 'withWindowRedrawClear', 'withWindowContents', 'isUsableBitmap', 'getRedrawContents', 'wasDrawnToDetachedContents', 'isTransientRefreshWindow', 'isCoreRefreshWindowType', 'getBitmapReplayApi', 'assignWindowTextDrawOrder', 'createClearRectFromArea', 'getReplayItemRect', 'mergeReplayRect', 'expandReplayDirtyRect', 'replayRectsOverlap', 'collectWindowTextReplayItems', 'windowEntryBelongsToContents', 'combineReplayItems', 'filterReplayForEntry', 'replayMixedItems', 'replayWindowTextEntry', 'getWindowReplayText', 'getBitmapCanvasContext', 'supportsBitmapReplayClip', 'withBitmapReplayClip', 'getReplayClipArea', 'getBitmapSnapshotContext', 'captureWindowEntryBackground', 'ensureWindowEntryBackground', 'getWindowEntryBackgroundSnapshotStatus', 'restoreWindowEntryBackground', 'getEntryContentsRevision', 'getSnapshotContentsRevision', 'getWindowDataContentsRevision', 'getEntrySnapshotPadding', 'getSnapshotArea', 'getSnapshotDiagnostics', 'summarizeReplayItemsForDiagnostics', 'summarizeReplayStateForDiagnostics'].map((name) => [name, callContext(name)]));
-    
+    const { entriesByRecordId, RENDER_STRATEGY, entryLifecycleState } = context;
+    const { lifecycle: lifecycleService, surface: surfaceService } = context.services;
+    const { bitmapReplay, entryLifecycle, entryRecords, renderCommands, renderDraw, renderQueue, textConversion, textMetrics } = context.facades;
+    const { observeEntry, firstNonEmptyString } = entryRecords;
+    const { applyRenderCommand, markRequestSkipped, markRequestFailed, updateOrchestratorItem, beginPendingRenderCommand, markPendingRenderDeferred } = renderCommands;
+    const { drawTranslatedEntry } = renderDraw;
+    const { rememberDetachedEntry, takeDetachedEntry, markRecordDisappeared, clearPendingInvalidation, getCurrentEntry, getTextEntryKey, resolveWindowData, isWindowReadyForRedraw } = entryLifecycle;
+    const { queueRenderRetry } = renderQueue;
+    const { restoreTranslatedWindowText, sanitizeDrawTextOutput } = textConversion;
+    const { getSurfaceId, createSlotKey, getWindowTypeName } = textMetrics;
+    const { getRedrawContents } = bitmapReplay;
+
     function installOrchestratorSubscription() {
-                adapterContract.subscribeRecords({
+                lifecycleService.subscribeRecords({
                     token: RENDER_STRATEGY,
                     records: entriesByRecordId,
                     renderStrategy: RENDER_STRATEGY,
@@ -109,7 +117,7 @@
                         windowType: getWindowTypeName(windowInstance, windowData),
                         method: entry.type || '',
                     });
-                    queuePendingRedraw(windowInstance, windowData, entry, entry.key || getTextEntryKey(windowData, entry));
+                    queueRenderRetry(windowInstance, windowData, entry, entry.key || getTextEntryKey(windowData, entry));
                     return true;
                 }
                 if (!drawTranslatedEntry(windowInstance, windowData, contents, entry)) {
@@ -139,13 +147,11 @@
 
     function isObsoleteDetachedEntry(entry) {
                 const reason = firstNonEmptyString(
-                    entry && entry._trDetachedReason,
-                    entry && entry.canceledReason,
-                    entry && entry._trPendingInvalidation && entry._trPendingInvalidation.sourceReason
+                    entryLifecycleState.getDetachedReason(entry),
+                    entryLifecycleState.getCanceledReason(entry),
+                    entryLifecycleState.getPendingInvalidation(entry) && entryLifecycleState.getPendingInvalidation(entry).sourceReason
                 );
-                const detachedDetails = entry && entry._trDetachedDetails && typeof entry._trDetachedDetails === 'object'
-                    ? entry._trDetachedDetails
-                    : null;
+                const detachedDetails = entryLifecycleState.getDetachedDetails(entry);
                 if (detachedDetails && detachedDetails.allowDetachedReattach === true && isContentsInvalidationReason(reason)) {
                     return false;
                 }
@@ -169,13 +175,7 @@
                 if (!rendered || rendered.trim() === String(entry.convertedText || '').trim()) return false;
                 const key = getTextEntryKey(windowData, entry);
                 if (!key || !windowData.texts) return false;
-                delete entry._trStale;
-                delete entry._trPendingInvalidation;
-                delete entry.canceledReason;
-                delete entry.canceledAt;
-                delete entry._trDetachedAt;
-                delete entry._trDetachedReason;
-                delete entry._trDetachedDetails;
+                entryLifecycleState.markReattached(entry);
                 entry.key = key;
                 entry.ownerWindow = windowInstance;
                 entry.windowData = windowData;
@@ -211,16 +211,18 @@
                 const slotKey = entry.slotKey || createSlotKey(
                     entry.type,
                     entry.position && entry.position.x,
-                    entry.position && entry.position.y
+                    entry.position && entry.position.y,
+                    entry.originalParams
                 );
                 let conflict = null;
                 try {
                     windowData.texts.forEach((candidate) => {
-                        if (conflict || !candidate || candidate === entry || candidate._trStale) return;
+                        if (conflict || !candidate || candidate === entry || entryLifecycleState.isStale(candidate)) return;
                         const candidateSlot = candidate.slotKey || createSlotKey(
                             candidate.type,
                             candidate.position && candidate.position.x,
-                            candidate.position && candidate.position.y
+                            candidate.position && candidate.position.y,
+                            candidate.originalParams
                         );
                         if (candidateSlot === slotKey) conflict = candidate;
                     });
@@ -229,7 +231,6 @@
             }
 
     function findDetachedTranslationWindow(event, details, entry = null) {
-                if (!registeredWindows || typeof registeredWindows.forEach !== 'function') return null;
                 const metadata = details && details.metadata && typeof details.metadata === 'object'
                     ? details.metadata
                     : {};
@@ -250,7 +251,7 @@
                 if (!identitySurfaceId && !surfaceId) return null;
                 let match = null;
                 try {
-                    registeredWindows.forEach((candidate) => {
+                    surfaceService.forEachRegisteredWindow((candidate) => {
                         if (match || !candidate) return;
                         match = matchDetachedWindowCandidate(candidate, identitySurfaceId, surfaceId);
                     });
@@ -260,9 +261,7 @@
 
     function matchDetachedWindowCandidate(candidate, identitySurfaceId, surfaceId) {
                 if (!candidate) return null;
-                const data = windowRegistry && typeof windowRegistry.get === 'function'
-                    ? windowRegistry.get(candidate)
-                    : null;
+                const data = surfaceService.getWindowData(candidate);
                 if (!data || data._trUnregistered || candidate._destroyed || candidate.destroyed) return null;
                 const candidateSurfaceId = getSurfaceId(data);
                 const candidateIdentitySurfaceId = firstNonEmptyString(data.identitySurfaceId, candidateSurfaceId);
@@ -280,7 +279,7 @@
             }
     
     function isRenderTargetCurrent(entry) {
-                if (!entry || entry._trStale) return false;
+                if (!entry || entryLifecycleState.isStale(entry)) return false;
                 const windowData = resolveWindowData(entry);
                 return !!(windowData && getCurrentEntry(windowData, entry) === entry);
             }

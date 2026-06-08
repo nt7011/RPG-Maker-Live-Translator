@@ -146,6 +146,7 @@
                     'setItemVisibility',
                     'retireItem',
                     'updateItem',
+                    'describeTextEligibility',
                     'subscribeRecords',
                 ]));
         }

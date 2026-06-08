@@ -7,20 +7,45 @@
         ? window
         : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
     const defineRuntimeModule = globalScope.LiveTranslatorDefine;
+    const requireRuntimeModule = globalScope.LiveTranslatorRequire;
     if (typeof defineRuntimeModule !== 'function') {
         throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/game-message/foresightHooks.js.');
+    }
+    if (typeof requireRuntimeModule !== 'function') {
+        throw new Error('[LiveTranslator] runtime module require is unavailable before adapters/game-message/foresightHooks.js.');
     }
 
     function createController(scope = {}) {
         const { FORESIGHT_BUDGET, FORESIGHT_MAX_SCAN_COMMANDS, EVENT_COMMAND_CONTINUATION_CODES, globalScope, interpreterExecutionStack } = scope;
-        const callScope = (name) => (...args) => scope[name](...args);
-        const { getGameMessageForWindow, getGlobalGameMessage, integerIndex, cancelForesightTranslations, hasHookInChain, warn, attachGameMessageAddOrigin, attachChildInterpreterOriginContext, peekInterpreterExecutionContext, createInterpreterExecutionContext, createForesightFrameFromContext, createChildInterpreterDescriptor, getEventCommandNextIndex, cloneForesightFrames, cloneForesightFrame, readCommonEventIdFromCommand, getCommonEventData, getInterpreterForesightId, getInterpreterForesightListId, getInterpreterCommonEventId, getInterpreterCommonEventName, parseMessageOriginBlock, clearMessageOrigin, readMessageOriginText, getInterpreterOriginId } = Object.fromEntries(['getGameMessageForWindow', 'getGlobalGameMessage', 'integerIndex', 'cancelForesightTranslations', 'hasHookInChain', 'warn', 'attachGameMessageAddOrigin', 'attachChildInterpreterOriginContext', 'peekInterpreterExecutionContext', 'createInterpreterExecutionContext', 'createForesightFrameFromContext', 'createChildInterpreterDescriptor', 'getEventCommandNextIndex', 'cloneForesightFrames', 'cloneForesightFrame', 'readCommonEventIdFromCommand', 'getCommonEventData', 'getInterpreterForesightId', 'getInterpreterForesightListId', 'getInterpreterCommonEventId', 'getInterpreterCommonEventName', 'parseMessageOriginBlock', 'clearMessageOrigin', 'readMessageOriginText', 'getInterpreterOriginId'].map((name) => [name, callScope(name)]));
+        const { getGameMessageForWindow } = scope.controllerFacades.install;
+        const { hasHookInChain } = scope.controllerFacades.clear;
+        const {
+            attachGameMessageAddOrigin,
+            attachChildInterpreterOriginContext,
+            peekInterpreterExecutionContext,
+            createInterpreterExecutionContext,
+            createForesightFrameFromContext,
+            createChildInterpreterDescriptor,
+            getEventCommandNextIndex,
+            cloneForesightFrames,
+            cloneForesightFrame,
+            readCommonEventIdFromCommand,
+            getCommonEventData,
+            getInterpreterForesightId,
+            getInterpreterForesightListId,
+            getInterpreterCommonEventId,
+            getInterpreterCommonEventName,
+            parseMessageOriginBlock,
+            clearMessageOrigin,
+            readMessageOriginText,
+            getInterpreterOriginId,
+        } = scope.controllerFacades.foresightContext;
+        const { getGlobalGameMessage, integerIndex, cancelForesightTranslations } = scope.controllerFacades.foresightRecords;
+        const { warn } = scope.controllerFacades.render;
 
         function createForesightScanner() {
             try {
-                const modules = globalScope.LiveTranslatorModules || null;
-                const module = (modules && modules.adapters && modules.adapters.foresight)
-                    || (modules && modules['adapters.foresight']);
+                const module = requireRuntimeModule('adapters.foresight');
                 if (module && typeof module.createGameMessageForesight === 'function') {
                     return module.createGameMessageForesight({
                         budget: FORESIGHT_BUDGET,

@@ -37,15 +37,6 @@
     }
 
     function getActiveProvider(scope = getScope()) {
-        try {
-            if (scope && scope.FORCE_LOCAL_ASYNC === true) return 'local';
-        } catch (_) {}
-        try {
-            if (typeof process !== 'undefined' && process.env && process.env.LIVE_TRANSLATOR_LOCAL === '1') {
-                return 'local';
-            }
-        } catch (_) {}
-
         const cfg = getTranslatorConfig(scope);
         if (cfg && typeof cfg.provider === 'string') {
             const provider = cfg.provider.trim().toLowerCase();
@@ -136,6 +127,7 @@
         validateDiagnosticsModeSetting(diagnostics.mode, 'diagnostics.mode', logger);
         validateDiagnosticsModeSetting(diagnostics.level, 'diagnostics.level', logger);
         validateBooleanSetting(diagnostics.performanceMode, 'diagnostics.performanceMode', logger);
+        validateBooleanSetting(diagnostics.captureWhenGuiClosed, 'diagnostics.captureWhenGuiClosed', logger);
 
         const limits = diagnostics.performanceLimits || diagnostics.limits;
         if (!limits || typeof limits !== 'object') return;
@@ -147,6 +139,7 @@
     function validateTextScaleSettings(settings, logger) {
         if (!settings || typeof settings !== 'object') return;
         validateBooleanSetting(settings.checkUpdates, 'checkUpdates', logger);
+        validateBooleanSetting(settings.disableLiveTranslatorGui, 'disableLiveTranslatorGui', logger);
         validateBooleanSetting(settings.enableForesight, 'enableForesight', logger);
         validateBooleanSetting(settings.showForesightSpoilers, 'showForesightSpoilers', logger);
         validateTextScaleSetting(settings.textScaleOthers, 'textScaleOthers', logger);
@@ -162,6 +155,7 @@
         validateTextScaleSetting(gameMessage.textScale, 'gameMessage.textScale', logger);
         validateTextScaleSetting(gameMessage.textScaleOthers, 'gameMessage.textScaleOthers', logger);
         validateBooleanSetting(gameMessage.originAwareLineBreaks, 'gameMessage.originAwareLineBreaks', logger);
+        validateBooleanSetting(gameMessage.disableStreaming, 'gameMessage.disableStreaming', logger);
     }
 
     function validateTranslationSettings(settings, logger) {
@@ -188,7 +182,7 @@
 
         const provider = (cfg.provider || '').toString().trim().toLowerCase();
         if (!provider) {
-            throw new Error('[LiveTranslator][Config] translator.json missing required "provider" string (deepl/local/none).');
+            throw new Error('[LiveTranslator][Config] translator.json missing required "provider" string (deepl/local/mockTranslator/none).');
         }
         if (!cfg.settings || typeof cfg.settings !== 'object') {
             throw new Error('[LiveTranslator][Config] translator.json missing required "settings" object.');
@@ -197,13 +191,15 @@
         if (provider === 'deepl') {
             validateDeepLConfig(cfg.settings.deepl, true, logger);
         } else if (provider === 'local') {
-            validateDeepLConfig(cfg.settings.deepl, false, logger);
             const local = cfg.settings.local;
             if (!local || typeof local !== 'object') {
                 throw new Error('[LiveTranslator][Config] translator.json missing "settings.local" object for local provider.');
             } else if (!local.model || typeof local.model !== 'string' || !local.model.trim()) {
                 logger.warn('[LiveTranslator][Config] translator.json missing "settings.local.model"; local LLM requests will fail.');
             }
+        } else if (provider === 'mocktranslator') {
+            // Snapshot runs use this in-process provider. It has no external
+            // credentials or service endpoint to validate.
         } else if (provider === 'none') {
             // Cache-only mode intentionally skips external provider validation.
         } else {

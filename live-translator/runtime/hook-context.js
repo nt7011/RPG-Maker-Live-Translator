@@ -18,6 +18,10 @@
     if (typeof defineRuntimeModule !== 'function' || typeof requireRuntimeModule !== 'function') {
         throw new Error('[LiveTranslator] runtime module registry is unavailable before runtime/hook-context.js.');
     }
+    const entryLifecycle = requireRuntimeModule('runtime.entryLifecycle');
+    if (!entryLifecycle || typeof entryLifecycle.setSurfaceVisible !== 'function') {
+        throw new Error('[LiveTranslator] runtime.entryLifecycle is unavailable before runtime/hook-context.js.');
+    }
 
     function resolveWindowHelpers() {
         return requireRuntimeModule('hooks.windowHelpers');
@@ -27,6 +31,10 @@
         return requireRuntimeModule('runtime.textCodec');
     }
 
+    function resolveSurfaceOwnership() {
+        return requireRuntimeModule('runtime.surfaceOwnership');
+    }
+
     function createWindowLifecycleBoundary(options = {}) {
         const source = options && typeof options === 'object' ? options : {};
         const adapterContract = source.adapterContract || null;
@@ -34,6 +42,7 @@
         // One token identifies one logical Window_Base.refresh pass across
         // window draw hooks and contents-bitmap mutation hooks.
         let nextWindowRefreshToken = 0;
+        let nextRenderDrainToken = 0;
 
         function getWindowData(windowInstance, windowData = null) {
             if (windowData) return windowData;
@@ -76,31 +85,151 @@
             }
         }
 
-        function getActiveRefreshToken(windowInstance, windowData = null) {
+        function getRefreshState(windowInstance, windowData = null) {
             const data = getWindowData(windowInstance, windowData);
-            const dataToken = Number(data && data._trActiveRefreshToken);
-            if (Number.isFinite(dataToken) && dataToken > 0) return dataToken;
-            const windowToken = Number(windowInstance && windowInstance._trWindowRefreshToken);
-            if (Number.isFinite(windowToken) && windowToken > 0) {
-                if (data) data._trActiveRefreshToken = windowToken;
-                return windowToken;
+            const dataDepth = positiveInteger(data && data._trWindowRefreshDepth);
+            const windowDepth = positiveInteger(windowInstance && windowInstance._trWindowRefreshDepth);
+            const contentsDepth = positiveInteger(windowInstance && windowInstance.contents && windowInstance.contents._trWindowRefreshDepth);
+            const active = dataDepth > 0 || windowDepth > 0 || contentsDepth > 0;
+            const dataToken = positiveInteger(data && data._trActiveRefreshToken);
+            const windowToken = positiveInteger(windowInstance && windowInstance._trWindowRefreshToken);
+            const token = active ? (dataToken || windowToken) : 0;
+            return {
+                active,
+                token,
+                depth: Math.max(dataDepth, windowDepth, contentsDepth),
+                dataDepth,
+                windowDepth,
+                contentsDepth,
+            };
+        }
+
+        function getActiveRefreshToken(windowInstance, windowData = null) {
+            return getRefreshState(windowInstance, windowData).token;
+        }
+
+        function beginRenderDrain(windowInstance, windowData = null, reason = 'window-render-drain') {
+            if (!windowInstance) return null;
+            const data = getWindowData(windowInstance, windowData);
+            if (!data) return null;
+            const token = {
+                id: ++nextRenderDrainToken,
+                reason: String(reason || 'window-render-drain'),
+            };
+            const stack = Array.isArray(data._trRenderDrainStack)
+                ? data._trRenderDrainStack
+                : [];
+            stack.push(token);
+            data._trRenderDrainStack = stack;
+            data._trRenderDrainDepth = stack.length;
+            data._trRenderDrainReason = token.reason;
+            windowInstance._trRenderDrainDepth = (Number(windowInstance._trRenderDrainDepth) || 0) + 1;
+            windowInstance._trRenderDrainReason = token.reason;
+            return token;
+        }
+
+        function finishRenderDrain(windowInstance, token = null, windowData = null) {
+            if (!windowInstance) return;
+            const data = getWindowData(windowInstance, windowData);
+            if (data) {
+                const stack = Array.isArray(data._trRenderDrainStack)
+                    ? data._trRenderDrainStack
+                    : [];
+                if (stack.length > 0) {
+                    if (token && stack[stack.length - 1] !== token) {
+                        const index = stack.indexOf(token);
+                        if (index >= 0) stack.splice(index, 1);
+                    } else {
+                        stack.pop();
+                    }
+                }
+                data._trRenderDrainDepth = stack.length;
+                const current = stack.length > 0 ? stack[stack.length - 1] : null;
+                data._trRenderDrainReason = current ? current.reason : '';
+                if (!stack.length) delete data._trRenderDrainStack;
             }
-            return 0;
+            windowInstance._trRenderDrainDepth = Math.max(0, (Number(windowInstance._trRenderDrainDepth) || 1) - 1);
+            if (windowInstance._trRenderDrainDepth > 0) {
+                const state = getRenderDrainState(windowInstance, data);
+                windowInstance._trRenderDrainReason = state.reason || '';
+            } else {
+                delete windowInstance._trRenderDrainReason;
+            }
+        }
+
+        function withRenderDrain(windowInstance, windowData = null, reason = 'window-render-drain', callback = null) {
+            if (typeof callback !== 'function') return undefined;
+            const token = beginRenderDrain(windowInstance, windowData, reason);
+            if (!token) return callback();
+            try {
+                return callback();
+            } finally {
+                finishRenderDrain(windowInstance, token, windowData);
+            }
+        }
+
+        function getRenderDrainState(windowInstance, windowData = null) {
+            const data = getWindowData(windowInstance, windowData);
+            const dataDepth = positiveInteger(data && data._trRenderDrainDepth);
+            const windowDepth = positiveInteger(windowInstance && windowInstance._trRenderDrainDepth);
+            const active = dataDepth > 0 || windowDepth > 0;
+            const stack = data && Array.isArray(data._trRenderDrainStack)
+                ? data._trRenderDrainStack
+                : [];
+            const current = stack.length > 0 ? stack[stack.length - 1] : null;
+            return {
+                active,
+                depth: Math.max(dataDepth, windowDepth),
+                dataDepth,
+                windowDepth,
+                reason: current && current.reason
+                    ? current.reason
+                    : String((data && data._trRenderDrainReason) || (windowInstance && windowInstance._trRenderDrainReason) || ''),
+            };
+        }
+
+        function isRenderDrainActive(windowInstance, windowData = null) {
+            return getRenderDrainState(windowInstance, windowData).active === true;
         }
 
         function markEntryObservedInRefresh(entry, windowInstance, windowData = null) {
             if (!entry) return 0;
-            const token = getActiveRefreshToken(windowInstance, windowData);
-            entry._trLastObservedRefreshToken = token;
-            return token;
+            const state = getRefreshState(windowInstance, windowData);
+            const lifecycle = ensureEntryRenderLifecycle(entry);
+            lifecycle.refreshObservation = {
+                token: state.token,
+                active: state.active,
+                depth: state.depth,
+                observedAt: Date.now(),
+            };
+            return state.token;
         }
 
         function wasEntryObservedInRefresh(entry, windowInstance, windowData = null) {
             if (!entry) return false;
-            const activeToken = getActiveRefreshToken(windowInstance, windowData);
-            if (!activeToken) return false;
-            const entryToken = Number(entry._trLastObservedRefreshToken);
-            return Number.isFinite(entryToken) && entryToken === Number(activeToken);
+            const state = getRefreshState(windowInstance, windowData);
+            if (!state.active || !state.token) return false;
+            const observation = getEntryRefreshObservation(entry);
+            const entryToken = positiveInteger(observation && observation.token);
+            return entryToken > 0 && entryToken === state.token;
+        }
+
+        function getEntryRefreshObservation(entry) {
+            return entry && entry.renderLifecycle && entry.renderLifecycle.refreshObservation
+                ? entry.renderLifecycle.refreshObservation
+                : null;
+        }
+
+        function ensureEntryRenderLifecycle(entry) {
+            if (!entry.renderLifecycle || typeof entry.renderLifecycle !== 'object') {
+                entry.renderLifecycle = {};
+            }
+            return entry.renderLifecycle;
+        }
+
+        function positiveInteger(value) {
+            const number = Number(value);
+            return Number.isFinite(number) && number > 0 ? Math.floor(number) : 0;
         }
 
         function retireEntry(entry, reason, details = null, options = {}) {
@@ -133,7 +262,7 @@
                     adapterContract.setItemVisibility(entry, isVisible, details || {});
                 }
             } catch (_) {}
-            entry._trSurfaceVisible = isVisible;
+            entryLifecycle.setSurfaceVisible(entry, isVisible, details || {});
             return true;
         }
 
@@ -175,7 +304,13 @@
             isEntryTranslationPending,
             beginRefresh,
             finishRefresh,
+            getRefreshState,
             getActiveRefreshToken,
+            beginRenderDrain,
+            finishRenderDrain,
+            withRenderDrain,
+            getRenderDrainState,
+            isRenderDrainActive,
             markEntryObservedInRefresh,
             wasEntryObservedInRefresh,
         };
@@ -189,9 +324,27 @@
             } = options || {};
             const windowHelpers = resolveWindowHelpers();
             const textCodec = resolveTextCodec();
+            const surfaceOwnershipFactory = resolveSurfaceOwnership();
             const windowRegistry = new WeakMap();
             const registeredWindows = new Set();
             const contentsOwners = new WeakMap();
+            const surfaceOwnership = surfaceOwnershipFactory.createSurfaceOwnershipService({
+                contentsOwners,
+                windowRegistry,
+                registeredWindows,
+            });
+            const windowLifecyclePrototypeHooks = {
+                install: null,
+            };
+            let windowTextHelpersProvider = null;
+            const getWindowTextHelpers = () => {
+                if (typeof windowTextHelpersProvider !== 'function') return null;
+                try {
+                    return windowTextHelpersProvider() || null;
+                } catch (_) {
+                    return null;
+                }
+            };
             const windowLifecycle = createWindowLifecycleBoundary({
                 adapterContract: windowAdapterContract,
                 windowRegistry,
@@ -206,9 +359,24 @@
                 windowRegistry,
                 registeredWindows,
                 contentsOwners,
+                surfaceOwnership,
                 windowLifecycle,
                 adapterContract: windowAdapterContract,
+                windowLifecyclePrototypeHooks,
+                getWindowTextHelpers,
             });
+
+            function registerWindowLifecyclePrototypeInstaller(installer) {
+                windowLifecyclePrototypeHooks.install = typeof installer === 'function'
+                    ? installer
+                    : null;
+            }
+
+            function setWindowTextHelpersProvider(provider) {
+                windowTextHelpersProvider = typeof provider === 'function'
+                    ? provider
+                    : null;
+            }
 
             return {
                 windowHelpers,
@@ -221,13 +389,16 @@
                 createWindowTextScaleScope: windowHelpers.createWindowTextScaleScope,
                 generateKey: windowHelpers.generateKey,
                 stripControls: textCodec.stripControls,
-                encodeText: textCodec.encodeText,
+                createTextSource: textCodec.createTextSource,
                 restoreText: textCodec.restoreText,
                 windowRegistry,
                 registeredWindows,
                 contentsOwners,
+                surfaceOwnership,
                 windowAdapterContract,
                 windowLifecycle,
+                setWindowTextHelpersProvider,
+                registerWindowLifecyclePrototypeInstaller,
                 addWindowToRegistry,
                 ensureWindowRegistered,
                 unregisterWindow,

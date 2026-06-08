@@ -12,9 +12,12 @@
     }
 
     function createController(scope = {}) {
-        const { BREAK_SENTINEL_PREFIX, BREAK_SENTINEL_SUFFIX, RAW_BREAK_PATTERN, SOFT_BREAK_PATTERN, NO_SPACE_LINE_JOIN_PATTERN, SENTINEL_BOUNDARY_PATTERN, preview, stripControls, encodeText, restoreText, logEscape } = scope;
-        const callScope = (name) => (...args) => scope[name](...args);
-        const { getGameMessageForWindow, getVerifiedMessageOrigin, readMessageOriginText, warn } = Object.fromEntries(['getGameMessageForWindow', 'getVerifiedMessageOrigin', 'readMessageOriginText', 'warn'].map((name) => [name, callScope(name)]));
+        const { BREAK_SENTINEL_PREFIX, BREAK_SENTINEL_SUFFIX, RAW_BREAK_PATTERN, SOFT_BREAK_PATTERN, NO_SPACE_LINE_JOIN_PATTERN, SENTINEL_BOUNDARY_PATTERN, preview, textCodec, stripControls, createTextSource, restoreText, logEscape } = scope;
+        const { getGameMessageForWindow } = scope.controllerFacades.install;
+        const { evaluateGameMessageText } = scope.controllerFacades.evaluation;
+        const { getVerifiedMessageOrigin } = scope.controllerFacades.foresightHooks;
+        const { readMessageOriginText } = scope.controllerFacades.foresightContext;
+        const { warn } = scope.controllerFacades.render;
 
         /**
          * Read the message adapter text scale setting.
@@ -31,6 +34,15 @@
         function resolveGameMessageOriginAwareLineBreaks(config) {
             const gameMessage = config && typeof config.gameMessage === 'object' ? config.gameMessage : null;
             const raw = gameMessage && gameMessage.originAwareLineBreaks;
+            return raw === true || (typeof raw === 'string' && raw.trim().toLowerCase() === 'true');
+        }
+
+        /**
+         * Read whether active messages should wait for final translations instead of previewing stream deltas.
+         */
+        function resolveGameMessageDisableStreaming(config) {
+            const gameMessage = config && typeof config.gameMessage === 'object' ? config.gameMessage : null;
+            const raw = gameMessage && gameMessage.disableStreaming;
             return raw === true || (typeof raw === 'string' && raw.trim().toLowerCase() === 'true');
         }
 
@@ -169,26 +181,27 @@
          */
         function createEscapeAwarePayload(rawText, contextName = 'message', options = {}) {
             const resolved = String(rawText || '');
-            const visible = stripControls(resolved).trim();
-            if (!visible) return null;
-
-            let codecState = null;
-            let translationSource = visible;
+            let source = null;
             try {
-                codecState = encodeText(resolved);
-                translationSource = codecState && codecState.translationText
-                    ? String(codecState.translationText || '')
-                    : visible;
+                source = createTextSource(resolved, { surfaceType: 'message' });
             } catch (error) {
-                warn(`[GameMessage ${contextName}] encodeText failed; using stripped text.`, error);
+                warn(`[GameMessage ${contextName}] createTextSource failed; using stripped text.`, error);
+                const visibleText = stripControls(resolved).trim();
+                source = textCodec.createPlainTextSource(resolved, {
+                    surfaceType: 'message',
+                    translationSource: visibleText,
+                    normalizedSource: visibleText,
+                });
             }
+            const visible = source.visibleText;
+            if (!visible) return null;
 
             return {
                 resolved,
                 visible,
-                codecState,
-                translationSource,
-                normalizedTranslationSource: String(translationSource || '').trim(),
+                codecState: source.codecState,
+                translationSource: source.translationSource,
+                normalizedTranslationSource: source.normalizedSource,
                 messageBreakInfo: options.messageBreakInfo || null,
                 messageOrigin: options.messageOrigin || null,
                 rawText: options.rawText !== undefined ? String(options.rawText || '') : resolved,
@@ -236,10 +249,9 @@
             const rawAll = readMessageOriginText(gameMessage);
 
             if (!scope.originAwareLineBreaks) {
+                const evaluated = evaluateGameMessageText(windowInstance, rawAll, { gameMessage });
                 return {
-                    text: typeof windowInstance.convertEscapeCharacters === 'function'
-                        ? windowInstance.convertEscapeCharacters(rawAll)
-                        : rawAll,
+                    text: evaluated && evaluated.ok ? evaluated.text : rawAll,
                     messageBreakInfo: null,
                     rawText: rawAll,
                     messageOrigin,
@@ -262,7 +274,8 @@
 
             const breakMap = createBreakMap(rawAll);
             try {
-                const markedConverted = windowInstance.convertEscapeCharacters(breakMap.markedText);
+                const evaluated = evaluateGameMessageText(windowInstance, breakMap.markedText, { gameMessage });
+                const markedConverted = evaluated && evaluated.ok ? evaluated.text : '';
                 const normalized = normalizeConvertedMessageText(markedConverted, breakMap);
                 if (normalized.reliable) {
                     return {
@@ -276,8 +289,9 @@
                 warn('[GameMessage] Origin-aware message conversion failed; using normal converted text.', error);
             }
 
+            const evaluated = evaluateGameMessageText(windowInstance, rawAll, { gameMessage });
             return {
-                text: windowInstance.convertEscapeCharacters(rawAll),
+                text: evaluated && evaluated.ok ? evaluated.text : rawAll,
                 messageBreakInfo: null,
                 rawText: rawAll,
                 messageOrigin,
@@ -287,6 +301,7 @@
         return {
             resolveGameMessageTextScale,
             resolveGameMessageOriginAwareLineBreaks,
+            resolveGameMessageDisableStreaming,
             resolveEnableForesight,
             createBreakToken,
             createBreakMap,

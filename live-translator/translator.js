@@ -26,6 +26,7 @@
     const utils = requireModule('runtime.translationProviderUtils');
     const localProvider = requireModule('runtime.translationLocalProvider');
     const deeplProvider = requireModule('runtime.translationDeeplProvider');
+    const mockTranslatorProvider = requireModule('runtime.translationMockTranslatorProvider');
     const localProtocol = requireModule('runtime.translationLocalProtocol');
     const {
         getGlobalTranslatorConfig,
@@ -36,7 +37,8 @@
     } = utils;
     const { createLocalProvider } = localProvider;
     const { createDeepLProvider, createNoneProvider } = deeplProvider;
-    const { getLoadedLlmInstances, selectLocalChatModel } = localProtocol;
+    const { createMockTranslatorProvider } = mockTranslatorProvider;
+    const { createLocalModelMetadata, getLoadedLlmInstances, readParallelCapacityDetail, selectLocalChatModel } = localProtocol;
 
     function requireModule(name) {
         if (typeof requireRuntimeModule === 'function') {
@@ -62,6 +64,9 @@
         if (providerName === 'deepl') {
             return createDeepLProvider(options);
         }
+        if (providerName === 'mocktranslator') {
+            return createMockTranslatorProvider(options);
+        }
         if (providerName === 'none') {
             return createNoneProvider(options);
         }
@@ -73,9 +78,12 @@
         createProvider,
         createLocalProvider,
         createDeepLProvider,
+        createMockTranslatorProvider,
         createNoneProvider,
         normalizeLocalConfig,
         normalizeDeepLConfig,
+        createLocalModelMetadata,
+        readParallelCapacityDetail,
         getLoadedLlmInstances,
         selectLocalChatModel,
         isAbortErrorLike,

@@ -17,9 +17,11 @@
         globalScope.LiveTranslatorModules.runtime = {};
     }
     const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    if (typeof defineRuntimeModule !== 'function') {
+    const requireRuntimeModule = globalScope.LiveTranslatorRequire;
+    if (typeof defineRuntimeModule !== 'function' || typeof requireRuntimeModule !== 'function') {
         throw new Error('[LiveTranslator] runtime module registry is unavailable before runtime/adapter-contract-utils.js.');
     }
+    const textLifecycle = requireRuntimeModule('runtime.textLifecycle');
 
     function isRecordObject(target) {
         return !!(target && typeof target === 'object');
@@ -61,12 +63,8 @@
     }
 
     function normalizeRecordStatus(value, fallback = '') {
-        const status = nonEmptyString(value, fallback).toLowerCase();
-        if (status === 'requested' || status === 'request') return 'pending';
-        if (status === 'error') return 'failed';
-        if (status === 'cancelled' || status === 'canceled') return 'stale';
-        if (status === 'gone') return 'disappeared';
-        return status || '';
+        if (!fallback && (value === undefined || value === null || value === '')) return '';
+        return textLifecycle.normalizeStatus(value, fallback || 'detected');
     }
 
     function normalizeRenderDecisionStatus(value) {

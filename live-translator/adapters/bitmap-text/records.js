@@ -7,14 +7,21 @@
         ? window
         : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
     const defineRuntimeModule = globalScope.LiveTranslatorDefine;
+    const requireRuntimeModule = globalScope.LiveTranslatorRequire;
     if (typeof defineRuntimeModule !== 'function') {
         throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/bitmap-text/records.js.');
     }
+    if (typeof requireRuntimeModule !== 'function') {
+        throw new Error('[LiveTranslator] runtime module require is unavailable before adapters/bitmap-text/records.js.');
+    }
+    const backdropProviderModule = requireRuntimeModule('runtime.backdropProvider');
 
     function createController(scope = {}) {
         const { ADAPTER_ID, ADAPTER_LABEL, SURFACE_TYPE, RENDER_STRATEGY, BITMAP_PRIORITY, DRAW_WRAPPER_TOKEN, MUTATION_WRAPPER_TOKEN, FRAME_FLUSH_TOKEN, SMALL_TEXT_TOKEN, NORMAL_CHAR_TOKEN, MAX_FRAGMENTS, MAX_REPLAY_OPS, GAP_MIN, GAP_RATIO } = scope;
-        const callScope = (name) => (...args) => scope[name](...args);
-        const { install, installOrchestratorSubscription, registerBitmapCapabilities, exposeAdapterApi, installBitmapDrawWrappers, installBitmapDrawWrapper, scheduleBitmapDrawWrapperRetry, handleBitmapDrawText, shouldBypassBitmapDraw, describeBitmapDrawBypassReason, recordBitmapSurfaceDraw, createFragment, scheduleFlush, scheduleFallbackFlush, flushQueuedBitmaps, flushAggregatedLines, takeFragmentsForFlush, finalizeFragmentOwnership, releaseFragmentOwnership, groupFragmentsIntoLines, canMergeFragments, createEntryFromGroup, registerBitmapEntry, refreshExistingEntry, installBitmapMutationHooks, installBitmapMutationHook, shouldBypassMutation, getMutationBypassReason, hasMutationObserverInterest, shouldHandleBitmapMutation, hasBitmapStateMutationInterest, hasWindowEntryMutationInterest, hasAnyWindowEntries, recordNativeMutationAttribution, classifyBitmapMutationSurface, bucketBitmapPixels, bucketBitmapDimensions, bucketDimension, sanitizePerfLabel, describeMutation, handleBitmapMutation, flushFragmentsBeforeMutation, invalidateEntriesInRect, discardFragmentsInRect, invalidateWindowEntries, wasWindowEntryObservedInCurrentRefresh, isWindowRefreshMutation, installFrameFlushHooks, installFrameFlushHook, hasHookInChain, installSmallTextMarkers, installSmallTextMarker, installNormalCharacterMarker, isSmallTextDrawActive, isSmallTextScratchBitmap, ensureBitmapState, getBitmapState, nextDrawOrder, recordBitmapRenderOp, recordNativeTextForReplay, discardRenderOpsInRect, withBitmapReplay, collectReplayItems, replayBitmapItems, replayBitmapRenderOp, replayBitmapEntry, drawBitmapTextValue, drawBitmapTextArgs, calculateClearRect, estimateTextWidth, computeFontSignature, sanitizeVisibleText, sanitizePerChar, isStandaloneGlyphText, sanitizeBitmapDrawText, safePrepareText, describeEntryEligibility, recordDrawTrace, bitmapTraceDetails, cloneTraceRect, roundTraceNumber, getBitmapFallbackMode, isBitmapFallbackCaptureEnabled, isBitmapFallbackRedrawEnabled, readBitmapOwner, hasDedicatedOwnerHook, windowEntryBelongsToBitmap, deriveWindowEntryRect, deriveEntryRect, fragmentRect, rectFromDimensions, isValidRect, rectHasArea, rectOrNull, rectanglesOverlap, normalizeCanvasTextAlign, describeOwnerType, shouldKeepWindowEntryTranslation, getWindowOwnerScreenState, retireWindowEntry, logTextDetected, updateItem, safeCall, isAdapterContractFailure, warn, stringify, finiteNumber, positiveNumber, pruneArray, errorMessage } = Object.fromEntries(['install', 'installOrchestratorSubscription', 'registerBitmapCapabilities', 'exposeAdapterApi', 'installBitmapDrawWrappers', 'installBitmapDrawWrapper', 'scheduleBitmapDrawWrapperRetry', 'handleBitmapDrawText', 'shouldBypassBitmapDraw', 'describeBitmapDrawBypassReason', 'recordBitmapSurfaceDraw', 'createFragment', 'scheduleFlush', 'scheduleFallbackFlush', 'flushQueuedBitmaps', 'flushAggregatedLines', 'takeFragmentsForFlush', 'finalizeFragmentOwnership', 'releaseFragmentOwnership', 'groupFragmentsIntoLines', 'canMergeFragments', 'createEntryFromGroup', 'registerBitmapEntry', 'refreshExistingEntry', 'installBitmapMutationHooks', 'installBitmapMutationHook', 'shouldBypassMutation', 'getMutationBypassReason', 'hasMutationObserverInterest', 'shouldHandleBitmapMutation', 'hasBitmapStateMutationInterest', 'hasWindowEntryMutationInterest', 'hasAnyWindowEntries', 'recordNativeMutationAttribution', 'classifyBitmapMutationSurface', 'bucketBitmapPixels', 'bucketBitmapDimensions', 'bucketDimension', 'sanitizePerfLabel', 'describeMutation', 'handleBitmapMutation', 'flushFragmentsBeforeMutation', 'invalidateEntriesInRect', 'discardFragmentsInRect', 'invalidateWindowEntries', 'wasWindowEntryObservedInCurrentRefresh', 'isWindowRefreshMutation', 'installFrameFlushHooks', 'installFrameFlushHook', 'hasHookInChain', 'installSmallTextMarkers', 'installSmallTextMarker', 'installNormalCharacterMarker', 'isSmallTextDrawActive', 'isSmallTextScratchBitmap', 'ensureBitmapState', 'getBitmapState', 'nextDrawOrder', 'recordBitmapRenderOp', 'recordNativeTextForReplay', 'discardRenderOpsInRect', 'withBitmapReplay', 'collectReplayItems', 'replayBitmapItems', 'replayBitmapRenderOp', 'replayBitmapEntry', 'drawBitmapTextValue', 'drawBitmapTextArgs', 'calculateClearRect', 'estimateTextWidth', 'computeFontSignature', 'sanitizeVisibleText', 'sanitizePerChar', 'isStandaloneGlyphText', 'sanitizeBitmapDrawText', 'safePrepareText', 'describeEntryEligibility', 'recordDrawTrace', 'bitmapTraceDetails', 'cloneTraceRect', 'roundTraceNumber', 'getBitmapFallbackMode', 'isBitmapFallbackCaptureEnabled', 'isBitmapFallbackRedrawEnabled', 'readBitmapOwner', 'hasDedicatedOwnerHook', 'windowEntryBelongsToBitmap', 'deriveWindowEntryRect', 'deriveEntryRect', 'fragmentRect', 'rectFromDimensions', 'isValidRect', 'rectHasArea', 'rectOrNull', 'rectanglesOverlap', 'normalizeCanvasTextAlign', 'describeOwnerType', 'shouldKeepWindowEntryTranslation', 'getWindowOwnerScreenState', 'retireWindowEntry', 'logTextDetected', 'updateItem', 'safeCall', 'isAdapterContractFailure', 'warn', 'stringify', 'finiteNumber', 'positiveNumber', 'pruneArray', 'errorMessage'].map((name) => [name, callScope(name)]));
+        const renderTransaction = scope.renderTransaction;
+        const { withBitmapReplay, collectReplayItems, replayBitmapItems, drawBitmapTextValue, calculateClearRect } = scope.controllerFacades.replay;
+        const { sanitizeVisibleText, describeEntryEligibility, recordDrawTrace, bitmapTraceDetails, cloneTraceRect, rectFromDimensions, isValidRect, updateItem, isAdapterContractFailure, warn, stringify, errorMessage } = scope.controllerFacades.textUtils;
+        const backdropProvider = backdropProviderModule.create({ isValidRect });
 
         function observeEntry(entry, status) {
             if (!entry || !entry.recordId) return null;
@@ -35,6 +42,7 @@
                 priority: BITMAP_PRIORITY,
                 generation: entry.surfaceRevision,
                 renderStrategy: RENDER_STRATEGY,
+                drawBoundary: createEntryDrawBoundary(entry),
                 visible: true,
                 screenState: 'visible',
                 bounds: entry.bounds,
@@ -51,6 +59,20 @@
                 ownershipRequired: true,
             });
             return observed;
+        }
+
+        function createEntryDrawBoundary(entry) {
+            const source = entry && entry.drawBoundary && typeof entry.drawBoundary === 'object'
+                ? entry.drawBoundary
+                : null;
+            if (!source) return null;
+            return renderTransaction.createSourceDrawBoundary(Object.assign({}, source, {
+                itemId: entry.recordId || source.itemId || '',
+                recordId: entry.recordId || source.recordId || '',
+                surfaceId: entry.surfaceId || source.surfaceId || '',
+                slotKey: entry.slotKey || source.slotKey || '',
+                generation: Number(entry.surfaceRevision) || Number(source.generation) || 0,
+            }));
         }
         
         function requestEntryTranslation(entry) {
@@ -88,7 +110,7 @@
                         methodName: entry.methodName,
                     },
                 });
-                if (!requested) {
+                if (!requested || requested.handled !== true) {
                     updateItem(entry, { status: 'failed' }, 'item.failed', { reason: 'translation request failed' });
                     return false;
                 }
@@ -168,46 +190,37 @@
             const order = entry.drawOrder || 0;
             const replayBefore = clearBounds ? collectReplayItems(state, clearBounds, entry, (value) => value < order) : [];
             const replayAfter = clearBounds ? collectReplayItems(state, clearBounds, entry, (value) => value > order) : [];
-            const previousActiveEntry = bitmap._trActiveRedrawEntry || null;
-            bitmap._trActiveRedrawEntry = entry;
-            try {
+            const backdropPlan = backdropProvider.chooseRestorePlan({
+                entry,
+                targetBitmap: bitmap,
+                replayBefore,
+                replayRect: clearBounds,
+                clearArea: clearRect,
+                patches: entry.backgroundPatches,
+                allowPatches: true,
+            });
+            scope.bitmapServices.withActiveRedrawEntry(bitmap, entry, () => {
                 withBitmapReplay(bitmap, () => {
                     if (clearRect && clearRect.width > 0 && clearRect.height > 0 && typeof bitmap.clearRect === 'function') {
                         bitmap.clearRect(clearRect.x, clearRect.y, clearRect.width, clearRect.height);
                     }
-                    restoreEntryBackgroundPatches(bitmap, entry, clearBounds);
-                    replayBitmapItems(bitmap, replayBefore);
+                    if (backdropPlan.patches && backdropPlan.patches.apply === true) {
+                        backdropProvider.restorePatches(bitmap, entry.backgroundPatches, { targetRect: clearBounds });
+                    }
+                    if (backdropPlan.replay && backdropPlan.replay.applyAfterClear === true) {
+                        replayBitmapItems(bitmap, replayBefore);
+                    }
                     drawBitmapTextValue(bitmap, entry, restored, { scaleTranslated: true });
                     replayBitmapItems(bitmap, replayAfter);
                 }, 'bitmap-fallback-redraw');
-                if (scope.telemetry && typeof scope.telemetry.logDraw === 'function') {
-                    scope.telemetry.logDraw('bitmap_redraw', restored, entry.drawParams.x, entry.drawParams.y, {
-                        ownerType: entry.ownerType,
-                        method: entry.methodName,
-                        sourceHint: command && command.metadata && command.metadata.sourceHint,
-                    });
-                }
-            } finally {
-                bitmap._trActiveRedrawEntry = previousActiveEntry;
+            });
+            if (scope.telemetry && typeof scope.telemetry.logDraw === 'function') {
+                scope.telemetry.logDraw('bitmap_redraw', restored, entry.drawParams.x, entry.drawParams.y, {
+                    ownerType: entry.ownerType,
+                    method: entry.methodName,
+                    sourceHint: command && command.metadata && command.metadata.sourceHint,
+                });
             }
-        }
-
-        function restoreEntryBackgroundPatches(bitmap, entry, clearBounds) {
-            if (!bitmap || !entry) return;
-            const patches = Array.isArray(entry.backgroundPatches) ? entry.backgroundPatches : [];
-            patches.forEach((patch) => restoreBackgroundPatch(bitmap, patch, clearBounds));
-        }
-
-        function restoreBackgroundPatch(bitmap, patch, clearBounds) {
-            if (!bitmap || !patch || !patch.bitmap || typeof bitmap.blt !== 'function') return;
-            const width = positiveNumber(patch.width);
-            const height = positiveNumber(patch.height);
-            if (width <= 0 || height <= 0) return;
-            const x = finiteNumber(patch.x);
-            const y = finiteNumber(patch.y);
-            const patchBounds = rectFromDimensions(x, y, width, height);
-            if (clearBounds && patchBounds && !rectanglesOverlap(clearBounds, patchBounds)) return;
-            bitmap.blt(patch.bitmap, 0, 0, width, height, x, y, width, height);
         }
         
         function markEntryTerminal(entry, status, reason) {

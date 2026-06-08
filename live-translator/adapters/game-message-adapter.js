@@ -23,7 +23,9 @@
     }
 
     const controllers = {
+        controllerFacades: requireRuntimeModule('adapters.gameMessage.controllerFacades'),
         install: requireRuntimeModule('adapters.gameMessage.install'),
+        evaluation: requireRuntimeModule('adapters.gameMessage.evaluation'),
         text: requireRuntimeModule('adapters.gameMessage.text'),
         wrapping: requireRuntimeModule('adapters.gameMessage.wrapping'),
         redraw: requireRuntimeModule('adapters.gameMessage.redraw'),
@@ -81,23 +83,16 @@
             dbg: typeof context.dbg === 'function' ? context.dbg : () => {},
             diag: typeof context.diag === 'function' ? context.diag : () => {},
             preview: typeof context.preview === 'function' ? context.preview : (text) => String(text ?? ''),
+            textCodec: requireTextCodec(context.textCodec, 'GameMessage'),
             stripControls: typeof context.stripControls === 'function' ? context.stripControls : (text) => String(text ?? ''),
-            encodeText: typeof context.encodeText === 'function'
-                ? context.encodeText
-                : (text) => ({
-                    originalText: String(text ?? ''),
-                    visibleText: String(text ?? '').trim(),
-                    translationText: String(text ?? ''),
-                    normalizedText: String(text ?? '').trim(),
-                    tokens: [],
-                }),
+            createTextSource: requireTextSourceHelper(context.createTextSource, 'GameMessage'),
             restoreText: typeof context.restoreText === 'function' ? context.restoreText : (translated) => translated,
             telemetry: context.telemetry || null,
             adapterContract: context.adapterContract || null,
             settings: context.settings && typeof context.settings === 'object' ? context.settings : {},
             captureBitmapDrawState: typeof context.captureBitmapDrawState === 'function' ? context.captureBitmapDrawState : () => null,
             applyBitmapDrawState: typeof context.applyBitmapDrawState === 'function' ? context.applyBitmapDrawState : () => {},
-            contentsOwners: context.contentsOwners || null,
+            surfaceOwnership: context.surfaceOwnership || null,
             registeredWindows: context.registeredWindows || null,
             pruneDetachedRegisteredWindows: typeof context.pruneDetachedRegisteredWindows === 'function' ? context.pruneDetachedRegisteredWindows : null,
             logEscape: typeof context.logEscape === 'function' ? context.logEscape : () => {},
@@ -113,12 +108,14 @@
             originAwareLineBreaks: null,
             foresightEnabled: null,
             fallbackMessageState: null,
+            fallbackMessageRenderSession: null,
             foresightScanner: null,
             MESSAGE_ADAPTER_ID, MESSAGE_RENDER_STRATEGY, MESSAGE_ACTIVE_PRIORITY, MESSAGE_BACKGROUND_PRIORITY,
             FORESIGHT_BASE_PRIORITY, FORESIGHT_BUDGET, FORESIGHT_MAX_SCAN_COMMANDS, FORESIGHT_RECORD_TTL_MS,
             BREAK_SENTINEL_PREFIX, BREAK_SENTINEL_SUFFIX, RAW_BREAK_PATTERN, SOFT_BREAK_PATTERN,
             NO_SPACE_LINE_JOIN_PATTERN, SENTINEL_BOUNDARY_PATTERN, ESCAPE_CODE_PATTERN, NUMERIC_PARAM_PATTERN,
             CJK_CHAR_PATTERN, EVENT_COMMAND_CONTINUATION_CODES,
+            controllerFacades: null,
         };
         const methodControllers = {
             install: 'install',
@@ -130,8 +127,15 @@
             drawMessageFaceIfNeeded: 'install',
             exposeAdapterApi: 'install',
             resolveMessageStartCoordinates: 'install',
+            evaluateGameMessageText: 'evaluation',
+            prepareMessageRedrawText: 'evaluation',
+            createStreamingPreviewText: 'evaluation',
+            stripMessageControlCodes: 'evaluation',
+            createEvaluationGameMessage: 'evaluation',
+            createEvaluationWindow: 'evaluation',
             resolveGameMessageTextScale: 'text',
             resolveGameMessageOriginAwareLineBreaks: 'text',
+            resolveGameMessageDisableStreaming: 'text',
             resolveEnableForesight: 'text',
             createBreakToken: 'text',
             createBreakMap: 'text',
@@ -180,11 +184,42 @@
             rejectPendingMessageRender: 'redraw',
             clearPendingMessageRedraw: 'redraw',
             createMessageState: 'session',
+            createMessageRenderSession: 'session',
             getMessageState: 'session',
+            getMessageRenderSession: 'session',
+            createMessageStreamPreviewState: 'session',
+            createMessageStartState: 'session',
+            attachMessageRecordSession: 'session',
+            clearMessageRenderSession: 'session',
+            setMessageRequestSession: 'session',
+            clearMessageRequestSession: 'session',
+            setMessageRenderRetained: 'session',
+            updateMessageVisibilitySession: 'session',
+            setPendingMessageRedrawSession: 'session',
+            getPendingMessageRedrawSession: 'session',
+            clearPendingMessageRedrawSession: 'session',
+            getMessageStreamPreviewSession: 'session',
+            beginMessageStreamPreview: 'session',
+            setMessageStreamPreviewText: 'session',
+            getMessageStreamPreviewText: 'session',
+            isMessageStreamPreviewCurrent: 'session',
+            stopMessageStreamPreview: 'session',
+            clearPendingStreamPreviewSession: 'session',
+            resetStreamState: 'session',
+            getMessageStartSession: 'session',
+            clearMessageStartSession: 'session',
+            setMessageStartCoordinates: 'session',
+            getMessageStartCoordinates: 'session',
             beginMessageSession: 'session',
             resetWindowMessageState: 'session',
             isSessionCurrent: 'session',
             isCurrentTranslation: 'session',
+            getCurrentMessageSessionId: 'session',
+            setMessageTranslationSession: 'session',
+            markMessageTranslationRequested: 'session',
+            getCurrentMessagePayload: 'session',
+            setCurrentMessagePayload: 'session',
+            takeCurrentMessagePayload: 'session',
             captureTextStateStart: 'session',
             collectWindowsForGameMessage: 'session',
             collectSceneMessageWindows: 'session',
@@ -302,7 +337,6 @@
             retireDetachedRecord: 'render',
             handleRequestFailed: 'render',
             handleRequestSkipped: 'render',
-            resetStreamState: 'render',
             getMessageScreenState: 'render',
             warn: 'render',
             isAdapterContractFailure: 'render',
@@ -320,13 +354,16 @@
             if (typeof method !== 'function') throw new Error('[GameMessage] Missing controller method: ' + methodName);
             return method(...args);
         }
+        scope.controllerFacades = controllers.controllerFacades.create({ callController });
         Object.keys(methodControllers).forEach((methodName) => {
             scope[methodName] = (...args) => callController(methodName, ...args);
         });
         scope.textScalePercent = scope.resolveGameMessageTextScale(scope.settings);
         scope.originAwareLineBreaks = scope.resolveGameMessageOriginAwareLineBreaks(scope.settings);
+        scope.disableStreaming = scope.resolveGameMessageDisableStreaming(scope.settings);
         scope.foresightEnabled = scope.resolveEnableForesight(scope.settings);
         scope.fallbackMessageState = scope.createMessageState();
+        scope.fallbackMessageRenderSession = scope.createMessageRenderSession();
         scope.foresightScanner = scope.foresightEnabled ? scope.createForesightScanner() : null;
         return {
             install: scope.install,
@@ -335,6 +372,16 @@
             applyPendingMessageRedraw: scope.applyPendingMessageRedraw,
             resolveMessageStartCoordinates: scope.resolveMessageStartCoordinates,
         };
+    }
+
+    function requireTextSourceHelper(value, label) {
+        if (typeof value === 'function') return value;
+        throw new Error(`[${label}] createTextSource helper is required.`);
+    }
+
+    function requireTextCodec(value, label) {
+        if (value && typeof value.createPlainTextSource === 'function') return value;
+        throw new Error(`[${label}] textCodec service is required.`);
     }
 
     defineRuntimeModule('adapters.gameMessage', {

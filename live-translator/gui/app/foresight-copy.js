@@ -8,6 +8,7 @@ function buildForesightDiagnosticsCopyText(snapshot = state.foresight, textRecor
 
 function buildForesightDiagnosticsCopyPayload(snapshot = state.foresight, textRecords = getForesightTextRecords()) {
     const model = createForesightDiagnosticsModel(snapshot, textRecords);
+    const foresightPolicy = getGuiForesightPolicy();
     const records = collectForesightModelRecords(model);
     return {
         copiedAt: copyTimestamp(Date.now()),
@@ -19,7 +20,7 @@ function buildForesightDiagnosticsCopyPayload(snapshot = state.foresight, textRe
         },
         latestScan: buildForesightScanCopyPayload(model.scan),
         actionTrail: {
-            limit: model.actionLimit || FORESIGHT_ACTION_DISPLAY_LIMIT,
+            limit: model.actionLimit || foresightPolicy.actionDisplayLimit,
             shown: model.actionCount || 0,
             available: model.actionsAvailable || 0,
             truncated: model.actionsTruncated || 0,
@@ -30,19 +31,20 @@ function buildForesightDiagnosticsCopyPayload(snapshot = state.foresight, textRe
 }
 
 function createForesightDiagnosticsModel(snapshot, textRecords) {
+    const foresightPolicy = getGuiForesightPolicy();
     const viewer = globalThis.LiveTranslatorForesightTreeViewer
         || (globalThis.window && globalThis.window.LiveTranslatorForesightTreeViewer);
     if (viewer && typeof viewer.createModel === 'function') {
         return viewer.createModel(snapshot, {
             textRecords: Array.isArray(textRecords) ? textRecords : [],
-            maxActions: FORESIGHT_ACTION_DISPLAY_LIMIT,
+            maxActions: foresightPolicy.actionDisplayLimit,
         });
     }
     const source = snapshot && typeof snapshot === 'object' ? snapshot : null;
     const scans = source && Array.isArray(source.recent) ? source.recent : [];
     const scan = scans.length ? scans[scans.length - 1] : null;
     const actions = scan && Array.isArray(scan.commandActions)
-        ? scan.commandActions.slice(0, FORESIGHT_ACTION_DISPLAY_LIMIT)
+        ? scan.commandActions.slice(0, foresightPolicy.actionDisplayLimit)
         : [];
     return {
         hasSnapshot: Boolean(source),
@@ -52,7 +54,7 @@ function createForesightDiagnosticsModel(snapshot, textRecords) {
         summary: source && source.summary && typeof source.summary === 'object'
             ? Object.assign({}, source.summary)
             : null,
-        actionLimit: FORESIGHT_ACTION_DISPLAY_LIMIT,
+        actionLimit: foresightPolicy.actionDisplayLimit,
         actionCount: actions.length,
         actionsAvailable: actions.length + (Number(scan && scan.commandActionsTruncated) || 0),
         actionsTruncated: Number(scan && scan.commandActionsTruncated) || 0,

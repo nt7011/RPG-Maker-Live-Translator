@@ -1,0 +1,138 @@
+.preview-controls {
+    display: grid;
+    gap: 14px;
+    padding: 14px;
+    border-color: var(--gui-border-control);
+    background: var(--gui-surface-soft);
+}
+
+.preview-controls-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.preview-controls-heading {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    min-width: 0;
+    gap: 10px;
+}
+
+.preview-controls-header h2 {
+    font-size: 15px;
+}
+
+.preview-controls-close {
+    flex: 0 0 auto;
+    width: 30px;
+    min-height: 30px;
+    padding: 0;
+    border-color: var(--gui-border-button);
+    background: var(--gui-surface);
+    color: var(--gui-text-muted);
+    font-size: 13px;
+    font-weight: 800;
+    line-height: 1;
+}
+
+.preview-controls-close:hover {
+    border-color: var(--gui-border-hover);
+    background: var(--gui-surface-muted);
+    color: var(--gui-text);
+}
+
+.preview-badge {
+    min-height: 26px;
+    padding: 4px 8px;
+    border-radius: 999px;
+    background: var(--gui-surface-pill);
+    color: var(--gui-text-muted);
+    font-size: 12px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.preview-control-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+    gap: 10px;
+}
+
+.preview-field {
+    display: grid;
+    gap: 5px;
+    min-width: 0;
+    color: var(--gui-text-muted);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.preview-field input,
+.preview-field select {
+    width: 100%;
+    min-height: 34px;
+    padding: 0 9px;
+    border: 1px solid var(--gui-border-control);
+    border-radius: 6px;
+    background: var(--gui-surface);
+    color: var(--gui-text);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.preview-check-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 14px;
+    align-items: center;
+}
+
+.preview-check {
+    display: inline-flex;
+    align-items: center;
+    min-height: 32px;
+    gap: 7px;
+    color: var(--gui-text-secondary);
+    font-size: 13px;
+    font-weight: 650;
+    white-space: nowrap;
+}
+
+.preview-check input {
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    accent-color: var(--gui-accent);
+}
+
+.preview-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+}
+
+.preview-actions button {
+    min-height: 32px;
+    padding: 0 10px;
+    border-color: var(--gui-border-button);
+    background: var(--gui-surface);
+    color: var(--gui-text-secondary);
+    font-size: 13px;
+    font-weight: 650;
+}
+
+.preview-actions button:hover {
+    border-color: var(--gui-border-hover);
+    background: var(--gui-surface-muted);
+}
+
+.preview-status {
+    color: var(--gui-text-muted);
+    font-size: 12px;
+    font-weight: 650;
+}

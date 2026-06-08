@@ -12,9 +12,20 @@
     }
 
     function createController(scope = {}) {
-        const { OVERRIDE_REGEX_SETTING, normalizeCacheKey, createImmediateHandle, createDelayedHandle, preview, provider, precacheStore, completed, jobsByKey } = scope;
-        const callScope = (name) => (...args) => scope[name](...args);
-        const { describeIgnoreTranslationRegex, describeSkip, logTranslationEvent, normalizeRequest, requestContext, lookupCompleted, lookupOverrideTranslationRegex, resolvePrecacheShortcut, createJob, createSubscriber, schedulePump } = Object.fromEntries(['describeIgnoreTranslationRegex', 'describeSkip', 'logTranslationEvent', 'normalizeRequest', 'requestContext', 'lookupCompleted', 'lookupOverrideTranslationRegex', 'resolvePrecacheShortcut', 'createJob', 'createSubscriber', 'schedulePump'].map((name) => [name, callScope(name)]));
+        const { OVERRIDE_REGEX_SETTING, normalizeCacheKey, createImmediateHandle, createDelayedHandle, preview, precacheStore, jobsByKey } = scope;
+        const {
+            describeIgnoreTranslationRegex,
+            describeSkip,
+            logTranslationEvent,
+            normalizeRequest,
+            requestContext,
+            lookupCompleted,
+            lookupOverrideTranslationRegex,
+            resolvePrecacheShortcut,
+        } = scope.controllerFacades.eligibility;
+        const { createJob } = scope.controllerFacades.jobs;
+        const { createSubscriber } = scope.controllerFacades.subscribers;
+        const { schedulePump } = scope.controllerFacades.queue;
 
         function lookup(normalized, options = {}) {
             const key = normalizeCacheKey(normalized);

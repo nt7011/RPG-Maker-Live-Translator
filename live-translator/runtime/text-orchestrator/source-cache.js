@@ -16,12 +16,14 @@
 
     function createController(scope = {}) {
         const { firstString, firstNonEmptyString, normalizeStatus, mergeDetails, decorateTranslationHandle, logger, activeItems } = scope;
-        const callScope = (name) => (...args) => scope[name](...args);
-        const { markCacheHit, markTranslationCompleted, markTranslationNoop, queueRenderCommand, recordEvent, buildSourceTranslationKey } = Object.fromEntries(['markCacheHit', 'markTranslationCompleted', 'markTranslationNoop', 'queueRenderCommand', 'recordEvent', 'buildSourceTranslationKey'].map((name) => [name, callScope(name)]));
+        const { markCacheHit, markTranslationCompleted, markTranslationNoop } = scope.controllerFacades.translationState;
+        const { queueRenderCommand } = scope.controllerFacades.render;
+        const { recordEvent } = scope.controllerFacades.events;
+        const { buildSourceTranslationKey } = scope.controllerFacades.identity;
 
-        function hydrateSourceTranslation(source) {
+        function hydrateSourceTranslation(source, options = {}) {
             if (!source) return false;
-            const remembered = getCompletedSourceTranslation(source);
+            const remembered = getCompletedSourceTranslation(source, options);
             if (!remembered) return false;
             const status = normalizeStatus(source.status, 'detected');
             if (status !== 'detected' && status !== 'pending' && status !== 'translating' && status !== 'completed') return false;
@@ -33,10 +35,10 @@
             return true;
         }
 
-        function getCompletedSourceTranslation(source) {
+        function getCompletedSourceTranslation(source, options = {}) {
             const key = buildSourceTranslationKey(source);
             if (!key) return null;
-            const hit = lookupServiceTranslation(key);
+            const hit = lookupServiceTranslation(key, options);
             if (!hit || !hit.translation) return null;
             return {
                 key,
@@ -128,12 +130,17 @@
             }, context);
         }
 
-        function lookupServiceTranslation(text) {
+        function lookupServiceTranslation(text, options = {}) {
             if (!scope.translationService || typeof scope.translationService.lookup !== 'function') return null;
             const key = String(text ?? '').trim();
             if (!key) return null;
             try {
-                const hit = scope.translationService.lookup(key);
+                const lookupOptions = options && options.includeForcedAsync === true
+                    ? { includeForcedAsync: true }
+                    : undefined;
+                const hit = lookupOptions
+                    ? scope.translationService.lookup(key, lookupOptions)
+                    : scope.translationService.lookup(key);
                 if (!hit || typeof hit.translation !== 'string' || !hit.translation.trim()) return null;
                 return {
                     translation: hit.translation,
