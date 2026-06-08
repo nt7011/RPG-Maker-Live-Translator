@@ -11,10 +11,20 @@
     }
 
     function createDrawObserverController(context = {}) {
-    const callContext = (name) => (...args) => context[name](...args);
-    const { logger, telemetry, adapterContract, windowRegistry, registeredWindows, contentsOwners, windowLifecycle, ensureWindowRegistered, pruneDetachedRegisteredWindows, generateKey, captureBitmapDrawState, applyBitmapDrawState, createWindowTextScaleScope, preview, diag, dbg, drawCaptureTrace, bitmapReplay, settings, stripControls, encodeText, restoreText, entriesByRecordId, redrawSettings, textScaleOthers, ADAPTER_ID, ADAPTER_LABEL, RENDER_STRATEGY, WINDOW_PRIORITY_VISIBLE, WINDOW_WRAPPER_TOKEN, REDRAW_DIAGNOSTIC_ITEM_LIMIT, MAX_BACKGROUND_SNAPSHOT_PIXELS } = context;
-    const { install, installOrchestratorSubscription, getRenderGeneration, isRenderTargetCurrent, handleRenderRejected, installWindowBaseWrappers, hasHookInChain, requestEntryTranslation, observeEntry, syncEntryFromObservedItem, getEntryStatus, isEntryActive, isEntryRequestActive, isEntryCompleted, firstNonEmptyString, recordDrawTrace, windowTraceDetails, getRegisteredWindowData, markEntryObservedInRefresh, safeStripRpgmEscapes, describeWindowScreenState, buildOrchestratorPayload, applyRenderCommand, markRequestSkipped, markRequestFailed, updateOrchestratorItem, beginPendingRenderCommand, markPendingRenderDeferred, completePendingRenderCommand, rejectPendingRender, clearPendingRenderCommand, getPendingRenderDetails, redrawTranslatedText, drawTranslatedEntry, calculateRedrawBounds, drawTranslatedWindowText, invokeCompletedEntry, invokeOriginalDrawText, invokeOriginalDrawTextEx, withTranslatedWindowTextScale, withWindowTranslatedDrawScope, isWindowTranslatedDrawActive, withWindowDrawTextExReplayScope, findExistingEntry, retireEntriesInSameSlot, markEntryStale, cancelEntryTranslation, markRecordDisappeared, recordDecision, queuePendingRedraw, clearPendingInvalidation, getCurrentEntry, getTextEntryKey, dropPendingRedraw, resolveWindowData, resolveTargetWindow, isWindowReadyForRedraw, refreshEntryBounds, estimateEntryBounds, measurePlainTextWidth, estimateDrawTextExFallbackWidth, estimateDrawTextExFallbackHeight, estimateMaxDrawTextExFallbackHeight, getDrawTextExLineCount, getLineHeight, getWindowIconWidth, countDrawTextExIcons, prepareTranslationSource, restoreTranslatedWindowText, sanitizeDrawTextOutput, convertWindowText, describeWindowTextEligibility, describeEntryEligibility, isDedicatedMessageWindow, rememberMessageStart, getSurfaceId, getIdentitySurfaceId, createSlotKey, createWindowTextRecordId, safeRecordIdPart, hashTextForRecordId, normalizeSlotNumber, getWindowTypeName, getWindowCtorName, normalizeDrawTextAlignValue, mergeBounds, isValidRect, roundDiagnosticNumber, cloneDiagnosticRect, cloneDiagnosticArea, calculateBitmapSurfaceTextYOffset, withWindowRedrawClear, withWindowContents, isUsableBitmap, getRedrawContents, wasDrawnToDetachedContents, isTransientRefreshWindow, isCoreRefreshWindowType, getBitmapReplayApi, assignWindowTextDrawOrder, createClearRectFromArea, getReplayItemRect, mergeReplayRect, expandReplayDirtyRect, replayRectsOverlap, collectWindowTextReplayItems, windowEntryBelongsToContents, combineReplayItems, filterReplayForEntry, replayMixedItems, replayWindowTextEntry, getWindowReplayText, getBitmapCanvasContext, supportsBitmapReplayClip, withBitmapReplayClip, getReplayClipArea, getBitmapSnapshotContext, captureWindowEntryBackground, captureWindowEntryBackgroundPatch, ensureWindowEntryBackground, getWindowEntryBackgroundSnapshotStatus, restoreWindowEntryBackground, getEntryContentsRevision, getSnapshotContentsRevision, getWindowDataContentsRevision, getEntrySnapshotPadding, getSnapshotArea, getSnapshotDiagnostics, summarizeReplayItemsForDiagnostics, summarizeReplayStateForDiagnostics } = Object.fromEntries(['install', 'installOrchestratorSubscription', 'getRenderGeneration', 'isRenderTargetCurrent', 'handleRenderRejected', 'installWindowBaseWrappers', 'hasHookInChain', 'requestEntryTranslation', 'observeEntry', 'syncEntryFromObservedItem', 'getEntryStatus', 'isEntryActive', 'isEntryRequestActive', 'isEntryCompleted', 'firstNonEmptyString', 'recordDrawTrace', 'windowTraceDetails', 'getRegisteredWindowData', 'markEntryObservedInRefresh', 'safeStripRpgmEscapes', 'describeWindowScreenState', 'buildOrchestratorPayload', 'applyRenderCommand', 'markRequestSkipped', 'markRequestFailed', 'updateOrchestratorItem', 'beginPendingRenderCommand', 'markPendingRenderDeferred', 'completePendingRenderCommand', 'rejectPendingRender', 'clearPendingRenderCommand', 'getPendingRenderDetails', 'redrawTranslatedText', 'drawTranslatedEntry', 'calculateRedrawBounds', 'drawTranslatedWindowText', 'invokeCompletedEntry', 'invokeOriginalDrawText', 'invokeOriginalDrawTextEx', 'withTranslatedWindowTextScale', 'withWindowTranslatedDrawScope', 'isWindowTranslatedDrawActive', 'withWindowDrawTextExReplayScope', 'findExistingEntry', 'retireEntriesInSameSlot', 'markEntryStale', 'cancelEntryTranslation', 'markRecordDisappeared', 'recordDecision', 'queuePendingRedraw', 'clearPendingInvalidation', 'getCurrentEntry', 'getTextEntryKey', 'dropPendingRedraw', 'resolveWindowData', 'resolveTargetWindow', 'isWindowReadyForRedraw', 'refreshEntryBounds', 'estimateEntryBounds', 'measurePlainTextWidth', 'estimateDrawTextExFallbackWidth', 'estimateDrawTextExFallbackHeight', 'estimateMaxDrawTextExFallbackHeight', 'getDrawTextExLineCount', 'getLineHeight', 'getWindowIconWidth', 'countDrawTextExIcons', 'prepareTranslationSource', 'restoreTranslatedWindowText', 'sanitizeDrawTextOutput', 'convertWindowText', 'describeWindowTextEligibility', 'describeEntryEligibility', 'isDedicatedMessageWindow', 'rememberMessageStart', 'getSurfaceId', 'getIdentitySurfaceId', 'createSlotKey', 'createWindowTextRecordId', 'safeRecordIdPart', 'hashTextForRecordId', 'normalizeSlotNumber', 'getWindowTypeName', 'getWindowCtorName', 'normalizeDrawTextAlignValue', 'mergeBounds', 'isValidRect', 'roundDiagnosticNumber', 'cloneDiagnosticRect', 'cloneDiagnosticArea', 'calculateBitmapSurfaceTextYOffset', 'withWindowRedrawClear', 'withWindowContents', 'isUsableBitmap', 'getRedrawContents', 'wasDrawnToDetachedContents', 'isTransientRefreshWindow', 'isCoreRefreshWindowType', 'getBitmapReplayApi', 'assignWindowTextDrawOrder', 'createClearRectFromArea', 'getReplayItemRect', 'mergeReplayRect', 'expandReplayDirtyRect', 'replayRectsOverlap', 'collectWindowTextReplayItems', 'windowEntryBelongsToContents', 'combineReplayItems', 'filterReplayForEntry', 'replayMixedItems', 'replayWindowTextEntry', 'getWindowReplayText', 'getBitmapCanvasContext', 'supportsBitmapReplayClip', 'withBitmapReplayClip', 'getReplayClipArea', 'getBitmapSnapshotContext', 'captureWindowEntryBackground', 'captureWindowEntryBackgroundPatch', 'ensureWindowEntryBackground', 'getWindowEntryBackgroundSnapshotStatus', 'restoreWindowEntryBackground', 'getEntryContentsRevision', 'getSnapshotContentsRevision', 'getWindowDataContentsRevision', 'getEntrySnapshotPadding', 'getSnapshotArea', 'getSnapshotDiagnostics', 'summarizeReplayItemsForDiagnostics', 'summarizeReplayStateForDiagnostics'].map((name) => [name, callContext(name)]));
-    
+    const { telemetry, ensureWindowRegistered, generateKey, stripControls, ADAPTER_ID, entryLifecycleState } = context;
+    const renderTransaction = context.renderTransaction;
+    const { lifecycle: lifecycleService, surface: surfaceService, draw: drawService, replay: replayService } = context.services;
+    const { bitmapReplay, diagnostics, entryLifecycle, entryRecords, renderCommands, renderDraw, sourceDraw, textConversion, textMetrics } = context.facades;
+    const { recordDrawTrace, windowTraceDetails, recordDecision, roundDiagnosticNumber, cloneDiagnosticRect } = diagnostics;
+    const { requestEntryTranslation, observeEntry, getEntryStatus, isEntryCompleted, firstNonEmptyString, getRegisteredWindowData, markEntryObservedInRefresh, safeStripRpgmEscapes, describeWindowScreenState } = entryRecords;
+    const { completePendingRenderCommand, redrawTranslatedText } = renderCommands;
+    const { invokeCompletedEntry, invokeOriginalDrawText, invokeOriginalDrawTextEx, isWindowTranslatedDrawActive } = renderDraw;
+    const { findExistingEntry, retireEntriesInSameSlot, clearPendingInvalidation, getCurrentEntry, getTextEntryKey, resolveTargetWindow, refreshEntryBounds } = entryLifecycle;
+    const { captureWindowEntrySource, beginEntryNativeSourceDraw, completeEntryNativeSourceDraw } = sourceDraw;
+    const { estimateEntryBounds, prepareTranslationSource, describeWindowTextEligibility, isDedicatedMessageWindow, getSurfaceId, getIdentitySurfaceId, createSlotKey, createWindowTextRecordId, getWindowTypeName, getWindowCtorName, normalizeDrawTextAlignValue } = textMetrics;
+    const { sanitizeDrawTextOutput, convertWindowText } = textConversion;
+    const { isValidRect, calculateBitmapSurfaceTextYOffset, assignWindowTextDrawOrder, captureWindowEntryBackground, captureWindowEntryBackgroundPatch, ensureWindowEntryBackground } = bitmapReplay;
+
     function handleDrawText(windowInstance, originalDrawText, text, x, y, maxWidth, align) {
                 const textStr = stringifyWindowTextInput(text);
                 const originalDrawValue = normalizeNativeWindowTextInput(text);
@@ -112,7 +122,6 @@
                 }
     
                 if (isDedicatedMessageWindow(windowInstance)) {
-                    rememberMessageStart(windowInstance, x, y);
                     recordDrawTrace('window.drawTextEx.bypass', textStr, windowTraceDetails(windowInstance, 'drawTextEx', textStr, x, y, {
                         reason: 'dedicatedMessageWindow',
                         maxWidth: Infinity,
@@ -121,30 +130,58 @@
                     return invokeOriginal();
                 }
     
-                const windowData = ensureWindowRegistered(windowInstance);
                 const convertedText = convertWindowText(windowInstance, textStr);
                 const convertedTrimmed = String(convertedText || '').trim();
                 const visibleText = safeStripRpgmEscapes(convertedText || convertedTrimmed || textStr).trim();
+                const params = { maxWidth: Infinity, align: 'left' };
                 if (!convertedTrimmed) {
-                    const slotInvalidated = retireEmptyWindowTextSlot(windowInstance, 'drawTextEx', x, y);
+                    const slotInvalidated = retireEmptyWindowTextSlot(windowInstance, 'drawTextEx', x, y, params);
                     recordDrawTrace('window.drawTextEx.skip', textStr, windowTraceDetails(windowInstance, 'drawTextEx', textStr, x, y, {
                         reason: text === undefined ? 'missingTextArgument' : 'emptyConverted',
                         convertedText,
-                        slotKey: createSlotKey('drawTextEx', x, y),
+                        slotKey: createSlotKey('drawTextEx', x, y, params),
                         slotInvalidated,
                         maxWidth: Infinity,
                         align: 'left',
                     }));
                     return invokeOriginal();
                 }
+
+                const geometry = describeDrawableWindowTextGeometry('drawTextEx', x, y, params);
+                if (!geometry.drawable) {
+                    recordDrawTrace('window.drawTextEx.skip', textStr, windowTraceDetails(windowInstance, 'drawTextEx', textStr, x, y, {
+                        reason: geometry.reason,
+                        geometry: geometry.details,
+                        convertedText,
+                        maxWidth: Infinity,
+                        align: 'left',
+                    }));
+                    return invokeOriginal();
+                }
+
+                const drawRole = describeWindowTextDrawRole(windowInstance, 'drawTextEx', x, y, params, convertedText || textStr);
+                if (!drawRole.renderable) {
+                    retireNonRenderableSlot(windowInstance, 'drawTextEx', x, y, params, drawRole.reason);
+                    recordDrawTrace('window.drawTextEx.skip', textStr, windowTraceDetails(windowInstance, 'drawTextEx', textStr, x, y, {
+                        reason: drawRole.reason,
+                        drawRole: drawRole.role,
+                        bounds: cloneDiagnosticRect(drawRole.bounds),
+                        contentsSize: drawRole.contentsSize,
+                        convertedText,
+                        maxWidth: Infinity,
+                        align: 'left',
+                    }));
+                    return invokeOriginal();
+                }
     
-                const params = { maxWidth: Infinity, align: 'left' };
-                const existing = findExistingEntry(windowData, 'drawTextEx', textStr, convertedTrimmed, x, y);
+                const windowData = ensureWindowRegistered(windowInstance);
+                params.drawRole = drawRole.role;
+                const existing = findExistingEntry(windowData, 'drawTextEx', textStr, convertedTrimmed, x, y, params);
                 if (existing) {
                     refreshEntry(windowInstance, windowData, existing, textStr, convertedTrimmed, x, y, 'drawTextEx', convertedText, params);
                     recordDrawTrace('window.drawTextEx.existing', textStr, windowTraceDetails(windowInstance, 'drawTextEx', textStr, x, y, {
                         recordId: existing.recordId || '',
-                        slotKey: existing.slotKey || createSlotKey('drawTextEx', x, y),
+                        slotKey: existing.slotKey || createSlotKey('drawTextEx', x, y, params),
                         status: getEntryStatus(existing),
                         convertedText,
                         maxWidth: Infinity,
@@ -254,20 +291,27 @@
                         ownerType: draw.ownerType,
                         measuredWidth: draw.measuredWidth,
                         drawState: draw.drawState,
+                        drawBoundary: draw.drawBoundary,
                     },
                     traceDetails,
                     telemetryMethod: 'bitmap.drawText',
                 });
-                if (event && event.postDraw === true && observation && observation.entry) {
+                if (observation && observation.entry) {
+                    // Bitmap-owned batches carry the clean pre-native backdrop on a
+                    // later surface event. Apply it for existing entries too, not
+                    // only post-draw notifications, so async redraw restores clean
+                    // pixels instead of the stale source snapshot captured earlier.
                     applySurfaceDrawBackgroundPatch(draw, observation.entry);
+                }
+                if (event && event.postDraw === true && observation && observation.entry) {
                     captureSourceAfterNativeDraw(windowInstance, observation.entry);
                 }
                 if (observation && observation.completed) {
                     if (event && event.postDraw === true) {
                         const redrawResult = redrawTranslatedText(observation.entry, observation.windowData);
                         return {
-                            action: redrawResult === 'drawn' ? 'redraw-applied' : 'observed-window-surface-text',
-                            reason: redrawResult || 'post-draw-window-surface-text',
+                            action: redrawResult && redrawResult.status === 'accepted' ? 'redraw-applied' : 'observed-window-surface-text',
+                            reason: redrawResult && redrawResult.reason || 'post-draw-window-surface-text',
                         };
                     }
                     return createSurfaceDrawDecision(windowInstance, observation.windowData, observation.entry, traceDetails);
@@ -279,16 +323,39 @@
 
     function captureSourceAfterNativeDraw(windowInstance, entry) {
                 if (!entry || !entry.translationSource || entry.skipReason) return false;
-                const contents = entry.contentsBitmap || (windowInstance && windowInstance.contents) || null;
-                const capture = context && typeof context.captureWindowEntrySource === 'function'
-                    ? context.captureWindowEntrySource
-                    : null;
-                if (!capture) return false;
+                const contents = bindEntryToLiveSourceContents(windowInstance, entry)
+                    || entry.contentsBitmap
+                    || (windowInstance && windowInstance.contents)
+                    || null;
+                let captured = false;
                 try {
-                    return capture(contents, entry) === true;
+                    captured = captureWindowEntrySource(contents, entry) === true;
                 } catch (_) {
-                    return false;
+                    captured = false;
                 }
+                completeNativeSourceDraw(entry);
+                flushQueuedRenderAfterNativeSourceDraw(entry);
+                return captured;
+            }
+
+    function bindEntryToLiveSourceContents(windowInstance, entry) {
+                if (!entry || !windowInstance || !windowInstance.contents) return entry && entry.contentsBitmap || null;
+                const liveContents = windowInstance.contents;
+                if (entry.contentsBitmap === liveContents) return liveContents;
+                const windowData = getRegisteredWindowData(windowInstance) || entry.windowData || null;
+                if (windowData && getCurrentEntry(windowData, entry) !== entry) {
+                    return entry.contentsBitmap || liveContents;
+                }
+                entry.contentsBitmap = liveContents;
+                entry.ownerWindow = windowInstance;
+                if (windowData) {
+                    entry.windowData = windowData;
+                    entry.contentsRevision = windowData.contentsRevision || 0;
+                    entry.surfaceId = getSurfaceId(windowData) || entry.surfaceId;
+                    entry.identitySurfaceId = getIdentitySurfaceId(windowInstance, windowData) || entry.identitySurfaceId;
+                }
+                assignWindowTextDrawOrder(liveContents, entry);
+                return liveContents;
             }
 
     function observePlainWindowTextDraw(input = {}) {
@@ -309,22 +376,46 @@
                 const traceDetails = Object.assign({}, input.traceDetails || {});
 
                 if (!normalizedText) {
-                    const slotInvalidated = retireEmptyWindowTextSlot(windowInstance, type, x, y);
+                    const slotInvalidated = retireEmptyWindowTextSlot(windowInstance, type, x, y, originalParams);
                     recordDrawTrace(`${tracePrefix}.skip`, rawText, windowTraceDetails(windowInstance, traceMethod, rawText, x, y, Object.assign({
                         reason: input.emptyReason || 'empty',
-                        slotKey: createSlotKey(type, x, y),
+                        slotKey: createSlotKey(type, x, y, originalParams),
                         slotInvalidated,
                     }, traceDetails)));
                     return { completed: false, reason: input.emptyReason || 'empty' };
                 }
 
+                const geometry = describeDrawableWindowTextGeometry(type, x, y, originalParams);
+                if (!geometry.drawable) {
+                    recordDrawTrace(`${tracePrefix}.skip`, rawText, windowTraceDetails(windowInstance, traceMethod, rawText, x, y, Object.assign({
+                        reason: geometry.reason,
+                        geometry: geometry.details,
+                    }, traceDetails)));
+                    return { completed: false, reason: geometry.reason };
+                }
+
+                if (type === 'drawTextEx') {
+                    const drawRole = describeWindowTextDrawRole(windowInstance, type, x, y, originalParams, textToDraw);
+                    if (!drawRole.renderable) {
+                        retireNonRenderableSlot(windowInstance, type, x, y, originalParams, drawRole.reason);
+                        recordDrawTrace(`${tracePrefix}.skip`, rawText, windowTraceDetails(windowInstance, traceMethod, rawText, x, y, Object.assign({
+                            reason: drawRole.reason,
+                            drawRole: drawRole.role,
+                            bounds: cloneDiagnosticRect(drawRole.bounds),
+                            contentsSize: drawRole.contentsSize,
+                        }, traceDetails)));
+                        return { completed: false, phase: 'non-renderable', reason: drawRole.reason, drawRole };
+                    }
+                    originalParams.drawRole = drawRole.role;
+                }
+
                 const windowData = ensureWindowRegistered(windowInstance);
-                const existing = findExistingEntry(windowData, type, rawText, normalizedText, x, y);
+                const existing = findExistingEntry(windowData, type, rawText, normalizedText, x, y, originalParams);
                 if (existing) {
                     refreshEntry(windowInstance, windowData, existing, rawText, normalizedText, x, y, type, convertedText, originalParams);
                     recordDrawTrace(`${tracePrefix}.existing`, rawText, windowTraceDetails(windowInstance, traceMethod, rawText, x, y, Object.assign({
                         recordId: existing.recordId || '',
-                        slotKey: existing.slotKey || createSlotKey(type, x, y),
+                        slotKey: existing.slotKey || createSlotKey(type, x, y, originalParams),
                         status: getEntryStatus(existing),
                         bounds: cloneDiagnosticRect(existing.bounds),
                     }, traceDetails)));
@@ -355,7 +446,7 @@
                 if (tracePrefix !== `window.${type}`) {
                     recordDrawTrace(`${tracePrefix}.detected`, rawText, windowTraceDetails(windowInstance, traceMethod, rawText, x, y, Object.assign({
                         recordId: entry && entry.recordId || '',
-                        slotKey: entry && entry.slotKey || createSlotKey(type, x, y),
+                        slotKey: entry && entry.slotKey || createSlotKey(type, x, y, originalParams),
                         status: entry ? getEntryStatus(entry) : '',
                         bounds: cloneDiagnosticRect(entry && entry.bounds),
                     }, traceDetails)));
@@ -366,12 +457,18 @@
                 return { completed: false, phase: 'detected', entry, windowData, normalizedText };
             }
 
-    function retireEmptyWindowTextSlot(windowInstance, type, x, y) {
+    function retireEmptyWindowTextSlot(windowInstance, type, x, y, params = null) {
                 const windowData = getRegisteredWindowData(windowInstance);
                 if (!windowData) return false;
                 // An empty draw is still a real slot redraw. Retire the old text so
                 // an in-flight translation cannot later paint over an inactive field.
-                return retireEntriesInSameSlot(windowData, type, x, y, null, 'window-entry-empty') > 0;
+                return retireEntriesInSameSlot(windowData, type, x, y, null, 'window-entry-empty', params) > 0;
+            }
+
+    function retireNonRenderableSlot(windowInstance, type, x, y, params = null, reason = 'offscreen-draw') {
+                const windowData = getRegisteredWindowData(windowInstance);
+                if (!windowData) return false;
+                return retireEntriesInSameSlot(windowData, type, x, y, null, reason || 'offscreen-draw', params) > 0;
             }
 
     function createSurfaceDrawDecision(windowInstance, windowData, entry, traceDetails = {}) {
@@ -381,11 +478,14 @@
                 if (!rendered || rendered.trim() === String(entry.convertedText || '').trim()) return null;
                 const position = entry.position || {};
                 const params = entry.originalParams || {};
+                const geometry = describeDrawableWindowTextGeometry(entry.type || 'drawText', position.x, position.y, params);
+                if (!geometry.drawable) return null;
                 const yOffset = calculateBitmapSurfaceTextYOffset(contents, entry, rendered);
-                const drawY = (Number(position.y) || 0) + yOffset;
+                const drawY = geometry.details.y + yOffset;
                 const details = {
                     windowType: getWindowTypeName(windowInstance, windowData),
                     method: entry.type || '',
+                    renderMode: 'native-substitution',
                     drawOrigin: entry.drawOrigin && entry.drawOrigin.type ? entry.drawOrigin.type : '',
                     translationDrawn: rendered,
                     translationReceived: entry.providerText || '',
@@ -395,16 +495,17 @@
                 completePendingRenderCommand(entry, details);
                 recordDrawTrace('window.surfaceDraw.inline', entry.rawText || rendered, windowTraceDetails(windowInstance, 'bitmap.drawText', entry.rawText || rendered, position.x, position.y, Object.assign({
                     recordId: entry.recordId || '',
-                    slotKey: entry.slotKey || createSlotKey(entry.type, position.x, position.y),
+                    slotKey: entry.slotKey || createSlotKey(entry.type, position.x, position.y, entry.originalParams),
                     status: getEntryStatus(entry),
                     replacementText: rendered,
                     replacementY: drawY,
                     yOffset,
                 }, traceDetails)));
+                rememberInlineRenderedBounds(windowInstance, entry, rendered, drawY);
                 return {
                     action: 'replace-native-draw',
                     text: rendered,
-                    x: Number(position.x) || 0,
+                    x: geometry.details.x,
                     y: drawY,
                     maxWidth: params.maxWidth,
                     lineHeight: params.lineHeight,
@@ -421,13 +522,16 @@
                     bitmap,
                     methodName: String(source.methodName || 'bitmap.drawText'),
                     text,
-                    x: finiteNumber(source.x, 0),
-                    y: finiteNumber(source.y, 0),
-                    maxWidth: finiteNumber(source.maxWidth, 0),
+                    x: source.x,
+                    y: source.y,
+                    maxWidth: source.maxWidth,
                     lineHeight: positiveNumber(source.lineHeight, bitmap && bitmap.fontSize, 24),
                     align: normalizeDrawTextAlignValue(source.align),
                     drawState: source.drawState && typeof source.drawState === 'object'
                         ? Object.assign({}, source.drawState)
+                        : null,
+                    drawBoundary: source.drawBoundary && typeof source.drawBoundary === 'object'
+                        ? renderTransaction.createSourceDrawBoundary(source.drawBoundary)
                         : null,
                     measuredWidth: finiteNumber(source.measuredWidth, 0),
                     backgroundPatch: normalizeSurfaceBackgroundPatch(source.backgroundPatch),
@@ -466,32 +570,27 @@
 
     function resolveSurfaceDrawWindow(bitmap) {
                 if (!bitmap) return null;
-                try {
-                    if (contentsOwners && typeof contentsOwners.get === 'function') {
-                        const owner = contentsOwners.get(bitmap);
-                        if (owner) return owner;
-                    }
-                } catch (_) {}
-                try {
-                    if (registeredWindows && typeof registeredWindows.forEach === 'function') {
-                        let found = null;
-                        registeredWindows.forEach((candidate) => {
-                            if (!found && candidate && candidate.contents === bitmap) found = candidate;
-                        });
-                        if (found) return found;
-                    }
-                } catch (_) {}
+                const match = surfaceService.resolveWindowSurfaceForContents(bitmap);
+                if (match && (match.windowInstance || match.owner)) return match.windowInstance || match.owner;
                 return null;
             }
 
     function shouldBypassSurfaceDraw(bitmap) {
+                const guarded = bitmap ? !!getBitmapDrawGuardService().getRenderGuardReason(bitmap) : false;
                 return !!(bitmap && (
-                    bitmap._trBitmapReplayDepth > 0
-                    || bitmap._trBitmapSkipDepth > 0
+                    guarded
                     || bitmap._trWindowPipelineDepth > 0
                     || bitmap._trWindowTextDrawTextExReplayDepth > 0
                     || bitmap._trWindowDrawTextExReplayDepth > 0
                 ));
+            }
+
+    function getBitmapDrawGuardService() {
+                const bitmapDraws = replayService && replayService.bitmapDraws;
+                if (!bitmapDraws || typeof bitmapDraws.getRenderGuardReason !== 'function') {
+                    throw new Error('[WindowText] bitmap draw guard service is required.');
+                }
+                return bitmapDraws;
             }
 
     function stringifyWindowTextInput(value) {
@@ -514,6 +613,141 @@
                 }
                 return 1;
             }
+
+    function describeDrawableWindowTextGeometry(type, x, y, params = {}) {
+                const invalid = [];
+                const drawX = normalizeDrawableNumber(x);
+                const drawY = normalizeDrawableNumber(y);
+                if (drawX === null) invalid.push('x');
+                if (drawY === null) invalid.push('y');
+                if (type !== 'drawTextEx') {
+                    const maxWidth = normalizeDrawableNumber(params && params.maxWidth);
+                    if (maxWidth === null || maxWidth <= 0) invalid.push('maxWidth');
+                }
+                if (!invalid.length) {
+                    return {
+                        drawable: true,
+                        reason: '',
+                        details: {
+                            x: drawX,
+                            y: drawY,
+                        },
+                    };
+                }
+                return {
+                    drawable: false,
+                    reason: 'invalidDrawGeometry',
+                    details: {
+                        invalid,
+                        x: describeDrawNumber(x),
+                        y: describeDrawNumber(y),
+                        maxWidth: describeDrawNumber(params && params.maxWidth),
+                    },
+                };
+            }
+
+    function describeWindowTextDrawRole(windowInstance, type, x, y, params = {}, textForMeasure = '') {
+                const geometry = describeDrawableWindowTextGeometry(type, x, y, params);
+                if (!geometry.drawable) {
+                    return {
+                        role: 'invalid',
+                        renderable: false,
+                        reason: geometry.reason || 'invalidDrawGeometry',
+                        bounds: null,
+                        contentsSize: null,
+                    };
+                }
+
+                const contents = windowInstance && windowInstance.contents ? windowInstance.contents : null;
+                const contentsWidth = normalizePositiveDimension(contents && contents.width);
+                const contentsHeight = normalizePositiveDimension(contents && contents.height);
+                if (contentsWidth === null || contentsHeight === null) {
+                    return {
+                        role: 'visible',
+                        renderable: true,
+                        reason: '',
+                        bounds: null,
+                        contentsSize: null,
+                    };
+                }
+
+                let bounds = null;
+                try {
+                    bounds = estimateEntryBounds(
+                        windowInstance,
+                        type,
+                        textForMeasure,
+                        x,
+                        y,
+                        textForMeasure,
+                        params
+                    );
+                } catch (_) {
+                    bounds = null;
+                }
+                if (!isValidRect(bounds)) {
+                    return {
+                        role: 'visible',
+                        renderable: true,
+                        reason: '',
+                        bounds: null,
+                        contentsSize: {
+                            width: contentsWidth,
+                            height: contentsHeight,
+                        },
+                    };
+                }
+
+                const intersects = Number(bounds.x2) > 0
+                    && Number(bounds.y2) > 0
+                    && Number(bounds.x1) < contentsWidth
+                    && Number(bounds.y1) < contentsHeight;
+                if (intersects) {
+                    return {
+                        role: 'visible',
+                        renderable: true,
+                        reason: '',
+                        bounds,
+                        contentsSize: {
+                            width: contentsWidth,
+                            height: contentsHeight,
+                        },
+                    };
+                }
+
+                const role = type === 'drawTextEx' ? 'layout-measurement' : 'offscreen-draw';
+                return {
+                    role,
+                    renderable: false,
+                    reason: role,
+                    bounds,
+                    contentsSize: {
+                        width: contentsWidth,
+                        height: contentsHeight,
+                    },
+                };
+            }
+
+    function normalizePositiveDimension(value) {
+                const numeric = Number(value);
+                return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+            }
+
+    function normalizeDrawableNumber(value) {
+                if (value === null || value === undefined) return null;
+                if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+                if (typeof value === 'string') {
+                    if (!value.trim()) return null;
+                    const numeric = Number(value);
+                    return Number.isFinite(numeric) ? numeric : null;
+                }
+                return null;
+            }
+
+    function describeDrawNumber(value) {
+                const numeric = normalizeDrawableNumber(value);
+                return numeric === null ? null : numeric;
+            }
     
     function createObservedEntry(windowInstance, windowData, rawText, x, y, type, convertedText, originalParams) {
                 if (!windowData) return null;
@@ -521,15 +755,16 @@
                 const convertedTrimmed = String(textToTranslate || '').trim();
                 if (!convertedTrimmed) return null;
     
-                retireEntriesInSameSlot(windowData, type, x, y);
+                retireEntriesInSameSlot(windowData, type, x, y, null, 'window-entry-replaced', originalParams);
     
-                const key = generateKey(type, x, y, windowData.windowType, convertedTrimmed);
+                const slotKey = createSlotKey(type, x, y, originalParams);
+                const key = generateKey(type, x, y, windowData.windowType, convertedTrimmed, slotKey);
                 const entry = createEntry(windowInstance, windowData, key, rawText, convertedTrimmed, x, y, type, convertedText, originalParams);
                 windowData.texts.set(key, entry);
                 observeEntry(windowData, entry, 'detected', { eventType: 'item.detected' });
                 recordDrawTrace(`window.${type}.detected`, rawText, windowTraceDetails(windowInstance, type, rawText, x, y, {
                     recordId: entry.recordId || '',
-                    slotKey: entry.slotKey || createSlotKey(type, x, y),
+                    slotKey: entry.slotKey || slotKey,
                     status: getEntryStatus(entry),
                     convertedText,
                     translationSource: entry.translationSource || '',
@@ -537,8 +772,7 @@
                     contentsRevision: entry.contentsRevision || 0,
                 }));
                 try {
-                    if (!windowData.pendingRedraws) windowData.pendingRedraws = new Map();
-                    windowData.pendingRedraws.delete(key);
+                    if (windowData.renderQueue) windowData.renderQueue.delete(key);
                 } catch (_) {}
                 if (!isEntryCompleted(entry)) {
                     requestEntryTranslation(windowData, entry);
@@ -553,7 +787,7 @@
                 if (!convertedTrimmed) return null;
                 const reason = eligibility && eligibility.reason ? eligibility.reason : 'native';
     
-                const existing = findExistingEntry(windowData, type, rawText, convertedTrimmed, x, y);
+                const existing = findExistingEntry(windowData, type, rawText, convertedTrimmed, x, y, originalParams);
                 if (existing) {
                     refreshEntry(windowInstance, windowData, existing, rawText, convertedTrimmed, x, y, type, convertedText, originalParams);
                     existing.skipReason = reason;
@@ -567,7 +801,7 @@
                     });
                     recordDrawTrace(`window.${type}.skipped`, rawText, windowTraceDetails(windowInstance, type, rawText, x, y, {
                         recordId: existing.recordId || '',
-                        slotKey: existing.slotKey || createSlotKey(type, x, y),
+                        slotKey: existing.slotKey || createSlotKey(type, x, y, originalParams),
                         reason: existing.skipReason,
                         category: eligibility && eligibility.category ? eligibility.category : '',
                         status: getEntryStatus(existing, 'skipped'),
@@ -577,9 +811,10 @@
                     return existing;
                 }
     
-                retireEntriesInSameSlot(windowData, type, x, y);
+                retireEntriesInSameSlot(windowData, type, x, y, null, 'window-entry-replaced', originalParams);
     
-                const key = generateKey(type, x, y, windowData.windowType, convertedTrimmed);
+                const slotKey = createSlotKey(type, x, y, originalParams);
+                const key = generateKey(type, x, y, windowData.windowType, convertedTrimmed, slotKey);
                 const entry = createEntry(windowInstance, windowData, key, rawText, convertedTrimmed, x, y, type, convertedText, originalParams);
                 entry.isTranslatable = false;
                 entry.skipReason = reason;
@@ -595,7 +830,7 @@
                 });
                 recordDrawTrace(`window.${type}.skipped`, rawText, windowTraceDetails(windowInstance, type, rawText, x, y, {
                     recordId: entry.recordId || '',
-                    slotKey: entry.slotKey || createSlotKey(type, x, y),
+                    slotKey: entry.slotKey || slotKey,
                     reason: entry.skipReason,
                     category: eligibility && eligibility.category ? eligibility.category : '',
                     status: getEntryStatus(entry, 'skipped'),
@@ -603,32 +838,33 @@
                     bounds: cloneDiagnosticRect(entry.bounds),
                 }));
                 try {
-                    if (!windowData.pendingRedraws) windowData.pendingRedraws = new Map();
-                    windowData.pendingRedraws.delete(key);
+                    if (windowData.renderQueue) windowData.renderQueue.delete(key);
                 } catch (_) {}
                 return entry;
             }
-    
+
     function createEntry(windowInstance, windowData, key, rawText, convertedTrimmed, x, y, type, convertedText, originalParams) {
                 const contents = windowInstance && windowInstance.contents ? windowInstance.contents : null;
                 const surfaceId = getSurfaceId(windowData);
                 const identitySurfaceId = getIdentitySurfaceId(windowInstance, windowData);
-                const codecState = prepareTranslationSource(convertedText || convertedTrimmed || rawText);
-                const translationText = codecState.translationText || convertedTrimmed || rawText;
+                const textSource = prepareTranslationSource(convertedText || convertedTrimmed || rawText);
+                const codecState = textSource.codecState;
+                const translationText = textSource.translationSource || convertedTrimmed || rawText;
                 const drawOrigin = normalizeDrawOrigin(originalParams && originalParams.drawOrigin, type);
+                const screenState = describeWindowScreenState(windowInstance, windowData);
                 const entry = {
                     key,
-                    recordId: createWindowTextRecordId(identitySurfaceId || surfaceId, createSlotKey(type, x, y), translationText),
+                    recordId: createWindowTextRecordId(identitySurfaceId || surfaceId, createSlotKey(type, x, y, originalParams), translationText),
                     surfaceId,
                     identitySurfaceId,
-                    slotKey: createSlotKey(type, x, y),
+                    slotKey: createSlotKey(type, x, y, originalParams),
                     sourceAdapter: ADAPTER_ID,
                     type,
                     rawText,
                     convertedText: convertedTrimmed,
-                    visibleText: stripControls(convertedText || convertedTrimmed || rawText),
+                    visibleText: textSource.visibleText,
                     translationSource: translationText,
-                    normalizedSource: String(translationText || '').trim(),
+                    normalizedSource: textSource.normalizedSource,
                     codecState,
                     renderedText: '',
                     providerText: '',
@@ -636,17 +872,23 @@
                     originalParams: normalizeOriginalParams(originalParams),
                     drawOrigin,
                     timestamp: Date.now(),
-                    drawState: drawOrigin.drawState || captureBitmapDrawState(contents),
+                    drawState: drawOrigin.drawState || drawService.captureBitmapDrawState(contents),
                     contentsBitmap: contents,
                     contentsRevision: windowData.contentsRevision || 0,
                     surfaceRevision: 1,
                     drawOrder: 0,
                     bounds: null,
+                    renderedBounds: null,
                     ownerWindow: windowInstance,
                     windowData,
-                    _trSurfaceVisible: true,
                 };
+                entryLifecycleState.ensure(entry);
+                entryLifecycleState.setSurfaceVisible(entry, screenState === 'visible', {
+                    reason: 'window-entry-created',
+                    screenState,
+                });
                 markEntryObservedInRefresh(entry, windowInstance, windowData);
+                beginNativeSourceDraw(entry, 'window-native-source-draw');
                 assignWindowTextDrawOrder(contents, entry);
                 refreshEntryBounds(windowInstance, entry, convertedText || convertedTrimmed || rawText);
                 captureWindowEntryBackground(contents, entry);
@@ -674,19 +916,29 @@
                 }
                 entry.ownerWindow = windowInstance || entry.ownerWindow;
                 entry.windowData = windowData || entry.windowData;
+                const screenState = describeWindowScreenState(entry.ownerWindow, entry.windowData);
+                entryLifecycleState.setSurfaceVisible(entry, screenState === 'visible', {
+                    reason: 'window-entry-refreshed',
+                    screenState,
+                });
                 entry.drawState = entry.drawOrigin && entry.drawOrigin.drawState
                     ? entry.drawOrigin.drawState
-                    : captureBitmapDrawState(windowInstance && windowInstance.contents);
+                    : drawService.captureBitmapDrawState(windowInstance && windowInstance.contents);
+                entry.renderedBounds = null;
                 markEntryObservedInRefresh(entry, windowInstance, windowData);
                 entry.surfaceRevision = (Number(entry.surfaceRevision) || 0) + 1;
+                beginNativeSourceDraw(entry, 'window-native-source-refresh');
                 clearPendingInvalidation(entry);
-                retireEntriesInSameSlot(windowData, type, x, y, entry);
+                entry.slotKey = createSlotKey(type, x, y, entry.originalParams);
+                retireEntriesInSameSlot(windowData, type, x, y, entry, 'window-entry-replaced', entry.originalParams);
                 assignWindowTextDrawOrder(entry.contentsBitmap, entry);
     
-                const codecState = prepareTranslationSource(convertedText || convertedTrimmed || rawText);
-                const translationText = codecState.translationText || convertedTrimmed || rawText;
+                const textSource = prepareTranslationSource(convertedText || convertedTrimmed || rawText);
+                const codecState = textSource.codecState;
+                const translationText = textSource.translationSource || convertedTrimmed || rawText;
+                entry.visibleText = textSource.visibleText;
                 entry.translationSource = translationText;
-                entry.normalizedSource = String(translationText || '').trim();
+                entry.normalizedSource = textSource.normalizedSource;
                 entry.codecState = codecState;
                 refreshEntryBounds(windowInstance, entry, convertedText || convertedTrimmed || rawText);
                 ensureWindowEntryBackground(entry.contentsBitmap, entry);
@@ -694,6 +946,34 @@
                     eventType: 'item.observed',
                 });
                 return entry;
+            }
+
+    function rememberInlineRenderedBounds(windowInstance, entry, rendered, drawY) {
+                if (!entry) return;
+                const position = entry.position || {};
+                try {
+                    entry.renderedBounds = cloneRenderedBounds(estimateEntryBounds(
+                        windowInstance,
+                        entry.type,
+                        rendered,
+                        position.x,
+                        drawY,
+                        rendered,
+                        entry.originalParams
+                    ));
+                } catch (_) {
+                    entry.renderedBounds = null;
+                }
+            }
+
+    function cloneRenderedBounds(bounds) {
+                if (!isValidRect(bounds)) return null;
+                return {
+                    x1: Number(bounds.x1),
+                    y1: Number(bounds.y1),
+                    x2: Number(bounds.x2),
+                    y2: Number(bounds.y2),
+                };
             }
 
     function normalizeOriginalParams(params) {
@@ -717,7 +997,53 @@
                     drawState: origin.drawState && typeof origin.drawState === 'object'
                         ? Object.assign({}, origin.drawState)
                         : null,
+                    drawBoundary: origin.drawBoundary && typeof origin.drawBoundary === 'object'
+                        ? renderTransaction.createSourceDrawBoundary(origin.drawBoundary)
+                        : null,
                 };
+            }
+
+    function beginNativeSourceDraw(entry, reason) {
+                if (!shouldTrackNativeSourceDraw(entry)) return false;
+                try {
+                    const result = beginEntryNativeSourceDraw(entry, reason);
+                    return !!(result && result.accepted === true && result.phase === 'source-draw-observed');
+                } catch (_) {
+                    return false;
+                }
+            }
+
+    function completeNativeSourceDraw(entry) {
+                try {
+                    const result = completeEntryNativeSourceDraw(entry, 'window-native-source-draw-complete');
+                    return !!(result && result.accepted === true && result.phase === 'source-draw-committed');
+                } catch (_) {
+                    return false;
+                }
+            }
+
+    function flushQueuedRenderAfterNativeSourceDraw(entry) {
+                if (!entry || !entry.windowData || !entry.windowData.renderQueue) return false;
+                const key = entry.key || getTextEntryKey(entry.windowData, entry);
+                const queued = key ? entry.windowData.renderQueue.get(key) : null;
+                if (!queued || queued.entry !== entry || queued.queue !== 'after-source-draw') return false;
+                if (!isEntryCompleted(entry) || !entry.renderedText) return false;
+                const ownerWindow = entry.ownerWindow || resolveTargetWindow(entry, entry.windowData);
+                if (!ownerWindow) return false;
+                return lifecycleService.withRenderDrain(
+                    ownerWindow,
+                    entry.windowData,
+                    'native-source-draw-complete',
+                    () => {
+                        const result = redrawTranslatedText(entry, entry.windowData);
+                        return !!(result && result.status === 'accepted');
+                    }
+                ) === true;
+            }
+
+    function shouldTrackNativeSourceDraw(entry) {
+                return !!(entry
+                    && (!entry.drawOrigin || !entry.drawOrigin.type || entry.drawOrigin.type === 'window'));
             }
     
         return { handleDrawText, handleDrawTextEx, handleSurfaceDrawText, createObservedEntry, recordSkippedEntry, createEntry, refreshEntry };

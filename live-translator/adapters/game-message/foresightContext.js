@@ -13,8 +13,7 @@
 
     function createController(scope = {}) {
         const { EVENT_COMMAND_CONTINUATION_CODES, globalScope, interpreterExecutionStack } = scope;
-        const callScope = (name) => (...args) => scope[name](...args);
-        const { integerIndex } = Object.fromEntries(['integerIndex'].map((name) => [name, callScope(name)]));
+        const { integerIndex } = scope.controllerFacades.foresightRecords;
 
         function attachGameMessageAddOrigin(gameMessage) {
             if (!gameMessage) return false;
@@ -242,9 +241,79 @@
 
         function readMessageOriginText(gameMessage) {
             if (!gameMessage) return '';
-            if (typeof gameMessage.allText === 'function') return String(gameMessage.allText() || '');
-            if (Array.isArray(gameMessage._texts)) return gameMessage._texts.map((line) => String(line ?? '')).join('\n');
+            const stored = readMessageTextData(gameMessage);
+            if (stored.hasOwnData) return stored.text;
+            try {
+                if (typeof gameMessage.allText === 'function') return String(gameMessage.allText() || '');
+            } catch (_) {}
             return '';
+        }
+
+        function readMessageTextData(gameMessage) {
+            if (!gameMessage) {
+                return {
+                    text: '',
+                    hasOwnData: false,
+                    lineCount: 0,
+                };
+            }
+
+            const texts = readOwnDataProperty(gameMessage, '_texts');
+            if (Array.isArray(texts)) {
+                return {
+                    text: texts.map((line) => String(line ?? '')).join('\n'),
+                    hasOwnData: true,
+                    lineCount: texts.length,
+                };
+            }
+
+            const origin = readOwnDataProperty(gameMessage, '_trMessageOrigin');
+            if (origin && typeof origin.rawText === 'string') {
+                return {
+                    text: origin.rawText,
+                    hasOwnData: true,
+                    lineCount: countTextLines(origin.rawText),
+                };
+            }
+
+            const privateText = readOwnDataProperty(gameMessage, '_text');
+            if (typeof privateText === 'string') {
+                return {
+                    text: privateText,
+                    hasOwnData: true,
+                    lineCount: countTextLines(privateText),
+                };
+            }
+
+            const publicText = readOwnDataProperty(gameMessage, 'text');
+            if (typeof publicText === 'string') {
+                return {
+                    text: publicText,
+                    hasOwnData: true,
+                    lineCount: countTextLines(publicText),
+                };
+            }
+
+            return {
+                text: '',
+                hasOwnData: false,
+                lineCount: 0,
+            };
+        }
+
+        function readOwnDataProperty(source, key) {
+            if (!source) return undefined;
+            try {
+                const descriptor = Object.getOwnPropertyDescriptor(source, key);
+                if (descriptor && Object.prototype.hasOwnProperty.call(descriptor, 'value')) {
+                    return descriptor.value;
+                }
+            } catch (_) {}
+            return undefined;
+        }
+
+        function countTextLines(text) {
+            return text.length ? text.split(/\r\n|\r|\n/g).length : 0;
         }
 
         function getInterpreterOriginId(interpreter) {
@@ -259,7 +328,7 @@
             return 'attached';
         }
 
-        return { attachGameMessageAddOrigin, attachChildInterpreterOriginContext, peekInterpreterExecutionContext, createInterpreterExecutionContext, createForesightFrameFromContext, createChildInterpreterDescriptor, getEventCommandNextIndex, cloneForesightFrames, cloneForesightFrame, readCommonEventIdFromCommand, getCommonEventData, getInterpreterForesightId, getInterpreterForesightListId, getInterpreterCommonEventId, getInterpreterCommonEventName, parseMessageOriginBlock, clearMessageOrigin, readMessageOriginText, getInterpreterOriginId };
+        return { attachGameMessageAddOrigin, attachChildInterpreterOriginContext, peekInterpreterExecutionContext, createInterpreterExecutionContext, createForesightFrameFromContext, createChildInterpreterDescriptor, getEventCommandNextIndex, cloneForesightFrames, cloneForesightFrame, readCommonEventIdFromCommand, getCommonEventData, getInterpreterForesightId, getInterpreterForesightListId, getInterpreterCommonEventId, getInterpreterCommonEventName, parseMessageOriginBlock, clearMessageOrigin, readMessageOriginText, readMessageTextData, readOwnDataProperty, getInterpreterOriginId };
     }
 
     defineRuntimeModule('adapters.gameMessage.foresightContext', { create: createController });

@@ -36,10 +36,14 @@
     } = textScale;
     const { createWindowRegistryHelpers } = registry;
 
-    function generateKey(type, x, y, windowType = null, text = null) {
+    function generateKey(type, x, y, windowType = null, text = null, slotKey = null) {
         const base = `${type},${x},${y}`;
+        const slotValue = String(slotKey ?? '').trim();
         const textValue = String(text ?? '').trim();
-        return textValue ? `${base},${hashTextForKey(textValue)}` : base;
+        const parts = [base];
+        if (slotValue) parts.push(hashTextForKey(slotValue));
+        if (textValue) parts.push(hashTextForKey(textValue));
+        return parts.join(',');
     }
 
     function hashTextForKey(text) {

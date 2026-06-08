@@ -16,7 +16,7 @@
     }
 
     const constants = requireRuntimeModule('runtime.translationManagerConstants');
-    const { DEFAULT_PRIORITY, DEFAULT_RESERVED_PRIORITY_LANES, HOOK_PRIORITIES, MAX_PRIORITY, MIN_PRIORITY } = constants;
+    const { DEFAULT_PRIORITY, HOOK_PRIORITIES, MAX_PRIORITY, MIN_PRIORITY } = constants;
 
     function noop() {}
 
@@ -76,24 +76,6 @@
         return fallback;
     }
 
-    function createReservedPriorityLanePolicies(_settings = {}) {
-        // v1 intentionally ships with a single hardcoded lane. It is still shaped
-        // as policy data so a later settings file can tune lane count, thresholds,
-        // matching rules, or blocking behavior without rewriting the scheduler.
-        // TODO(priority-lanes): read these policies from settings.translation once
-        // the UX and diagnostics for user-configured lanes are settled.
-        return DEFAULT_RESERVED_PRIORITY_LANES.map((lane) => ({
-            name: String(lane.name || 'reserved'),
-            enabledAtCapacity: Math.max(1, Math.floor(Number(lane.enabledAtCapacity) || 1)),
-            reservedSlots: Math.max(0, Math.floor(Number(lane.reservedSlots) || 0)),
-            priority: clampPriority(lane.priority),
-            // Empty hooks means adapter-agnostic. v1 reserves for any priority
-            // 1000 subscriber, regardless of which adapter produced it.
-            hooks: Array.isArray(lane.hooks) ? lane.hooks.map((hook) => String(hook || '')).filter(Boolean) : [],
-            blocksNormalDispatch: lane.blocksNormalDispatch === true,
-        })).filter((lane) => lane.reservedSlots > 0);
-    }
-
     function createTextProcessorProvider(textProcessor, isLocalProvider) {
         return {
             kind: isLocalProvider ? 'local' : 'legacy',
@@ -148,7 +130,6 @@
         clampPriority,
         defaultPriorityForHook,
         getPositiveSetting,
-        createReservedPriorityLanePolicies,
         createTextProcessorProvider,
         createNoneProvider,
         isSnapshotForceAsyncTranslationEnabled,

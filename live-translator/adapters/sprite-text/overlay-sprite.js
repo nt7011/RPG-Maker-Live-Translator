@@ -12,20 +12,13 @@
     }
 
     function createController(scope = {}) {
-        const callScope = (name) => (...args) => scope[name](...args);
+        const { finiteNumber } = scope.controllerFacades.utils;
         const {
-            finiteNumber,
             isChildInParent,
             isSpriteSourceRenderableNow,
             readFrameKey,
             updateEntryVisibility,
-        } = Object.fromEntries([
-            'finiteNumber',
-            'isChildInParent',
-            'isSpriteSourceRenderableNow',
-            'readFrameKey',
-            'updateEntryVisibility',
-        ].map((name) => [name, callScope(name)]));
+        } = scope.controllerFacades.visibility;
 
         /**
          * Create a Sprite for translated overlay output.

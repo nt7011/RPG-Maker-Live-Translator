@@ -13,8 +13,13 @@
 
     function createController(scope = {}) {
         const { MESSAGE_RENDER_STRATEGY, FORESIGHT_RECORD_TTL_MS, globalScope, preview, stripControls, adapterContract, foresightRecordsBySource } = scope;
-        const callScope = (name) => (...args) => scope[name](...args);
-        const { createEscapeAwarePayload, restoreStreamingText, isCurrentTranslation, clearForesightSnapshot, createObservation, createMessageRecord, getWindowId, getWindowType, observeMessageRecord, retireItem, markRenderFailed, isAdapterContractFailure, redrawMessageText } = Object.fromEntries(['createEscapeAwarePayload', 'restoreStreamingText', 'isCurrentTranslation', 'clearForesightSnapshot', 'createObservation', 'createMessageRecord', 'getWindowId', 'getWindowType', 'observeMessageRecord', 'retireItem', 'markRenderFailed', 'isAdapterContractFailure', 'redrawMessageText'].map((name) => [name, callScope(name)]));
+        const { evaluateGameMessageText, prepareMessageRedrawText } = scope.controllerFacades.evaluation;
+        const { createEscapeAwarePayload, restoreStreamingText } = scope.controllerFacades.text;
+        const { redrawMessageText } = scope.controllerFacades.redraw;
+        const { isCurrentTranslation, getMessageRenderSession, getMessageStreamPreviewText, isMessageStreamPreviewCurrent, setMessageStreamPreviewText } = scope.controllerFacades.session;
+        const { clearForesightSnapshot } = scope.controllerFacades.clear;
+        const { createObservation, createMessageRecord, getWindowId, getWindowType, observeMessageRecord, retireItem } = scope.controllerFacades.records;
+        const { markRenderFailed, isAdapterContractFailure } = scope.controllerFacades.render;
 
         function getGlobalGameMessage() {
             return globalScope.$gameMessage || null;
@@ -35,12 +40,8 @@
 
         function convertMessageTextForForesight(windowInstance, rawText) {
             const value = String(rawText || '');
-            try {
-                if (windowInstance && typeof windowInstance.convertEscapeCharacters === 'function') {
-                    return windowInstance.convertEscapeCharacters(value);
-                }
-            } catch (_) {}
-            return value;
+            const evaluated = evaluateGameMessageText(windowInstance, value);
+            return evaluated && evaluated.ok ? evaluated.text : value;
         }
 
         function requestForesightTranslation(windowInstance, payload, priority, context = {}) {
@@ -223,19 +224,25 @@
          * Convert a streaming partial into a preview redraw candidate.
          */
         function applyStreamDelta(windowInstance, payload, sessionId, partial) {
-            const requestToken = windowInstance && windowInstance._trMessageRequestToken;
+            const requestToken = windowInstance ? getMessageRenderSession(windowInstance).requestToken : null;
             if (!isCurrentTranslation(windowInstance, sessionId, requestToken)) return;
+            if (!isMessageStreamPreviewCurrent(windowInstance, sessionId)) return;
             if (typeof partial !== 'string' || !partial) return;
             const restored = restoreStreamingText(partial, payload);
-            if (!restored || restored === windowInstance._trStreamText) return;
-            const restoredVisible = stripControls(restored || '').trim();
+            if (!restored || restored === getMessageStreamPreviewText(windowInstance)) return;
+            const prepared = prepareMessageRedrawText(windowInstance, restored, payload, {
+                streamingPreview: true,
+            });
+            if (!prepared || !prepared.ok) return;
+            const restoredVisible = stripControls(prepared.text || '').trim();
             if (!restoredVisible) return;
-            windowInstance._trStreamText = restored;
-            windowInstance._trStreamSessionId = sessionId;
+            setMessageStreamPreviewText(windowInstance, prepared.text, sessionId);
             // Queue one visual-only preview redraw for the newest delta. Final
             // translation render still owns the real message lifecycle.
-            redrawMessageText(windowInstance, restored, sessionId, {
+            redrawMessageText(windowInstance, prepared.text, sessionId, {
                 streamingPreview: true,
+                degradedPreview: prepared.degradedPreview === true,
+                preconverted: true,
                 deferUntilUpdate: true,
             });
         }

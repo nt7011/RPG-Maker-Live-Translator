@@ -12,22 +12,14 @@
     }
 
     function createController(scope = {}) {
-        const callScope = (name) => (...args) => scope[name](...args);
+        const { handleObservedBitmapMutation } = scope.controllerFacades.bitmapObservation;
+        const { isBitmapOwned } = scope.controllerFacades.bitmapOwnership;
+        const { getRecordStatus } = scope.controllerFacades.entries;
+        const { invalidateBitmapOverlayCache } = scope.controllerFacades.overlayBitmap;
         const {
-            getRecordStatus,
-            handleObservedBitmapMutation,
-            invalidateBitmapOverlayCache,
-            isBitmapOwned,
             safeCall,
             warn,
-        } = Object.fromEntries([
-            'getRecordStatus',
-            'handleObservedBitmapMutation',
-            'invalidateBitmapOverlayCache',
-            'isBitmapOwned',
-            'safeCall',
-            'warn',
-        ].map((name) => [name, callScope(name)]));
+        } = scope.controllerFacades.utils;
 
         /**
          * Create or return per-Sprite state.
@@ -95,7 +87,7 @@
          */
         function shouldObserveBitmapMutation(bitmap, methodName) {
             if (!bitmap || isOverlayBitmap(bitmap)) return false;
-            if (bitmap._trSpriteTextReplayDepth > 0 || bitmap._trBitmapReplayDepth > 0) return false;
+            if (scope.bitmapServices.getRenderGuardReason(bitmap)) return false;
             if (isWindowOwnedBitmap(bitmap)) return false;
             if (methodName === 'destroy') return !!(bitmap._trSpriteTextHasTextInterest || isBitmapOwned(bitmap));
             return !!bitmap._trSpriteTextHasTextInterest;
@@ -142,8 +134,10 @@
          */
         function isWindowOwnedBitmap(bitmap) {
             if (!bitmap) return false;
-            if (bitmap._trMessageContents) return true;
-            try { return !!(scope.contentsOwners && typeof scope.contentsOwners.get === 'function' && scope.contentsOwners.get(bitmap)); } catch (_) { return false; }
+            if (scope.surfaceOwnership && typeof scope.surfaceOwnership.isWindowOwnedBitmap === 'function') {
+                return scope.surfaceOwnership.isWindowOwnedBitmap(bitmap) === true;
+            }
+            return false;
         }
         
         /**
@@ -171,22 +165,15 @@
          */
         function safePrepareText(rawText) {
             try {
-                return scope.encodeText(rawText) || createPlainCodecState(rawText);
+                return scope.createTextSource(rawText, { surfaceType: 'sprite' });
             } catch (error) {
                 warn('[SpriteText] Failed to prepare text for translation.', error);
-                return createPlainCodecState(rawText);
+                return createPlainTextSource(rawText);
             }
         }
 
-        function createPlainCodecState(rawText) {
-            const text = String(rawText ?? '');
-            return {
-                originalText: text,
-                visibleText: text.trim(),
-                translationText: text,
-                normalizedText: text.trim(),
-                tokens: [],
-            };
+        function createPlainTextSource(rawText) {
+            return scope.textCodec.createPlainTextSource(rawText, { surfaceType: 'sprite' });
         }
         
         function applyEligibilityToSpriteRecord(record) {

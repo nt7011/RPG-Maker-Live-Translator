@@ -13,8 +13,7 @@
 
     function createController(scope = {}) {
         const { ACTIVE_STATUSES, firstString, firstNonEmptyString, safeIdPart, hashStringForId, normalizeId, normalizeStatus, activeItems, detachedItems, detachedItemsBySlotSignature, slotIndex } = scope;
-        const callScope = (name) => (...args) => scope[name](...args);
-        const { getItemById, hasLiveTranslationRequest } = Object.fromEntries(['getItemById', 'hasLiveTranslationRequest'].map((name) => [name, callScope(name)]));
+        const { getItemById, hasLiveTranslationRequest } = scope.controllerFacades.items;
 
         /**
          * Decide which id an observation should use.
@@ -54,27 +53,31 @@
                 }
                 const nextId = getAvailableExplicitObservationId(explicitId, source)
                     || createGeneratedItemId(source);
+                const existing = getReusableExistingItem(nextId, source);
                 const sourceChangedInPlace = !!(current && current.id === nextId && !isSameObservedText(current, source));
                 return {
                     id: nextId,
                     explicitId: requestedExplicitId,
                     slotSignature,
-                    refreshed: false,
+                    refreshed: !!existing,
+                    restored: !!existing && activeItems.get(existing.id) !== existing,
                     replaced: current && current.id !== nextId && optionsForEvent.replace !== false ? current : null,
-                    current,
+                    current: existing || current,
                     sourceChangedInPlace,
                 };
             }
             if (explicitId) {
                 const nextId = getAvailableExplicitObservationId(explicitId, source)
                     || createGeneratedItemId(source);
+                const existing = getReusableExistingItem(nextId, source);
                 return {
                     id: nextId,
                     explicitId: requestedExplicitId,
                     slotSignature: '',
-                    refreshed: false,
+                    refreshed: !!existing,
+                    restored: !!existing && activeItems.get(existing.id) !== existing,
                     replaced: null,
-                    current: getItemById(nextId),
+                    current: existing || getItemById(nextId),
                 };
             }
             return {
@@ -194,7 +197,22 @@
             if (!item) return 'detected';
             if (item.translationHandle && item.translationToken) return 'translating';
             const status = normalizeStatus(item.status, 'detected');
-            return ACTIVE_STATUSES[status] === true ? status : 'detected';
+            if (ACTIVE_STATUSES[status] === true) return status;
+            if (hasRestorableCompletedTranslation(item)) return 'completed';
+            return 'detected';
+        }
+
+        function hasRestorableCompletedTranslation(item) {
+            if (!item) return false;
+            const metadata = item.metadata && typeof item.metadata === 'object' ? item.metadata : {};
+            if (metadata.skipReason || metadata.translationFailureReason || metadata.translationFailureCategory) return false;
+            return !!firstNonEmptyString(item.translationDrawn, item.translation).trim();
+        }
+
+        function getReusableExistingItem(id, source) {
+            const existing = getItemById(id);
+            if (!existing || !isSameObservedText(existing, source)) return null;
+            return existing;
         }
 
         function shouldPreserveRefreshStatus(item, incomingStatus) {

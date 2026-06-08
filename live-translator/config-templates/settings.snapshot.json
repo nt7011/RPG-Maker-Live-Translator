@@ -1,0 +1,48 @@
+{
+    "checkUpdates": false,
+    "disableLiveTranslatorGui": true,
+    "enableForesight": true,
+    "showForesightSpoilers": false,
+    "logging": {
+        "enabled": false,
+        "suppressExact": []
+    },
+    "debug": {
+        "level": "warn"
+    },
+    "performanceProfiler": {
+        "enabled": false
+    },
+    "Snapshot": {
+        "ForceAsyncTranslation": true
+    },
+    "diagnostics": {
+        "mode": "full",
+        "captureWhenGuiClosed": true
+    },
+    "drawCaptureTrace": {
+        "enabled": true,
+        "recordCjk": true,
+        "recordAll": true,
+        "limit": 640,
+        "targetTexts": []
+    },
+    "translation": {
+        "disableCjkFilter": true,
+        "maxOutputTokens": 512
+    },
+    "ignoreTranslationRegex": [],
+    "overrideTranslationRegex": [],
+    "substitutePlaintextBeforeTranslation": [],
+    "gameMessage": {
+        "textScale": 100,
+        "originAwareLineBreaks": false,
+        "disableStreaming": false
+    },
+    "textScaleOthers": 100,
+    "diskCache": {
+        "enabled": true,
+        "maxMegabytes": 256,
+        "clearOnLaunch": true
+    }
+}

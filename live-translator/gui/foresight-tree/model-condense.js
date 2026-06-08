@@ -7,45 +7,32 @@
     const globalScope = typeof window !== 'undefined'
         ? window
         : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const parts = globalScope.LiveTranslatorForesightTreeViewerParts || {};
-    globalScope.LiveTranslatorForesightTreeViewerParts = parts;
+    const registry = globalScope.LiveTranslatorForesightTreeViewerRegistry;
+    if (!registry || typeof registry.registerPart !== 'function' || typeof registry.requirePart !== 'function') {
+        throw new Error('[ForesightTreeViewer] parts registry must load before message condensing helpers.');
+    }
 
-    const { cloneValue, finiteNumber, nonEmptyString } = parts.utils;
-    const MESSAGE_ONLY_BRANCH_TEXT = '|------|';
+    const { cloneValue, finiteNumber, nonEmptyString } = registry.requirePart('utils');
 
     function createCondenseHelpers(dependencies = {}) {
         const { isMessageAction, createBranchMergeGroups } = dependencies;
 
         function condenseNodesForMessages(nodes) {
                 const output = [];
-                let pending = [];
                 let condensedActionCount = 0;
-        
-                function flushPending() {
-                    if (!pending.length) return;
-                    output.push(createCondensedNode(pending));
-                    condensedActionCount += pending.length;
-                    pending = [];
-                }
-        
+
                 (Array.isArray(nodes) ? nodes : []).forEach((node) => {
                     const filtered = filterNodeForMessages(node);
                     condensedActionCount += filtered.condensedActionCount;
-                    if (!filtered.keep) {
-                        pending = pending.concat(collectCondensedActionEntries(node));
-                        return;
-                    }
-                    flushPending();
-                    output.push(filtered.node);
+                    if (filtered.keep) output.push(filtered.node);
                 });
-                flushPending();
-        
+
                 return { nodes: output, condensedActionCount };
             }
         
         function filterNodeForMessages(node) {
                 if (!node || node.condensed === true) {
-                    return { keep: false, node: null, condensedActionCount: 0 };
+                    return { keep: false, node: null, condensedActionCount: countHiddenActions(node) };
                 }
         
                 const filteredBranches = [];
@@ -60,17 +47,17 @@
                     }));
                 });
         
-                const isMessage = isMessageAction(node.raw);
+                const isMessage = isMessageAction(node.raw) && !!node.messageRecord;
                 if (!isMessage && filteredBranches.length > 0) {
                     return {
                         keep: true,
-                        node: createMessageOnlyBranchNode(node, filteredBranches),
+                        node: createMessageOnlyJunctionNode(node, filteredBranches),
                         condensedActionCount: condensedActionCount + 1,
                     };
                 }
 
                 if (!isMessage) {
-                    return { keep: false, node: null, condensedActionCount: 0 };
+                    return { keep: false, node: null, condensedActionCount: condensedActionCount + 1 };
                 }
         
                 const nextNode = Object.assign({}, node, {
@@ -81,14 +68,11 @@
                 return { keep: true, node: nextNode, condensedActionCount };
             }
 
-        function createMessageOnlyBranchNode(node, branches) {
-                const filteredBranches = (Array.isArray(branches) ? branches : []).map((branch) => Object.assign({}, branch, {
-                    label: MESSAGE_ONLY_BRANCH_TEXT,
-                }));
+        function createMessageOnlyJunctionNode(node, branches) {
+                const filteredBranches = Array.isArray(branches) ? branches : [];
                 return {
-                    messageOnlyBranch: true,
-                    scrollKey: `message-branch:${nonEmptyString(node && node.scrollKey) || 'unknown'}`,
-                    text: MESSAGE_ONLY_BRANCH_TEXT,
+                    messageOnlyJunction: true,
+                    scrollKey: `message-junction:${nonEmptyString(node && node.scrollKey) || 'unknown'}`,
                     branchDepth: finiteNumber(node && node.branchDepth),
                     branchPath: cloneValue(node && node.branchPath, 0),
                     listContext: cloneValue(node && node.listContext, 0),
@@ -102,53 +86,18 @@
         function containsVisibleMessagePath(nodes) {
                 return (Array.isArray(nodes) ? nodes : []).some((node) => node && node.condensed !== true);
             }
-        
-        function collectCondensedActionEntries(node, entries = []) {
-                if (!node || node.condensed === true) return entries;
-                entries.push(createCondensedActionEntry(node));
-                (Array.isArray(node.branches) ? node.branches : []).forEach((branch) => {
-                    (Array.isArray(branch && branch.nodes) ? branch.nodes : []).forEach((child) => {
-                        collectCondensedActionEntries(child, entries);
-                    });
-                });
-                return entries;
-            }
-        
-        function createCondensedActionEntry(node) {
-                const raw = node && node.raw && typeof node.raw === 'object' ? node.raw : {};
-                return {
-                    index: finiteNumber(node && node.index),
-                    code: finiteNumber(node && node.code),
-                    label: nonEmptyString(node && node.label) || nonEmptyString(raw.label),
-                };
-            }
-        
-        function createCondensedNode(entries) {
-                const actions = (Array.isArray(entries) ? entries : []).map((entry) => ({
-                    index: finiteNumber(entry && entry.index),
-                    code: finiteNumber(entry && entry.code),
-                    label: nonEmptyString(entry && entry.label),
-                }));
-                const tokens = actions.map(formatCondensedActionToken);
-                return {
-                    condensed: true,
-                    actions,
-                    tokens,
-                    text: MESSAGE_ONLY_BRANCH_TEXT,
-                    count: actions.length,
-                    scrollKey: `condensed:${tokens[0] || 'empty'}:${tokens[tokens.length - 1] || 'empty'}:${actions.length}`,
-                };
-            }
-        
-        function formatCondensedActionToken(action) {
-                const index = finiteNumber(action && action.index);
-                if (index !== null) return String(index);
-                const code = finiteNumber(action && action.code);
-                return code === null ? '?' : `code:${code}`;
+
+        function countHiddenActions(node) {
+                if (!node) return 0;
+                if (node.condensed === true) {
+                    const count = finiteNumber(node.count);
+                    return count === null ? 0 : Math.max(0, count);
+                }
+                return 1;
             }
 
         return { condenseNodesForMessages };
     }
 
-    parts.modelCondense = Object.freeze({ createCondenseHelpers });
+    registry.registerPart('modelCondense', Object.freeze({ createCondenseHelpers }));
 })();

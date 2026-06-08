@@ -5,16 +5,18 @@
     const globalScope = typeof window !== 'undefined'
         ? window
         : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const parts = globalScope.LiveTranslatorForesightTreeViewerParts || {};
-    globalScope.LiveTranslatorForesightTreeViewerParts = parts;
+    const registry = globalScope.LiveTranslatorForesightTreeViewerRegistry;
+    if (!registry || typeof registry.registerPart !== 'function' || typeof registry.requirePart !== 'function') {
+        throw new Error('[ForesightTreeViewer] parts registry must load before renderer helpers.');
+    }
 
     // Render shell, DOM reuse, scroll preservation, and render-key diffing.
     const ACTIVE_SCROLL_REFRESH_GRACE_MS = 900;
-    const { cloneValue, finiteNumber, nonEmptyString } = parts.utils;
-    const { appendNodes, createEmpty, createOverview } = parts.dom;
-    const { drawTreeRoutes } = parts.routes;
-    const { findActionCardByScrollKey, finiteMetric, finiteScrollMetric, getActionCardScrollKey, getActionCards, getElementHeight, getElementLeftRelativeToScroll, getElementTopRelativeToScroll, getElementWidth, getMaxScrollLeft, getMaxScrollTop, clampScrollLeft, clampScrollTop } = parts.domUtils;
-    const { createModel } = parts.model;
+    const { cloneValue, finiteNumber, nonEmptyString } = registry.requirePart('utils');
+    const { appendTimeline, createEmpty, createOverview } = registry.requirePart('dom');
+    const { findActionCardByScrollKey, finiteMetric, finiteScrollMetric, getActionCardScrollKey, getActionCards, getElementHeight, getElementLeftRelativeToScroll, getElementTopRelativeToScroll, getElementWidth, getMaxScrollLeft, getMaxScrollTop, clampScrollLeft, clampScrollTop } = registry.requirePart('domUtils');
+    const { createTimelineLayout } = registry.requirePart('layout');
+    const { createModel } = registry.requirePart('model');
     
     function render(container, options = {}) {
             const model = createModel(options.snapshot, options);
@@ -29,13 +31,17 @@
                 return model;
             }
     
-            const renderKeys = createRenderKeys(model, options);
+            const layout = createTimelineLayout(model, options);
+            const renderKeys = createRenderKeys(model, layout, options);
             const previousState = getContainerRenderState(container);
             const existingScroll = findForesightScroll(container);
             const scroll = existingScroll || doc.createElement('div');
-            scroll.className = 'foresight-tree-scroll';
+            scroll.className = model.messagesOnly
+                ? 'foresight-panel-scroll foresight-panel-scroll-messages-only'
+                : 'foresight-panel-scroll';
             bindScrollActivityTracker(scroll);
-            syncForesightShell(container, createOverview(doc, model, options), scroll);
+            syncForesightShell(container, model.messagesOnly ? null : createOverview(doc, model, options), scroll);
+            syncScrollLayoutMetrics(scroll);
     
             const structureChanged = !previousState
                 || !existingScroll
@@ -47,31 +53,33 @@
             }
     
             clearElement(scroll);
-            let hasRenderedTree = false;
-            if (!model.nodes.length) {
+            const hasCurrentMessage = !!model.currentMessageRecord;
+            if (!model.nodes.length && !hasCurrentMessage) {
                 scroll.appendChild(createEmpty(doc, 'No command actions recorded.'));
             } else {
-                const list = doc.createElement('ol');
-                list.className = 'foresight-tree-list';
-                appendNodes(doc, list, model.nodes, options, 0);
-                scroll.appendChild(list);
-                hasRenderedTree = true;
+                appendTimeline(doc, scroll, layout, options);
             }
     
-            if (hasRenderedTree) drawTreeRoutes(doc, scroll, model);
+            syncScrollLayoutMetrics(scroll);
             restoreScrollState(scroll, scrollState);
             setContainerRenderState(container, renderKeys);
             return model;
         }
+
+    function syncScrollLayoutMetrics(scroll) {
+            const width = finiteScrollMetric(scroll && scroll.clientWidth);
+            if (!width || !scroll || !scroll.style || typeof scroll.style.setProperty !== 'function') return;
+            scroll.style.setProperty('--foresight-panel-width', `${Math.round(width)}px`);
+        }
     
     function syncForesightShell(container, overview, scroll) {
-            if (!container || !overview || !scroll) return;
+            if (!container || !scroll) return;
             const currentOverview = findForesightOverview(container);
             if (currentOverview) removeElement(currentOverview);
             if (scroll.parentNode !== container) {
                 container.appendChild(scroll);
             }
-            container.insertBefore(overview, scroll);
+            if (overview) container.insertBefore(overview, scroll);
             getElementChildren(container).forEach((child) => {
                 if (child !== overview && child !== scroll) removeElement(child);
             });
@@ -85,7 +93,7 @@
     
     function findForesightScroll(container) {
             return container && typeof container.querySelector === 'function'
-                ? container.querySelector('.foresight-tree-scroll')
+                ? container.querySelector('.foresight-panel-scroll')
                 : null;
         }
     
@@ -159,17 +167,39 @@
             return Date.now ? Date.now() : new Date().getTime();
         }
     
-    function createRenderKeys(model, options) {
+    function createRenderKeys(model, layout, options) {
             const structure = createModelStructureRenderValue(model);
+            const panelLayout = createTimelineLayoutRenderValue(layout);
             const records = collectMessageRecordRenderValues(model && model.nodes);
             const content = {
                 structure,
+                panelLayout,
                 dynamic: records.length && options.dynamicRenderKey !== undefined ? String(options.dynamicRenderKey) : '',
+                currentMessageRecord: createMessageRecordRenderValue(model && model.currentMessageRecord),
                 records,
             };
             return {
                 structureKey: stableRenderString(structure),
                 contentKey: stableRenderString(content),
+            };
+        }
+
+    function createTimelineLayoutRenderValue(layout) {
+            const source = layout && typeof layout === 'object' ? layout : {};
+            return {
+                columnCount: finiteNumber(source.columnCount),
+                rows: (Array.isArray(source.rows) ? source.rows : []).map((row) => ({
+                    rowIndex: finiteNumber(row && row.rowIndex),
+                    lane: finiteNumber(row && row.lane),
+                    items: (Array.isArray(row && row.items) ? row.items : []).map((item) => ({
+                        kind: nonEmptyString(item && item.kind),
+                        column: finiteNumber(item && item.column),
+                        branchLabel: nonEmptyString(item && item.branchLabel),
+                        scrollKey: nonEmptyString(item && item.node && item.node.scrollKey),
+                        stops: cloneValue(item && item.stops, 0),
+                        count: finiteNumber(item && item.count),
+                    })),
+                })),
             };
         }
     
@@ -179,6 +209,9 @@
                 actionLimit: model && model.actionLimit,
                 actionsTruncated: model && model.actionsTruncated,
                 condensedActionCount: model && model.condensedActionCount,
+                currentMessageRecordId: model && model.currentMessageRecord && model.currentMessageRecord.id
+                    ? String(model.currentMessageRecord.id)
+                    : '',
                 nodes: createNodeStructureRenderValues(model && model.nodes),
             };
         }
@@ -198,11 +231,10 @@
                     actions: cloneValue(node.actions, 0),
                 };
             }
-            if (node.messageOnlyBranch === true) {
+            if (node.messageOnlyJunction === true) {
                 return {
-                    messageOnlyBranch: true,
+                    messageOnlyJunction: true,
                     scrollKey: nonEmptyString(node.scrollKey),
-                    text: nonEmptyString(node.text),
                     branchDepth: finiteNumber(node.branchDepth),
                     branchPath: cloneValue(node.branchPath, 0),
                     listContext: cloneValue(node.listContext, 0),
@@ -298,7 +330,7 @@
     
     function captureScrollState(container) {
             const scroll = container && typeof container.querySelector === 'function'
-                ? container.querySelector('.foresight-tree-scroll')
+                ? container.querySelector('.foresight-panel-scroll')
                 : null;
             if (!scroll) return null;
             const top = finiteScrollMetric(scroll.scrollTop);
@@ -386,6 +418,6 @@
             return anchors;
         }
     
-    parts.renderer = Object.freeze({ render });
+    registry.registerPart('renderer', Object.freeze({ render }));
 
 })();

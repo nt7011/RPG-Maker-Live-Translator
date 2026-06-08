@@ -25,10 +25,18 @@
     if (typeof requireRuntimeModule !== 'function') {
         throw new Error('[LiveTranslator] runtime module require is unavailable before adapters/window-text-adapter.js.');
     }
+    const renderTransaction = requireRuntimeModule('runtime.renderTransaction');
+    const entryLifecycleState = requireRuntimeModule('runtime.entryLifecycle');
+    if (!entryLifecycleState || typeof entryLifecycleState.isStale !== 'function') {
+        throw new Error('[LiveTranslator] runtime.entryLifecycle is unavailable before adapters/window-text-adapter.js.');
+    }
     const windowTextControllers = {
+        services: requireRuntimeModule('adapters.windowTextServices'),
+        controllerFacades: requireRuntimeModule('adapters.windowTextControllerFacades'),
         subscriptionController: requireRuntimeModule('adapters.windowTextSubscriptionController'),
         drawObserver: requireRuntimeModule('adapters.windowTextDrawObserver'),
         entryService: requireRuntimeModule('adapters.windowTextEntryService'),
+        renderPlanner: requireRuntimeModule('adapters.windowTextRenderPlanner'),
         renderPending: requireRuntimeModule('adapters.windowTextRenderPending'),
         renderDraw: requireRuntimeModule('adapters.windowTextRenderDraw'),
         entryLifecycle: requireRuntimeModule('adapters.windowTextEntryLifecycle'),
@@ -83,9 +91,11 @@
             bitmapReplay = null,
             bitmapDraws = null,
             contentsOwners = null,
+            surfaceOwnership = null,
             settings = {},
+            textCodec = null,
             stripControls,
-            encodeText,
+            createTextSource,
             restoreText,
         } = options;
 
@@ -101,8 +111,12 @@
         if (typeof captureBitmapDrawState !== 'function' || typeof applyBitmapDrawState !== 'function') {
             throw new Error('[WindowTextAdapter] bitmap draw-state helpers are required.');
         }
-        if (typeof stripControls !== 'function'
-            || typeof encodeText !== 'function'
+        if (!textCodec
+            || typeof textCodec.createPlainTextSource !== 'function'
+            || typeof textCodec.sanitizeDrawTextOutput !== 'function'
+            || typeof textCodec.countIconEscapes !== 'function'
+            || typeof stripControls !== 'function'
+            || typeof createTextSource !== 'function'
             || typeof restoreText !== 'function') {
             throw new Error('[WindowTextAdapter] text codec helpers are required.');
         }
@@ -151,9 +165,11 @@
             bitmapReplay,
             bitmapDraws,
             contentsOwners,
+            surfaceOwnership,
             settings,
+            textCodec,
             stripControls,
-            encodeText,
+            createTextSource,
             restoreText,
         });
         const helpers = adapter.install();
@@ -168,7 +184,6 @@
         const { logger, adapterContract, resolveTextScalePercent, settings, bitmapDraws } = context;
         const entriesByRecordId = new Map();
         const detachedEntriesByRecordId = new Map();
-        const redrawSettings = readRedrawSettings(settings);
         const detachedEntryLimit = readDetachedEntryLimit(settings);
         const textScaleOthers = typeof resolveTextScalePercent === 'function'
             ? resolveTextScalePercent(settings, 'textScaleOthers', 100)
@@ -200,6 +215,7 @@
             safeStripRpgmEscapes: 'entryService',
             describeWindowScreenState: 'entryService',
             buildOrchestratorPayload: 'entryService',
+            planTranslatedRedraw: 'renderPlanner',
             applyRenderCommand: 'renderPending',
             markRequestSkipped: 'renderPending',
             markRequestFailed: 'renderPending',
@@ -231,11 +247,13 @@
             cancelEntryTranslation: 'entryLifecycle',
             markRecordDisappeared: 'entryLifecycle',
             recordDecision: 'entryLifecycle',
-            queuePendingRedraw: 'entryLifecycle',
+            queueRenderRetry: 'entryLifecycle',
             clearPendingInvalidation: 'entryLifecycle',
             getCurrentEntry: 'entryLifecycle',
             getTextEntryKey: 'entryLifecycle',
-            dropPendingRedraw: 'entryLifecycle',
+            dropRenderRetry: 'entryLifecycle',
+            beginEntryNativeSourceDraw: 'entryLifecycle',
+            completeEntryNativeSourceDraw: 'entryLifecycle',
             resolveWindowData: 'entryLifecycle',
             resolveTargetWindow: 'entryLifecycle',
             isWindowReadyForRedraw: 'entryLifecycle',
@@ -256,7 +274,6 @@
             describeWindowTextEligibility: 'textMeasure',
             describeEntryEligibility: 'textMeasure',
             isDedicatedMessageWindow: 'textMeasure',
-            rememberMessageStart: 'textMeasure',
             getSurfaceId: 'textMeasure',
             getIdentitySurfaceId: 'textMeasure',
             createSlotKey: 'textMeasure',
@@ -342,7 +359,6 @@
         const controllerContext = Object.assign({}, context, {
             entriesByRecordId,
             detachedEntriesByRecordId,
-            redrawSettings,
             DETACHED_ENTRY_LIMIT: detachedEntryLimit,
             textScaleOthers,
             ADAPTER_ID,
@@ -352,10 +368,16 @@
             WINDOW_WRAPPER_TOKEN,
             REDRAW_DIAGNOSTIC_ITEM_LIMIT,
             MAX_BACKGROUND_SNAPSHOT_PIXELS,
+            renderTransaction,
+            entryLifecycleState,
             install,
             installWindowBaseWrappers,
             installSurfaceDrawSubscription,
             hasHookInChain,
+        });
+        controllerContext.services = windowTextControllers.services.create(controllerContext);
+        controllerContext.facades = windowTextControllers.controllerFacades.create({
+            callController,
         });
 
         Object.keys(methodControllers).forEach((methodName) => {
@@ -409,25 +431,12 @@
                 onBatch(batch) {
                     if (!batch || !batch.bitmap || typeof batch.forEachUnconsumed !== 'function') return 0;
                     let handled = 0;
-                    batch.forEachUnconsumed((unit) => {
-                        if (!unit || batch.isConsumed(unit)) return;
-                        const result = callController('handleSurfaceDrawText', {
-                            bitmap: batch.bitmap,
-                            target: batch.bitmap,
-                            methodName: unit.methodName,
-                            text: unit.text,
-                            rawText: unit.text,
-                            x: unit.x,
-                            y: unit.y,
-                            maxWidth: unit.maxWidth,
-                            lineHeight: unit.lineHeight,
-                            align: unit.align,
-                            drawState: unit.drawState,
-                            backgroundPatch: unit.backgroundPatch,
-                            measuredWidth: 0,
-                            sourceAdapter: 'bitmap',
-                            ownershipStatus: 'claimed',
-                        }, {
+                    collectBitmapWindowDrawGroups(batch).forEach((group) => {
+                        if (!group || !Array.isArray(group.units) || !group.units.length) return;
+                        if (group.units.some((unit) => batch.isConsumed(unit))) return;
+                        const payload = createBitmapWindowDrawPayload(batch, group.units);
+                        if (!payload) return;
+                        const result = callController('handleSurfaceDrawText', payload, {
                             type: 'bitmap.drawBatch',
                             sourceAdapter: 'bitmap',
                             status: 'claimed',
@@ -435,12 +444,112 @@
                             postDraw: true,
                         });
                         if (!result || typeof result !== 'object') return;
-                        batch.consume(unit, ADAPTER_ID);
-                        handled += 1;
+                        group.units.forEach((unit) => batch.consume(unit, ADAPTER_ID));
+                        handled += group.units.length;
                     });
                     return handled;
                 },
             });
+        }
+
+        function collectBitmapWindowDrawGroups(batch) {
+            const groups = [];
+            let activeRun = null;
+            batch.forEachUnconsumed((unit) => {
+                if (!unit || batch.isConsumed(unit)) return;
+                // processNormalCharacter writes one bitmap draw per glyph. When a
+                // later plugin has bypassed the Window_Base.drawTextEx wrapper, the
+                // draw-hub run id is the only durable text-run boundary left.
+                const runKey = createNormalCharacterRunKey(unit);
+                if (runKey && activeRun && activeRun.runKey === runKey) {
+                    activeRun.units.push(unit);
+                    return;
+                }
+                const group = { runKey, units: [unit] };
+                groups.push(group);
+                activeRun = runKey ? group : null;
+            });
+            return groups;
+        }
+
+        function createNormalCharacterRunKey(unit) {
+            if (!unit || unit.normalCharacter !== true || !unit.normalCharacterRunId) return '';
+            return [
+                String(unit.normalCharacterRunId || ''),
+                String(unit.methodName || 'drawText'),
+                String(unit.styleId || ''),
+                String(unit.align || ''),
+                formatDrawGroupNumber(unit.y),
+                formatDrawGroupNumber(unit.lineHeight),
+            ].join('|');
+        }
+
+        function createBitmapWindowDrawPayload(batch, units) {
+            const ordered = units.slice().sort(compareBitmapDrawUnits);
+            const first = ordered[0];
+            if (!first) return null;
+            const text = ordered.map((unit) => String(unit && unit.text !== undefined ? unit.text : '')).join('');
+            if (!text) return null;
+            const bounds = measureBitmapDrawUnits(ordered);
+            const x = finiteBitmapDrawNumber(first.x, 0);
+            const y = finiteBitmapDrawNumber(first.y, 0);
+            const maxWidth = Math.max(0, bounds.x2 - x, finiteBitmapDrawNumber(first.maxWidth, 0));
+            const lineHeight = Math.max(1, ...ordered.map((unit) => finiteBitmapDrawNumber(unit && unit.lineHeight, 0)));
+            return {
+                bitmap: batch.bitmap,
+                target: batch.bitmap,
+                methodName: first.methodName,
+                text,
+                rawText: text,
+                x,
+                y,
+                maxWidth,
+                lineHeight,
+                align: first.align,
+                ownerType: first.ownerType,
+                drawState: first.drawState,
+                backgroundPatch: first.backgroundPatch || null,
+                measuredWidth: Math.max(0, bounds.x2 - bounds.x1),
+                sourceAdapter: 'bitmap',
+                ownershipStatus: 'claimed',
+            };
+        }
+
+        function compareBitmapDrawUnits(left, right) {
+            const leftOrder = Number(left && left.order);
+            const rightOrder = Number(right && right.order);
+            if (Number.isFinite(leftOrder) && Number.isFinite(rightOrder) && leftOrder !== rightOrder) {
+                return leftOrder - rightOrder;
+            }
+            const leftX = finiteBitmapDrawNumber(left && left.x, 0);
+            const rightX = finiteBitmapDrawNumber(right && right.x, 0);
+            if (leftX !== rightX) return leftX - rightX;
+            return finiteBitmapDrawNumber(left && left.y, 0) - finiteBitmapDrawNumber(right && right.y, 0);
+        }
+
+        function measureBitmapDrawUnits(units) {
+            return units.reduce((bounds, unit) => {
+                const x = finiteBitmapDrawNumber(unit && unit.x, 0);
+                const y = finiteBitmapDrawNumber(unit && unit.y, 0);
+                const width = Math.max(0, finiteBitmapDrawNumber(unit && unit.maxWidth, 0));
+                const height = Math.max(1, finiteBitmapDrawNumber(unit && unit.lineHeight, 1));
+                return {
+                    x1: Math.min(bounds.x1, x),
+                    y1: Math.min(bounds.y1, y),
+                    x2: Math.max(bounds.x2, x + width),
+                    y2: Math.max(bounds.y2, y + height),
+                };
+            }, { x1: Infinity, y1: Infinity, x2: -Infinity, y2: -Infinity });
+        }
+
+        function formatDrawGroupNumber(value) {
+            const numeric = Number(value);
+            return Number.isFinite(numeric) ? String(Math.round(numeric * 1000) / 1000) : '';
+        }
+
+        function finiteBitmapDrawNumber(value, fallback) {
+            const numeric = Number(value);
+            return Number.isFinite(numeric) ? numeric : fallback;
         }
 
         function installWindowBaseWrappers() {
@@ -491,21 +600,6 @@
         return !!(adapterContract
             && typeof adapterContract.hasRequiredMethods === 'function'
             && adapterContract.hasRequiredMethods(REQUIRED_ORCHESTRATOR_METHODS));
-    }
-
-    function readRedrawSettings(settings) {
-        const source = settings && settings.redraw && typeof settings.redraw === 'object'
-            ? settings.redraw
-            : {};
-        return {
-            extraPadding: nonNegativeNumber(source.extraPadding, 0),
-            defaultOutline: nonNegativeNumber(source.defaultOutline, 0),
-        };
-    }
-
-    function nonNegativeNumber(value, fallback) {
-        const numeric = Number(value);
-        return Number.isFinite(numeric) && numeric >= 0 ? numeric : fallback;
     }
 
     function readDetachedEntryLimit(settings) {

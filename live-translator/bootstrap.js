@@ -83,6 +83,33 @@
         };
     }
 
+    function subscribeProviderAvailabilityRestored(translationService, textOrchestrator, logger) {
+        if (!translationService
+            || typeof translationService.subscribeProviderAvailability !== 'function'
+            || !textOrchestrator
+            || typeof textOrchestrator.retryFailedTranslations !== 'function') {
+            return false;
+        }
+        translationService.subscribeProviderAvailability((event) => {
+            if (!event || event.type !== 'provider.availability_restored') return;
+            try {
+                const result = textOrchestrator.retryFailedTranslations({
+                    reason: 'lmstudio-availability-restored',
+                    includeActive: true,
+                    includeForesight: true,
+                });
+                if (result && result.attempted > 0 && logger && typeof logger.info === 'function') {
+                    logger.info(`[LM Studio] Availability restored; retried ${result.attempted} failed translation request(s).`);
+                }
+            } catch (error) {
+                if (logger && typeof logger.warn === 'function') {
+                    logger.warn('[LM Studio] Availability restored retry failed.', error);
+                }
+            }
+        });
+        return true;
+    }
+
     const settings = configModule.requireSettings(globalScope);
     const pathContext = pathsModule.getPathContext();
     const providerContext = providerModule.createProviderContext({ scope: globalScope });
@@ -113,13 +140,20 @@
         loggerContext,
         paths: pathContext,
     });
+    try {
+        globalScope.LiveTranslatorRuntimeCache = {
+            flushDiskCache: typeof cacheContext.flushDiskCache === 'function'
+                ? cacheContext.flushDiskCache
+                : async () => {},
+        };
+    } catch (_) {}
+    const translationService = cacheContext.translationService
+        || (cacheContext.translationManager && cacheContext.translationManager.translationService)
+        || null;
     if (typeof textOrchestrator.setTranslationService === 'function') {
-        textOrchestrator.setTranslationService(
-            cacheContext.translationService
-                || (cacheContext.translationManager && cacheContext.translationManager.translationService)
-                || null
-        );
+        textOrchestrator.setTranslationService(translationService);
     }
+    subscribeProviderAvailabilityRestored(translationService, textOrchestrator, loggerContext.logger);
     const hookInstaller = hookInstallerModule.createHookInstaller({
         settings,
         cacheContext,

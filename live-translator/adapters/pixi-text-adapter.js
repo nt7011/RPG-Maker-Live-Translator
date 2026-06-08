@@ -75,13 +75,8 @@
             dbg = () => {},
             diag = () => {},
             preview = (text) => String(text ?? ''),
-            encodeText = (text) => ({
-                originalText: String(text ?? ''),
-                visibleText: String(text ?? '').trim(),
-                translationText: String(text ?? ''),
-                normalizedText: String(text ?? '').trim(),
-                tokens: [],
-            }),
+            textCodec,
+            createTextSource,
             restoreText = (translated) => translated,
             telemetry = null,
             adapterContract = null,
@@ -108,7 +103,8 @@
             warn,
         } = pixiAdapterHelpers.create({
             adapterContract,
-            encodeText,
+            textCodec: requireTextCodec(textCodec, 'PIXI'),
+            createTextSource: requireTextSourceHelper(createTextSource, 'PIXI'),
             telemetry,
             logger,
             safeCall,
@@ -358,14 +354,13 @@
                 return writeNativeText(displayObject, text, false);
             }
 
-            const codecState = prepareTranslationInput(text);
-            const translationSource = stringifyText(codecState.translationText !== undefined
-                ? codecState.translationText
-                : text);
-            const normalizedSource = translationSource.trim();
+            const textSource = prepareTranslationInput(text);
+            const codecState = textSource.codecState;
+            const translationSource = stringifyText(textSource.translationSource);
+            const normalizedSource = textSource.normalizedSource;
             const sourceEligibility = describePixiTextEligibility({
                 rawText: text,
-                visibleText: text,
+                visibleText: textSource.visibleText,
                 original: text,
                 translationSource,
                 normalizedSource,
@@ -388,7 +383,7 @@
                 surfaceType: SURFACE_TYPE,
                 status: 'detected',
                 rawText: text,
-                visibleText: text,
+                visibleText: textSource.visibleText,
                 original: text,
                 translationSource,
                 normalizedSource,
@@ -474,7 +469,7 @@
                     renderStrategy: RENDER_STRATEGY,
                     metadata: payload.metadata,
                 });
-                if (!requested) {
+                if (!requested || requested.handled !== true) {
                     updateItem(state, { status: 'failed' }, 'item.failed', {
                         reason: 'translation request failed',
                         windowType: state.label,
@@ -491,6 +486,16 @@
         }
 
         return { install };
+    }
+
+    function requireTextSourceHelper(value, label) {
+        if (typeof value === 'function') return value;
+        throw new Error(`[${label}] createTextSource helper is required.`);
+    }
+
+    function requireTextCodec(value, label) {
+        if (value && typeof value.createPlainTextSource === 'function') return value;
+        throw new Error(`[${label}] textCodec service is required.`);
     }
 
     defineRuntimeModule('adapters.pixiText', {

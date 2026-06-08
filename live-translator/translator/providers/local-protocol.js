@@ -34,7 +34,7 @@
         DEFAULT_LOCAL_MAX_OUTPUT_TOKENS,
     } = utils;
 
-    function readParallelCapacity(instance) {
+    function readParallelCapacityDetail(instance) {
         const config = instance && instance.config && typeof instance.config === 'object'
             ? instance.config
             : {};
@@ -48,9 +48,86 @@
         ];
         for (const value of candidates) {
             const numeric = Number(value);
-            if (Number.isInteger(numeric) && numeric > 0) return numeric;
+            if (Number.isInteger(numeric) && numeric > 0) {
+                return {
+                    capacity: numeric,
+                    verified: true,
+                };
+            }
         }
-        return 1;
+        return {
+            capacity: 1,
+            verified: false,
+        };
+    }
+
+    function readParallelCapacity(instance) {
+        return readParallelCapacityDetail(instance).capacity;
+    }
+
+    function readApiString(source, keys) {
+        const object = source && typeof source === 'object' ? source : {};
+        for (const key of keys) {
+            if (!Object.prototype.hasOwnProperty.call(object, key)) continue;
+            const value = object[key];
+            if (typeof value === 'string' && value.trim()) return value.trim();
+        }
+        return '';
+    }
+
+    function readQuantizationName(model) {
+        const quantization = model && model.quantization && typeof model.quantization === 'object'
+            ? model.quantization
+            : null;
+        const explicit = readApiString(quantization, ['name', 'Name']);
+        if (explicit) return explicit;
+
+        const selectedVariant = readApiString(model, ['selected_variant', 'selectedVariant']);
+        const marker = selectedVariant.lastIndexOf('@');
+        return marker >= 0 ? selectedVariant.slice(marker + 1).trim() : '';
+    }
+
+    function createLocalModelMetadata(model) {
+        const source = model && typeof model === 'object' ? model : {};
+        return {
+            key: readApiString(source, ['key', 'id']),
+            publisher: readApiString(source, ['publisher', 'author']),
+            displayName: readApiString(source, ['display_name', 'displayName', 'name']),
+            quantization: readQuantizationName(source),
+            selectedVariant: readApiString(source, ['selected_variant', 'selectedVariant']),
+        };
+    }
+
+    function createLoadedInstanceRecord(model, instance) {
+        const instanceId = instance && typeof instance.id === 'string' ? instance.id.trim() : '';
+        if (!instanceId) return null;
+        const modelMetadata = createLocalModelMetadata(model);
+        if (!modelMetadata.key) return null;
+        const capacityDetail = readParallelCapacityDetail(instance);
+        return {
+            instanceId,
+            modelKey: modelMetadata.key,
+            model: modelMetadata,
+            capacity: capacityDetail.capacity,
+            capacityVerified: capacityDetail.verified === true,
+        };
+    }
+
+    function createSelectionFromInstance(configuredModel, instance) {
+        const source = instance && typeof instance === 'object' ? instance : {};
+        const model = source.model && typeof source.model === 'object' ? source.model : {};
+        return {
+            configuredModel,
+            requestedModel: source.instanceId,
+            expectedInstanceId: source.instanceId,
+            modelKey: source.modelKey || model.key || '',
+            modelAuthor: model.publisher || '',
+            modelName: model.displayName || '',
+            quantization: model.quantization || '',
+            selectedVariant: model.selectedVariant || '',
+            capacity: source.capacity || 1,
+            capacityVerified: source.capacityVerified === true,
+        };
     }
 
     function getLoadedLlmInstances(models) {
@@ -62,13 +139,8 @@
             if (!modelKey) continue;
             const loadedInstances = Array.isArray(model.loaded_instances) ? model.loaded_instances : [];
             for (const instance of loadedInstances) {
-                const instanceId = instance && typeof instance.id === 'string' ? instance.id.trim() : '';
-                if (!instanceId) continue;
-                out.push({
-                    instanceId,
-                    modelKey,
-                    capacity: readParallelCapacity(instance),
-                });
+                const record = createLoadedInstanceRecord(model, instance);
+                if (record) out.push(record);
             }
         }
         return out;
@@ -79,7 +151,7 @@
         if (!list.length) return 'none';
         return list.map((item) => {
             if (!item || typeof item.instanceId !== 'string' || typeof item.modelKey !== 'string') return '<invalid>';
-            const suffix = item.capacity > 1 ? `, parallel ${item.capacity}` : '';
+            const suffix = item.capacityVerified === true && item.capacity > 1 ? `, parallel ${item.capacity}` : '';
             return item.instanceId === item.modelKey
                 ? `${item.instanceId}${suffix}`
                 : `${item.instanceId} (${item.modelKey}${suffix})`;
@@ -87,15 +159,10 @@
     }
 
     function getLoadedInstancesForModel(model) {
-        const modelKey = model && typeof model.key === 'string' ? model.key.trim() : '';
         const loadedInstances = model && Array.isArray(model.loaded_instances) ? model.loaded_instances : [];
         return loadedInstances
-            .map((instance) => ({
-                instanceId: instance && typeof instance.id === 'string' ? instance.id.trim() : '',
-                modelKey,
-                capacity: readParallelCapacity(instance),
-            }))
-            .filter((instance) => instance.instanceId);
+            .map((instance) => createLoadedInstanceRecord(model, instance))
+            .filter((instance) => instance && instance.instanceId);
     }
 
     function selectLocalChatModel(models, cfg) {
@@ -105,16 +172,11 @@
         if (configuredModel.toLowerCase() === 'auto') {
             if (loadedLlmInstances.length !== 1) {
                 throw new Error(
-                    `settings.local.model is "auto", but LM Studio currently has ${loadedLlmInstances.length} loaded LLM instance(s): `
-                    + `${describeLoadedLlmInstances(loadedLlmInstances)}. Load exactly one LLM instance or set settings.local.model to a specific loaded instance identifier.`
+                    `The LM Studio model in settings.json is "auto", but LM Studio currently has ${loadedLlmInstances.length} loaded LLM instance(s): `
+                    + `${describeLoadedLlmInstances(loadedLlmInstances)}. Load exactly one LLM instance or set the LM Studio model in settings.json to a specific loaded instance identifier.`
                 );
             }
-            return {
-                configuredModel,
-                requestedModel: loadedLlmInstances[0].instanceId,
-                expectedInstanceId: loadedLlmInstances[0].instanceId,
-                capacity: loadedLlmInstances[0].capacity || 1,
-            };
+            return createSelectionFromInstance(configuredModel, loadedLlmInstances[0]);
         }
 
         const exactModel = Array.isArray(models)
@@ -132,26 +194,16 @@
             if (loadedInstances.length > 1) {
                 throw new Error(
                     `Configured local model "${configuredModel}" has ${loadedInstances.length} loaded instances: `
-                    + `${describeLoadedLlmInstances(loadedInstances)}. Set settings.local.model to a specific loaded instance identifier.`
+                    + `${describeLoadedLlmInstances(loadedInstances)}. Set the LM Studio model in settings.json to a specific loaded instance identifier.`
                 );
             }
 
-            return {
-                configuredModel,
-                requestedModel: loadedInstances[0].instanceId,
-                expectedInstanceId: loadedInstances[0].instanceId,
-                capacity: loadedInstances[0].capacity || 1,
-            };
+            return createSelectionFromInstance(configuredModel, loadedInstances[0]);
         }
 
         const exactLoadedInstance = loadedLlmInstances.find((instance) => instance.instanceId === configuredModel);
         if (exactLoadedInstance) {
-            return {
-                configuredModel,
-                requestedModel: exactLoadedInstance.instanceId,
-                expectedInstanceId: exactLoadedInstance.instanceId,
-                capacity: exactLoadedInstance.capacity || 1,
-            };
+            return createSelectionFromInstance(configuredModel, exactLoadedInstance);
         }
 
         throw new Error(`Configured local model "${configuredModel}" was not found in LM Studio /api/v1/models.`);
@@ -295,7 +347,9 @@
     }
 
     defineRuntimeModule('runtime.translationLocalProtocol', {
+        readParallelCapacityDetail,
         readParallelCapacity,
+        createLocalModelMetadata,
         getLoadedLlmInstances,
         describeLoadedLlmInstances,
         getLoadedInstancesForModel,

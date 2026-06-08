@@ -235,7 +235,7 @@ function normalizeTextRecordPolicy(source, history = null) {
     return Object.keys(policy).length ? policy : {};
 }
 
-function getTextRecordPolicyDiagnostics(item) {
+function getTextRecordRuntimePolicyDiagnostics(item) {
     if (!item || typeof item !== 'object') return {};
     if (item.policy && typeof item.policy === 'object' && Object.keys(item.policy).length) {
         return clonePolicyObject(item.policy);

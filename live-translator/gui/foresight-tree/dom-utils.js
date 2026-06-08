@@ -5,8 +5,10 @@
     const globalScope = typeof window !== 'undefined'
         ? window
         : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const parts = globalScope.LiveTranslatorForesightTreeViewerParts || {};
-    globalScope.LiveTranslatorForesightTreeViewerParts = parts;
+    const registry = globalScope.LiveTranslatorForesightTreeViewerRegistry;
+    if (!registry || typeof registry.registerPart !== 'function') {
+        throw new Error('[ForesightTreeViewer] parts registry must load before DOM utility helpers.');
+    }
 
     // DOM measurement and dataset helpers shared by render and route modules.
     function setElementDatasetValue(element, key, value) {
@@ -35,7 +37,7 @@
     function getActionCards(container) {
             if (!container || typeof container.querySelectorAll !== 'function') return [];
             try {
-                return Array.from(container.querySelectorAll('.foresight-action-card'));
+                return Array.from(container.querySelectorAll('.foresight-panel-card'));
             } catch (_) {
                 return [];
             }
@@ -144,12 +146,12 @@
             };
         }
     
-    parts.domUtils = Object.freeze({
+    registry.registerPart('domUtils', Object.freeze({
         clampScrollLeft, clampScrollTop, createSvgElement, findActionCardByScrollKey, finiteMetric,
         finiteScrollMetric, getActionCardScrollKey, getActionCards, getElementContentRect,
         getElementDatasetValue, getElementHeight, getElementLeftRelativeToScroll,
         getElementTopRelativeToScroll, getElementWidth, getMaxScrollLeft, getMaxScrollTop,
         roundCoordinate, setElementDatasetValue,
-    });
+    }));
 
 })();

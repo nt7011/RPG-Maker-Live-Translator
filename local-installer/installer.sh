@@ -76,16 +76,92 @@ json_string() {
 
 json_array() {
     local key="$1"
-    sed -n "/\"${key}\"[[:space:]]*:/,/]/p" "$manifest_path" \
-        | sed -n 's/^[[:space:]]*"\([^"]*\)"[[:space:]]*,\{0,1\}[[:space:]]*$/\1/p'
+    json_array_from_file "$manifest_path" "$key"
 }
 
-escape_regex() {
-    printf '%s' "$1" | sed 's/[][\\.^$*+?{}|()]/\\&/g'
+json_array_from_file() {
+    local file="$1"
+    local key="$2"
+    sed -n "/\"${key}\"[[:space:]]*:/,/]/p" "$file" \
+        | sed -n 's/^[[:space:]]*"\([^"]*\)"[[:space:]]*,\{0,1\}[[:space:]]*$/\1/p'
 }
 
 escape_sed_replacement() {
     printf '%s' "$1" | sed 's/[\/&]/\\&/g'
+}
+
+copy_file() {
+    local source="$1"
+    local target="$2"
+
+    if [ "$(uname -s)" = "Darwin" ]; then
+        if cp -X "$source" "$target" 2>/dev/null; then
+            return 0
+        fi
+    fi
+
+    cp "$source" "$target"
+}
+
+assert_manifest_relative_file() {
+    local relative="$1"
+    local description="$2"
+
+    case "$relative" in
+        ""|/*|../*|*/../*|..|*\\*|*:*)
+            echo -e "\033[31mError: ${description} contains an unsafe file path: ${relative}\033[0m" >&2
+            exit 1
+            ;;
+    esac
+}
+
+copy_manifest_file() {
+    local source_root="$1"
+    local target_root="$2"
+    local relative="$3"
+    local description="$4"
+    local required="$5"
+    local source_file
+    local target_file
+
+    assert_manifest_relative_file "$relative" "$description"
+    source_file="${source_root}/${relative}"
+    target_file="${target_root}/${relative}"
+
+    if [ ! -f "$source_file" ]; then
+        if [ "$required" = "required" ]; then
+            echo -e "\033[31mError: ${description} file not found: ${relative}\033[0m" >&2
+            exit 1
+        fi
+        return 1
+    fi
+
+    mkdir -p "$(dirname "$target_file")"
+    copy_file "$source_file" "$target_file"
+    return 0
+}
+
+copy_manifest_files() {
+    local source_root="$1"
+    local target_root="$2"
+    local manifest_file="$3"
+    local array_key="$4"
+    local description="$5"
+    local required="$6"
+    local copied=0
+    local relative
+
+    while IFS= read -r relative; do
+        [ -z "$relative" ] && continue
+        if copy_manifest_file "$source_root" "$target_root" "$relative" "$description" "$required"; then
+            copied=$((copied + 1))
+        fi
+    done < <(json_array_from_file "$manifest_file" "$array_key")
+
+    if [ "$required" = "required" ] && [ "$copied" -eq 0 ]; then
+        echo -e "\033[31mError: ${description} did not list any source files\033[0m" >&2
+        exit 1
+    fi
 }
 
 installer_package_name() {
@@ -115,14 +191,28 @@ installer_package_name() {
         millis="000"
     fi
 
-    printf '%s-%s%s' "$safe_base" "$timestamp" "$millis"
+    printf 'live-translator-%s-%s%s' "$safe_base" "$timestamp" "$millis"
 }
 
 resolve_settings_source() {
     local local_settings="${script_dir}/settings.local.json"
+    local local_snapshot_settings="${script_dir}/settings.snapshot.json"
+    local snapshot_settings="${runtime_source}/config-templates/settings.snapshot.json"
     local release_settings="${runtime_source}/config-templates/settings.release.json"
 
-    if [ -f "$local_settings" ]; then
+    if [ "$plugin_profile" = "snapshot" ] && [ -f "$local_snapshot_settings" ]; then
+        settings_source_path="$local_snapshot_settings"
+        settings_source_label="local-installer/settings.snapshot.json"
+        return 0
+    fi
+
+    if [ "$plugin_profile" = "snapshot" ] && [ -f "$snapshot_settings" ]; then
+        settings_source_path="$snapshot_settings"
+        settings_source_label="live-translator/config-templates/settings.snapshot.json"
+        return 0
+    fi
+
+    if [ "$plugin_profile" != "snapshot" ] && [ -f "$local_settings" ]; then
         settings_source_path="$local_settings"
         settings_source_label="local-installer/settings.local.json"
         return 0
@@ -134,7 +224,43 @@ resolve_settings_source() {
         return 0
     fi
 
-    echo -e "\033[31mError: Could not find installer settings source. Checked $local_settings and $release_settings\033[0m" >&2
+    echo -e "\033[31mError: Could not find installer settings source for ${plugin_profile} profile\033[0m" >&2
+    echo -e "\033[31mChecked $local_snapshot_settings, $snapshot_settings, $local_settings, and $release_settings\033[0m" >&2
+    exit 1
+}
+
+resolve_translator_source() {
+    local local_translator="${script_dir}/translator.local.json"
+    local local_snapshot_translator="${script_dir}/translator.snapshot.json"
+    local snapshot_translator="${runtime_source}/config-templates/translator.snapshot.json"
+    local release_translator="${runtime_source}/config-templates/translator.release.json"
+
+    if [ "$plugin_profile" = "snapshot" ] && [ -f "$local_snapshot_translator" ]; then
+        translator_source_path="$local_snapshot_translator"
+        translator_source_label="local-installer/translator.snapshot.json"
+        return 0
+    fi
+
+    if [ "$plugin_profile" = "snapshot" ] && [ -f "$snapshot_translator" ]; then
+        translator_source_path="$snapshot_translator"
+        translator_source_label="live-translator/config-templates/translator.snapshot.json"
+        return 0
+    fi
+
+    if [ "$plugin_profile" != "snapshot" ] && [ -f "$local_translator" ]; then
+        translator_source_path="$local_translator"
+        translator_source_label="local-installer/translator.local.json"
+        return 0
+    fi
+
+    if [ -f "$release_translator" ]; then
+        translator_source_path="$release_translator"
+        translator_source_label="live-translator/config-templates/translator.release.json"
+        return 0
+    fi
+
+    echo -e "\033[31mError: Could not find translator.json source for ${plugin_profile} profile\033[0m" >&2
+    echo -e "\033[31mChecked $local_snapshot_translator, $snapshot_translator, $local_translator, and $release_translator\033[0m" >&2
     exit 1
 }
 
@@ -142,8 +268,16 @@ install_settings_file() {
     # settings.json is environment-specific, so install it explicitly instead
     # of depending on a file bundled inside the shared runtime tree.
     resolve_settings_source
-    cp "$settings_source_path" "${support_dir}/settings.json"
+    copy_file "$settings_source_path" "${support_dir}/settings.json"
     echo -e "\033[36mInstalled settings.json from ${settings_source_label}\033[0m"
+}
+
+install_translator_file() {
+    # translator.json follows the same profile-specific source selection as
+    # settings.json. Snapshot uses the deterministic in-process mock provider.
+    resolve_translator_source
+    copy_file "$translator_source_path" "${support_dir}/translator.json"
+    echo -e "\033[36mInstalled translator.json from ${translator_source_label}\033[0m"
 }
 
 install_optional_snapshot_plugin() {
@@ -182,7 +316,7 @@ install_optional_snapshot_plugin() {
 
     local snapshot_dir="${plugins_dir}/${snapshot_support_name}"
     mkdir -p "$snapshot_dir"
-    cp -R "${snapshot_source}/." "$snapshot_dir/"
+    copy_manifest_files "$snapshot_source" "$snapshot_dir" "$snapshot_manifest_path" "sourceFiles" "snapshot fileInventory.sourceFiles" "required"
     echo -e "\033[36mInstalled optional snapshot plugin to $snapshot_dir\033[0m"
 }
 
@@ -195,6 +329,10 @@ support_name="$(json_string supportDirectory)"
 loader_name="$(json_string loader)"
 if [ -z "$support_name" ] || [ -z "$loader_name" ]; then
     echo -e "\033[31mError: install-manifest.json is missing supportDirectory or loader\033[0m"
+    exit 1
+fi
+if [ -z "$(json_array sourceFiles)" ]; then
+    echo -e "\033[31mError: install-manifest.json missing fileInventory.sourceFiles\033[0m"
     exit 1
 fi
 
@@ -216,7 +354,7 @@ for pkg_path in "package.json" "www/package.json"; do
     if grep -q '"name"[[:space:]]*:' "$full_pkg" 2>/dev/null; then
         echo -e "\033[33mSetting $pkg_path name field to '${generated_package_name}'\033[0m"
         if [ ! -f "${full_pkg}.backup" ]; then
-            cp "$full_pkg" "${full_pkg}.backup"
+            copy_file "$full_pkg" "${full_pkg}.backup"
             echo -e "\033[36mBackup created: ${pkg_path}.backup\033[0m"
         fi
 
@@ -255,9 +393,11 @@ fi
 
 support_dir="${plugins_dir}/${support_name}"
 mkdir -p "$support_dir"
-cp -R "${runtime_source}/." "$support_dir/"
+copy_manifest_files "$runtime_source" "$support_dir" "$manifest_path" "sourceFiles" "live-translator fileInventory.sourceFiles" "required"
+copy_manifest_files "$runtime_source" "$support_dir" "$manifest_path" "optionalAssets" "live-translator runtime.optionalAssets" "optional"
 echo -e "\033[33mCopied live-translator runtime bundle to $support_dir\033[0m"
 install_optional_snapshot_plugin
+install_translator_file
 install_settings_file
 
 while IFS= read -r entry; do
@@ -294,64 +434,478 @@ fi
 
 created_plugins_backup=false
 
-ensure_plugins_backup() {
-    if [ "$created_plugins_backup" = false ]; then
-        cp "$plugins_file" "$plugins_file.backup"
-        created_plugins_backup=true
+sync_plugin_entries() {
+    local sync_output_file="${plugins_file}.rmlt-sync-output.$$"
+    local tab=$'\t'
+
+    # Match installer.ps1 behavior: find the RPG Maker plugins assignment,
+    # parse top-level entries, then rewrite only managed translator entries.
+    # This avoids sed inserting after an unrelated earlier "[" in the file.
+    if ! command -v perl >/dev/null 2>&1; then
+        echo -e "\033[31mError: perl is required to update $plugins_file safely\033[0m" >&2
+        return 1
     fi
+
+    if ! perl - "$plugins_file" "$plugin_profile" "$plugin_entry_name" "$snapshot_plugin_entry_name" "$legacy_plugin_entry_name" > "$sync_output_file" <<'PERL'
+use strict;
+use warnings;
+use Encode qw(decode encode FB_CROAK);
+use File::Copy qw(copy);
+
+my ($file, $profile, $plugin_name, $snapshot_name, $legacy_name) = @ARGV;
+
+sub fail {
+    die $_[0] . "\n";
 }
 
-plugin_entry_exists() {
-    local name="$1"
-    local regex
-    regex="$(escape_regex "$name")"
-    grep -Eq "\"name\"[[:space:]]*:[[:space:]]*\"${regex}\"" "$plugins_file"
+sub likely_utf16_encoding {
+    my ($raw) = @_;
+    return '' if length($raw) < 16;
+
+    my $sample_length = length($raw) < 4096 ? length($raw) : 4096;
+    $sample_length-- if $sample_length % 2;
+    my $pairs = 0;
+    my $little_endian_score = 0;
+    my $big_endian_score = 0;
+
+    for (my $index = 0; $index + 1 < $sample_length; $index += 2) {
+        my $first = substr($raw, $index, 1);
+        my $second = substr($raw, $index + 1, 1);
+        $pairs++;
+        $little_endian_score++ if $first ne "\0" && $second eq "\0";
+        $big_endian_score++ if $first eq "\0" && $second ne "\0";
+    }
+
+    return '' if $pairs < 8;
+    return 'UTF-16LE' if $little_endian_score * 3 >= $pairs * 2 && $little_endian_score > $big_endian_score * 4;
+    return 'UTF-16BE' if $big_endian_score * 3 >= $pairs * 2 && $big_endian_score > $little_endian_score * 4;
+    return '';
 }
 
-remove_plugin_entry() {
-    local name="$1"
-    local regex
-    regex="$(escape_regex "$name")"
-    if ! plugin_entry_exists "$name"; then
-        return 0
-    fi
+sub read_plugins_file {
+    my ($path) = @_;
+    open my $input, '<:raw', $path or fail("Could not read $path: $!");
+    my $raw = do { local $/; <$input> };
+    close $input;
 
-    ensure_plugins_backup
-    sed -E "/\"name\"[[:space:]]*:[[:space:]]*\"${regex}\"/d" "$plugins_file" > "$plugins_file.tmp"
-    mv "$plugins_file.tmp" "$plugins_file"
-    echo -e "\033[32mRemoved managed plugin entry: $name\033[0m"
+    # Some exported games keep plugins.js in UTF-16. Decode BOM-marked files
+    # first, then fall back to the standard NUL-byte pattern for UTF-16 files
+    # written without a BOM.
+    return (decode('UTF-16LE', substr($raw, 2), FB_CROAK), 'UTF-16LE', "\xFF\xFE")
+        if length($raw) >= 2 && substr($raw, 0, 2) eq "\xFF\xFE";
+    return (decode('UTF-16BE', substr($raw, 2), FB_CROAK), 'UTF-16BE', "\xFE\xFF")
+        if length($raw) >= 2 && substr($raw, 0, 2) eq "\xFE\xFF";
+
+    my $detected_encoding = likely_utf16_encoding($raw);
+    return (decode($detected_encoding, $raw, FB_CROAK), $detected_encoding, '')
+        if $detected_encoding ne '';
+
+    return ($raw, 'raw', '');
 }
 
-add_plugin_entry() {
-    local name="$1"
-    local description="$2"
-    if plugin_entry_exists "$name"; then
-        echo -e "\033[33mPlugin entry already exists in $plugins_file: $name\033[0m"
-        return 0
+sub encode_plugins_file {
+    my ($content, $encoding, $bom) = @_;
+    return $content if $encoding eq 'raw';
+    return $bom . encode($encoding, $content, FB_CROAK);
+}
+
+sub find_matching_array_close {
+    my ($content, $open_index) = @_;
+    my $depth = 0;
+    my $in_string = 0;
+    my $quote = '';
+    my $escape = 0;
+    my $line_comment = 0;
+    my $block_comment = 0;
+    my $index = $open_index;
+    my $length = length($content);
+
+    while ($index < $length) {
+        my $char = substr($content, $index, 1);
+        my $next = $index + 1 < $length ? substr($content, $index + 1, 1) : '';
+
+        if ($line_comment) {
+            $line_comment = 0 if $char eq "\n";
+            $index++;
+            next;
+        }
+        if ($block_comment) {
+            if ($char eq '*' && $next eq '/') {
+                $block_comment = 0;
+                $index += 2;
+                next;
+            }
+            $index++;
+            next;
+        }
+        if ($in_string) {
+            if ($escape) {
+                $escape = 0;
+            } elsif ($char eq '\\') {
+                $escape = 1;
+            } elsif ($char eq $quote) {
+                $in_string = 0;
+            }
+            $index++;
+            next;
+        }
+
+        if ($char eq '/' && $next eq '/') {
+            $line_comment = 1;
+            $index += 2;
+            next;
+        }
+        if ($char eq '/' && $next eq '*') {
+            $block_comment = 1;
+            $index += 2;
+            next;
+        }
+        if ($char eq "'" || $char eq '"') {
+            $in_string = 1;
+            $quote = $char;
+            $index++;
+            next;
+        }
+        if ($char eq '[') {
+            $depth++;
+        } elsif ($char eq ']') {
+            $depth--;
+            return $index if $depth == 0;
+            last if $depth < 0;
+        }
+
+        $index++;
+    }
+
+    fail('Could not find the closing bracket for the plugins array.');
+}
+
+sub previous_non_space_index {
+    my ($content, $index) = @_;
+    while ($index >= 0 && substr($content, $index, 1) =~ /\s/) {
+        $index--;
+    }
+    return $index;
+}
+
+sub has_plugins_assignment_prefix {
+    my ($prefix) = @_;
+    return $prefix =~ /(?:^|[^A-Za-z0-9_\$])(?:(?:var|let|const)\s+)?(?:\$?plugins|[A-Za-z_\$][A-Za-z0-9_\$]*\s*\.\s*\$?plugins|[A-Za-z_\$][A-Za-z0-9_\$]*\s*\[\s*['"]\$?plugins['"]\s*\])\s*$/s;
+}
+
+sub find_plugins_array_literal {
+    my ($content) = @_;
+    # RPG Maker normally writes "var $plugins = [...]". Deployed games can
+    # rewrite that as const/let declarations or global assignments such as
+    # "window.$plugins = [...]". Walk the source so comments and strings do not
+    # trick the installer into patching the wrong array.
+    my $in_string = 0;
+    my $quote = '';
+    my $escape = 0;
+    my $line_comment = 0;
+    my $block_comment = 0;
+    my $length = length($content);
+
+    for (my $index = 0; $index < $length; $index++) {
+        my $char = substr($content, $index, 1);
+        my $next = $index + 1 < $length ? substr($content, $index + 1, 1) : '';
+
+        if ($line_comment) {
+            $line_comment = 0 if $char eq "\n";
+            next;
+        }
+        if ($block_comment) {
+            if ($char eq '*' && $next eq '/') {
+                $block_comment = 0;
+                $index++;
+            }
+            next;
+        }
+        if ($in_string) {
+            if ($escape) {
+                $escape = 0;
+            } elsif ($char eq '\\') {
+                $escape = 1;
+            } elsif ($char eq $quote) {
+                $in_string = 0;
+            }
+            next;
+        }
+
+        if ($char eq '/' && $next eq '/') {
+            $line_comment = 1;
+            $index++;
+            next;
+        }
+        if ($char eq '/' && $next eq '*') {
+            $block_comment = 1;
+            $index++;
+            next;
+        }
+        if ($char eq "'" || $char eq '"') {
+            $in_string = 1;
+            $quote = $char;
+            next;
+        }
+        next unless $char eq '[';
+
+        my $equal_index = previous_non_space_index($content, $index - 1);
+        next if $equal_index < 0 || substr($content, $equal_index, 1) ne '=';
+
+        my $before_equal_index = previous_non_space_index($content, $equal_index - 1);
+        next if $before_equal_index >= 0 && substr($content, $before_equal_index, 1) =~ /[=!<>]/;
+
+        my $lookback_start = $equal_index > 512 ? $equal_index - 512 : 0;
+        my $prefix = substr($content, $lookback_start, $equal_index - $lookback_start);
+        next unless has_plugins_assignment_prefix($prefix);
+
+        my $close_index = find_matching_array_close($content, $index);
+        return ($index, $close_index, substr($content, $index + 1, $close_index - $index - 1));
+    }
+
+    fail("Could not find a plugins array assignment in $file");
+}
+
+sub split_plugins_array_entries {
+    my ($array_content) = @_;
+    my @entries = ();
+    my $start = 0;
+    my $brace_depth = 0;
+    my $bracket_depth = 0;
+    my $paren_depth = 0;
+    my $in_string = 0;
+    my $quote = '';
+    my $escape = 0;
+    my $line_comment = 0;
+    my $block_comment = 0;
+    my $index = 0;
+    my $length = length($array_content);
+
+    while ($index < $length) {
+        my $char = substr($array_content, $index, 1);
+        my $next = $index + 1 < $length ? substr($array_content, $index + 1, 1) : '';
+
+        if ($line_comment) {
+            $line_comment = 0 if $char eq "\n";
+            $index++;
+            next;
+        }
+        if ($block_comment) {
+            if ($char eq '*' && $next eq '/') {
+                $block_comment = 0;
+                $index += 2;
+                next;
+            }
+            $index++;
+            next;
+        }
+        if ($in_string) {
+            if ($escape) {
+                $escape = 0;
+            } elsif ($char eq '\\') {
+                $escape = 1;
+            } elsif ($char eq $quote) {
+                $in_string = 0;
+            }
+            $index++;
+            next;
+        }
+
+        if ($char eq '/' && $next eq '/') {
+            $line_comment = 1;
+            $index += 2;
+            next;
+        }
+        if ($char eq '/' && $next eq '*') {
+            $block_comment = 1;
+            $index += 2;
+            next;
+        }
+        if ($char eq "'" || $char eq '"') {
+            $in_string = 1;
+            $quote = $char;
+            $index++;
+            next;
+        }
+
+        if ($char eq '{') {
+            $brace_depth++;
+        } elsif ($char eq '}') {
+            $brace_depth-- if $brace_depth > 0;
+        } elsif ($char eq '[') {
+            $bracket_depth++;
+        } elsif ($char eq ']') {
+            $bracket_depth-- if $bracket_depth > 0;
+        } elsif ($char eq '(') {
+            $paren_depth++;
+        } elsif ($char eq ')') {
+            $paren_depth-- if $paren_depth > 0;
+        } elsif ($char eq ',' && $brace_depth == 0 && $bracket_depth == 0 && $paren_depth == 0) {
+            my $entry = trim(substr($array_content, $start, $index - $start));
+            push @entries, $entry if $entry ne '';
+            $start = $index + 1;
+        }
+
+        $index++;
+    }
+
+    my $last_entry = trim(substr($array_content, $start));
+    push @entries, $last_entry if $last_entry ne '';
+    return @entries;
+}
+
+sub trim {
+    my ($value) = @_;
+    $value =~ s/^\s+//;
+    $value =~ s/\s+$//;
+    return $value;
+}
+
+sub plugin_name_from_entry {
+    my ($entry) = @_;
+    if ($entry =~ /"name"\s*:\s*"((?:\\.|[^"\\])*)"/s) {
+        my $name = $1;
+        $name =~ s{\\/}{/}g;
+        return $name;
+    }
+    if ($entry =~ /'name'\s*:\s*'((?:\\.|[^'\\])*)'/s) {
+        my $name = $1;
+        $name =~ s{\\/}{/}g;
+        return $name;
+    }
+    return '';
+}
+
+sub json_escape {
+    my ($value) = @_;
+    $value = '' unless defined $value;
+    $value =~ s/\\/\\\\/g;
+    $value =~ s/"/\\"/g;
+    $value =~ s/\r/\\r/g;
+    $value =~ s/\n/\\n/g;
+    $value =~ s/\t/\\t/g;
+    return $value;
+}
+
+sub new_plugin_entry_json {
+    my ($name, $description) = @_;
+    return '{"name":"' . json_escape($name) . '","status":true,"description":"' . json_escape($description) . '","parameters":{}}';
+}
+
+my ($content, $file_encoding, $file_bom) = read_plugins_file($file);
+
+my ($open_index, $close_index, $array_content) = find_plugins_array_literal($content);
+my @entries = split_plugins_array_entries($array_content);
+
+my @desired = $profile eq 'snapshot'
+    ? (
+        [$plugin_name, 'Entry point for the live translation system'],
+        [$snapshot_name, 'Snapshot capture and validation harness'],
+    )
+    : (
+        [$plugin_name, 'Entry point for the live translation system'],
+    );
+my @remove = $profile eq 'snapshot'
+    ? ($legacy_name)
+    : ($legacy_name, $snapshot_name);
+
+my %desired_names = map { lc($_->[0]) => 1 } grep { defined $_->[0] && $_->[0] ne '' } @desired;
+my %remove_names = map { lc($_) => 1 } grep { defined $_ && $_ ne '' } @remove;
+my %present_desired = ();
+my @kept_entries = ();
+my @added_names = ();
+my @removed_names = ();
+my $changed = 0;
+
+for my $entry (@entries) {
+    my $entry_name = plugin_name_from_entry($entry);
+    my $key = lc($entry_name);
+
+    if ($entry_name ne '' && $remove_names{$key}) {
+        push @removed_names, $entry_name;
+        $changed = 1;
+        next;
+    }
+
+    if ($entry_name ne '' && $desired_names{$key}) {
+        if ($present_desired{$key}) {
+            push @removed_names, $entry_name;
+            $changed = 1;
+            next;
+        }
+        $present_desired{$key} = 1;
+    }
+
+    push @kept_entries, $entry;
+}
+
+for my $plugin (@desired) {
+    my ($name, $description) = @$plugin;
+    next unless defined $name && $name ne '';
+
+    my $key = lc($name);
+    next if $present_desired{$key};
+
+    push @kept_entries, new_plugin_entry_json($name, $description);
+    $present_desired{$key} = 1;
+    push @added_names, $name;
+    $changed = 1;
+}
+
+if (!$changed) {
+    print "UNCHANGED\t$file\n";
+    exit 0;
+}
+
+my $backup = "$file.backup";
+copy($file, $backup) or fail("Could not create backup $backup: $!");
+
+my $newline = $content =~ /\r\n/ ? "\r\n" : "\n";
+my $body = @kept_entries
+    ? $newline . join(',' . $newline, map { '    ' . trim($_) } @kept_entries) . $newline
+    : '';
+my $updated_content = substr($content, 0, $open_index + 1) . $body . substr($content, $close_index);
+
+my $tmp = "$file.tmp";
+open my $output, '>:raw', $tmp or fail("Could not write $tmp: $!");
+print {$output} encode_plugins_file($updated_content, $file_encoding, $file_bom);
+close $output or fail("Could not finish writing $tmp: $!");
+rename $tmp, $file or fail("Could not replace $file: $!");
+
+print "BACKUP\t$backup\n";
+print "ADDED\t$_\n" for @added_names;
+print "REMOVED\t$_\n" for @removed_names;
+PERL
+    then
+        rm -f "$sync_output_file"
+        echo -e "\033[31mError: Unable to sync plugin entries in $plugins_file\033[0m" >&2
+        return 1
     fi
 
-    ensure_plugins_backup
-    entry="{\"name\":\"${name}\",\"status\":true,\"description\":\"${description}\",\"parameters\":{}},"
-    replacement_entry="$(escape_sed_replacement "$entry")"
-    if sed -E "0,/\[/s//[${replacement_entry}/" "$plugins_file" > "$plugins_file.tmp"; then
-        mv "$plugins_file.tmp" "$plugins_file"
-        echo -e "\033[32mPlugin entry added to $plugins_file: $name\033[0m"
-    else
-        rm -f "$plugins_file.tmp"
-        echo -e "\033[33mWarning: Unable to inject plugin entry into $plugins_file automatically\033[0m"
-    fi
+    while IFS= read -r line; do
+        case "$line" in
+            BACKUP${tab}*)
+                created_plugins_backup=true
+                echo -e "\033[36mBackup created: ${line#*$tab}\033[0m"
+                ;;
+            ADDED${tab}*)
+                echo -e "\033[32mAdded managed plugin entry: ${line#*$tab}\033[0m"
+                ;;
+            REMOVED${tab}*)
+                echo -e "\033[32mRemoved managed plugin entry: ${line#*$tab}\033[0m"
+                ;;
+            UNCHANGED${tab}*)
+                echo -e "\033[33mManaged plugin entries already match $plugin_profile profile in ${line#*$tab}\033[0m"
+                ;;
+        esac
+    done < "$sync_output_file"
+    rm -f "$sync_output_file"
 }
 
 if [ "$plugin_profile" = "snapshot" ]; then
     echo -e "\033[36mSnapshot profile enables the standard live-translator plugin entry before the snapshot harness.\033[0m"
-    remove_plugin_entry "$legacy_plugin_entry_name"
-    add_plugin_entry "$snapshot_plugin_entry_name" "Snapshot capture and validation harness"
-    add_plugin_entry "$plugin_entry_name" "Entry point for the live translation system"
-else
-    remove_plugin_entry "$snapshot_plugin_entry_name"
-    remove_plugin_entry "$legacy_plugin_entry_name"
-    add_plugin_entry "$plugin_entry_name" "Entry point for the live translation system"
 fi
+sync_plugin_entries
 
 echo -e "\033[32mRPG Maker Live Translator installed successfully!\033[0m"
 if [ "$created_plugins_backup" = true ]; then

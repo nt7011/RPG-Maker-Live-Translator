@@ -13,8 +13,10 @@
 
     function createController(scope = {}) {
         const { MESSAGE_ACTIVE_PRIORITY, MESSAGE_BACKGROUND_PRIORITY, logger, diag, preview, detachedRecords } = scope;
-        const callScope = (name) => (...args) => scope[name](...args);
-        const { resetWindowMessageState, collectWindowsForGameMessage, clearMessageOrigin, getWindowType, backgroundItem, setRecordPriority, setRecordVisibility, retireItem, resolveMessageRecord, forgetRenderTarget, resetStreamState, getMessageScreenState } = Object.fromEntries(['resetWindowMessageState', 'collectWindowsForGameMessage', 'clearMessageOrigin', 'getWindowType', 'backgroundItem', 'setRecordPriority', 'setRecordVisibility', 'retireItem', 'resolveMessageRecord', 'forgetRenderTarget', 'resetStreamState', 'getMessageScreenState'].map((name) => [name, callScope(name)]));
+        const { clearMessageOrigin } = scope.controllerFacades.foresightContext;
+        const { getWindowType, backgroundItem, setRecordPriority, setRecordVisibility, retireItem, resolveMessageRecord, forgetRenderTarget } = scope.controllerFacades.records;
+        const { getMessageScreenState } = scope.controllerFacades.render;
+        const { resetWindowMessageState, collectWindowsForGameMessage, resetStreamState, getMessageRenderSession, clearMessageRenderSession, setMessageRenderRetained, updateMessageVisibilitySession } = scope.controllerFacades.session;
 
         /**
          * Install Game_Message.clear so active messages become detached/background.
@@ -85,47 +87,35 @@
         }
 
         /**
-         * Clear message record fields stored on a Window_Message object.
+         * Clear render-session state for the current Window_Message object.
          */
         function clearRecordFields(windowInstance) {
-            if (!windowInstance) return;
-            windowInstance._trMessageRequestToken = null;
-            windowInstance._trMessageTranslationSessionId = null;
-            windowInstance._trMessageTranslationRecordId = null;
-            windowInstance._trMessageTranslationPriority = null;
-            windowInstance._trMessageRecordId = null;
-            windowInstance._trMessageRecord = null;
-            windowInstance._trMessagePayload = null;
-            windowInstance._trMessageRecordSessionId = null;
-            windowInstance._trMessageSeenVisible = false;
-            windowInstance._trMessageOnScreen = false;
-            windowInstance._trMessageScreenState = null;
-            windowInstance._trMessageRenderRetained = false;
-            windowInstance._trMessageRenderRetainedReason = '';
+            if (!windowInstance) return null;
+            return clearMessageRenderSession(windowInstance);
         }
 
         /**
          * Detach the current message record and background or retire it by request state.
          */
         function detachCurrentMessageRecord(windowInstance, reason = 'message-detached', details = null) {
-            if (!windowInstance || !windowInstance._trMessageRecordId) {
+            const renderSession = windowInstance ? getMessageRenderSession(windowInstance) : null;
+            if (!renderSession || !renderSession.recordId) {
                 resetStreamState(windowInstance);
                 return false;
             }
 
-            const hasActiveRequest = !!windowInstance._trMessageRequestToken;
-            const recordId = windowInstance._trMessageRecordId ? String(windowInstance._trMessageRecordId) : '';
-            const record = resolveMessageRecord(windowInstance._trMessageRecord || recordId);
+            const hasActiveRequest = !!renderSession.requestToken;
+            const recordId = String(renderSession.recordId || '');
+            const record = resolveMessageRecord(renderSession.record || recordId);
             const baseDetails = Object.assign({
                 windowType: getWindowType(windowInstance),
                 screenState: getMessageScreenState(windowInstance),
-                seenVisible: !!windowInstance._trMessageSeenVisible,
+                seenVisible: !!renderSession.seenVisible,
                 detachedCacheable: true,
             }, details || {});
 
             if (hasActiveRequest && shouldRetainMessageRenderTarget(windowInstance, reason, baseDetails)) {
-                windowInstance._trMessageRenderRetained = true;
-                windowInstance._trMessageRenderRetainedReason = reason || 'message-detached';
+                setMessageRenderRetained(windowInstance, true, reason || 'message-detached');
                 backgroundItem(record, reason, Object.assign({}, baseDetails, {
                     renderTargetRetained: true,
                 }));
@@ -146,7 +136,8 @@
         }
 
         function shouldRetainMessageRenderTarget(windowInstance, reason = '', details = {}) {
-            if (!windowInstance || !windowInstance._trMessageRequestToken) return false;
+            const renderSession = windowInstance ? getMessageRenderSession(windowInstance) : null;
+            if (!renderSession || !renderSession.requestToken) return false;
             if (details && details.forceDetach === true) return false;
             if (isStructuralDetachReason(reason)) return false;
             return getMessageScreenState(windowInstance) === 'visible';
@@ -164,30 +155,27 @@
          * Record visibility and priority for a message that remains attached.
          */
         function updateRecordVisibility(windowInstance, screenState, options = {}) {
-            if (!windowInstance || !windowInstance._trMessageRecordId) return;
-            const recordId = windowInstance._trMessageRecordId;
-            const record = resolveMessageRecord(windowInstance._trMessageRecord || recordId);
-            const nextScreenState = options.opening ? 'opening' : (screenState || getMessageScreenState(windowInstance));
-            const onScreen = nextScreenState === 'visible';
-            if (windowInstance._trMessageScreenState === nextScreenState
-                && windowInstance._trMessageOnScreen === onScreen) {
-                return;
-            }
+            const renderSession = windowInstance ? getMessageRenderSession(windowInstance) : null;
+            if (!renderSession || !renderSession.recordId) return;
+            const recordId = renderSession.recordId;
+            const record = resolveMessageRecord(renderSession.record || recordId);
+            const nextState = updateMessageVisibilitySession(
+                windowInstance,
+                screenState || getMessageScreenState(windowInstance),
+                options
+            );
+            if (!nextState.changed) return;
 
-            windowInstance._trMessageScreenState = nextScreenState;
-            windowInstance._trMessageOnScreen = onScreen;
-            if (onScreen) windowInstance._trMessageSeenVisible = true;
-
-            setRecordVisibility(record, onScreen, {
-                reason: onScreen ? 'message-visible' : `message-${nextScreenState || 'offscreen'}`,
-                screenState: nextScreenState,
+            setRecordVisibility(record, nextState.onScreen, {
+                reason: nextState.onScreen ? 'message-visible' : `message-${nextState.screenState || 'offscreen'}`,
+                screenState: nextState.screenState,
                 windowType: getWindowType(windowInstance),
                 opening: !!options.opening,
             });
             setRecordPriority(
                 record,
-                onScreen ? MESSAGE_ACTIVE_PRIORITY : MESSAGE_BACKGROUND_PRIORITY,
-                onScreen ? 'message-visible' : `message-${nextScreenState || 'offscreen'}`
+                nextState.onScreen ? MESSAGE_ACTIVE_PRIORITY : MESSAGE_BACKGROUND_PRIORITY,
+                nextState.onScreen ? 'message-visible' : `message-${nextState.screenState || 'offscreen'}`
             );
         }
 

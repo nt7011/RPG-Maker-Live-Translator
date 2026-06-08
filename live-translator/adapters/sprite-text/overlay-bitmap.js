@@ -12,36 +12,26 @@
     }
 
     function createController(scope = {}) {
-        const callScope = (name) => (...args) => scope[name](...args);
+        const { getBitmapState, logOverlayDraw } = scope.controllerFacades.state;
+        const { hasRenderedTranslation } = scope.controllerFacades.entries;
         const {
             attachOverlayAfterSource,
             copySpriteVisualState,
             createOverlaySprite,
-            getBitmapState,
-            hasRenderedTranslation,
             hideSpriteSource,
-            logOverlayDraw,
-            rectHasArea,
             refreshSpriteOverlayRenderable,
             removeSpriteOverlay,
             shouldRenderSpriteOverlay,
+        } = scope.controllerFacades.overlaySprite;
+        const {
+            rectHasArea,
             stringify,
             warn,
-        } = Object.fromEntries([
-            'attachOverlayAfterSource',
-            'copySpriteVisualState',
-            'createOverlaySprite',
-            'getBitmapState',
-            'hasRenderedTranslation',
-            'hideSpriteSource',
-            'logOverlayDraw',
-            'rectHasArea',
-            'refreshSpriteOverlayRenderable',
-            'removeSpriteOverlay',
-            'shouldRenderSpriteOverlay',
-            'stringify',
-            'warn',
-        ].map((name) => [name, callScope(name)]));
+        } = scope.controllerFacades.utils;
+
+        function withOverlayBitmapGuard(targetBitmap, callback) {
+            return scope.bitmapServices.withBitmapSkipAndSpriteReplayGuard(targetBitmap, callback);
+        }
 
         /**
          * Build and attach an overlay for completed entries on one Sprite.
@@ -235,16 +225,13 @@
                 Math.ceil(Number(sourceBitmap.height) || 1),
                 Math.ceil(Number(targetBitmap.height) || 1)
             ));
-            targetBitmap._trSpriteTextReplayDepth = (targetBitmap._trSpriteTextReplayDepth || 0) + 1;
-            targetBitmap._trBitmapSkipDepth = (targetBitmap._trBitmapSkipDepth || 0) + 1;
             try {
-                targetBitmap.blt(sourceBitmap, 0, 0, width, height, 0, 0, width, height);
-                return true;
+                return withOverlayBitmapGuard(targetBitmap, () => {
+                    targetBitmap.blt(sourceBitmap, 0, 0, width, height, 0, 0, width, height);
+                    return true;
+                });
             } catch (_) {
                 return false;
-            } finally {
-                targetBitmap._trBitmapSkipDepth = Math.max(0, (targetBitmap._trBitmapSkipDepth || 1) - 1);
-                targetBitmap._trSpriteTextReplayDepth = Math.max(0, (targetBitmap._trSpriteTextReplayDepth || 1) - 1);
             }
         }
         
@@ -261,13 +248,9 @@
                 const x2 = Math.min(maxX, Math.ceil(region.x + region.width));
                 const y2 = Math.min(maxY, Math.ceil(region.y + region.height));
                 if (x2 <= x || y2 <= y) return;
-                targetBitmap._trSpriteTextReplayDepth = (targetBitmap._trSpriteTextReplayDepth || 0) + 1;
-                targetBitmap._trBitmapSkipDepth = (targetBitmap._trBitmapSkipDepth || 0) + 1;
-                try { targetBitmap.clearRect(x, y, x2 - x, y2 - y); } catch (_) {}
-                finally {
-                    targetBitmap._trBitmapSkipDepth = Math.max(0, (targetBitmap._trBitmapSkipDepth || 1) - 1);
-                    targetBitmap._trSpriteTextReplayDepth = Math.max(0, (targetBitmap._trSpriteTextReplayDepth || 1) - 1);
-                }
+                withOverlayBitmapGuard(targetBitmap, () => {
+                    try { targetBitmap.clearRect(x, y, x2 - x, y2 - y); } catch (_) {}
+                });
             });
         }
 
@@ -290,16 +273,13 @@
             const width = Math.max(1, Math.ceil(Number(patch.width) || 0));
             const height = Math.max(1, Math.ceil(Number(patch.height) || 0));
             if (!width || !height) return;
-            targetBitmap._trSpriteTextReplayDepth = (targetBitmap._trSpriteTextReplayDepth || 0) + 1;
-            targetBitmap._trBitmapSkipDepth = (targetBitmap._trBitmapSkipDepth || 0) + 1;
-            try {
-                targetBitmap.blt(patch.bitmap, 0, 0, width, height, Number(patch.x) || 0, Number(patch.y) || 0, width, height);
-            } catch (_) {
-                // Backdrop restoration is best-effort; translated text still renders.
-            } finally {
-                targetBitmap._trBitmapSkipDepth = Math.max(0, (targetBitmap._trBitmapSkipDepth || 1) - 1);
-                targetBitmap._trSpriteTextReplayDepth = Math.max(0, (targetBitmap._trSpriteTextReplayDepth || 1) - 1);
-            }
+            withOverlayBitmapGuard(targetBitmap, () => {
+                try {
+                    targetBitmap.blt(patch.bitmap, 0, 0, width, height, Number(patch.x) || 0, Number(patch.y) || 0, width, height);
+                } catch (_) {
+                    // Backdrop restoration is best-effort; translated text still renders.
+                }
+            });
         }
 
         function forEachEntryTextRegion(entries, callback) {
@@ -344,18 +324,15 @@
          */
         function replayPaintOp(targetBitmap, op) {
             if (!targetBitmap || !op || !op.methodName) return;
-            targetBitmap._trSpriteTextReplayDepth = (targetBitmap._trSpriteTextReplayDepth || 0) + 1;
-            targetBitmap._trBitmapSkipDepth = (targetBitmap._trBitmapSkipDepth || 0) + 1;
-            try {
-                if (typeof targetBitmap[op.methodName] === 'function') {
-                    targetBitmap[op.methodName](...(Array.isArray(op.args) ? op.args : []));
+            withOverlayBitmapGuard(targetBitmap, () => {
+                try {
+                    if (typeof targetBitmap[op.methodName] === 'function') {
+                        targetBitmap[op.methodName](...(Array.isArray(op.args) ? op.args : []));
+                    }
+                } catch (_) {
+                    // Paint replay is best-effort; source bitmap pixels remain untouched.
                 }
-            } catch (_) {
-                // Paint replay is best-effort; source bitmap pixels remain untouched.
-            } finally {
-                targetBitmap._trBitmapSkipDepth = Math.max(0, (targetBitmap._trBitmapSkipDepth || 1) - 1);
-                targetBitmap._trSpriteTextReplayDepth = Math.max(0, (targetBitmap._trSpriteTextReplayDepth || 1) - 1);
-            }
+            });
         }
         
         /**
@@ -365,34 +342,32 @@
             if (!targetBitmap || !group || !text) return;
             const drawState = options.scaleText ? getScaledDrawState(group.drawState) : group.drawState;
             try { scope.applyBitmapDrawState(targetBitmap, drawState); } catch (_) {}
-            targetBitmap._trSpriteTextReplayDepth = (targetBitmap._trSpriteTextReplayDepth || 0) + 1;
-            targetBitmap._trBitmapSkipDepth = (targetBitmap._trBitmapSkipDepth || 0) + 1;
             const previousOwner = targetBitmap._trBitmapNativeDrawOwner;
             targetBitmap._trBitmapNativeDrawOwner = 'spriteOverlayText';
             try {
-                const methodName = group.methodName && typeof targetBitmap[group.methodName] === 'function'
-                    ? group.methodName
-                    : 'drawText';
-                const drawFn = targetBitmap[methodName] || targetBitmap.drawText;
-                if (typeof drawFn === 'function') {
-                    drawFn.call(
-                        targetBitmap,
-                        text,
-                        group.drawParams.x,
-                        group.drawParams.y,
-                        group.drawParams.maxWidth,
-                        group.drawParams.lineHeight,
-                        group.drawParams.align
-                    );
-                }
+                withOverlayBitmapGuard(targetBitmap, () => {
+                    const methodName = group.methodName && typeof targetBitmap[group.methodName] === 'function'
+                        ? group.methodName
+                        : 'drawText';
+                    const drawFn = targetBitmap[methodName] || targetBitmap.drawText;
+                    if (typeof drawFn === 'function') {
+                        drawFn.call(
+                            targetBitmap,
+                            text,
+                            group.drawParams.x,
+                            group.drawParams.y,
+                            group.drawParams.maxWidth,
+                            group.drawParams.lineHeight,
+                            group.drawParams.align
+                        );
+                    }
+                });
             } finally {
                 if (previousOwner === undefined) {
                     try { delete targetBitmap._trBitmapNativeDrawOwner; } catch (_) { targetBitmap._trBitmapNativeDrawOwner = undefined; }
                 } else {
                     targetBitmap._trBitmapNativeDrawOwner = previousOwner;
                 }
-                targetBitmap._trBitmapSkipDepth = Math.max(0, (targetBitmap._trBitmapSkipDepth || 1) - 1);
-                targetBitmap._trSpriteTextReplayDepth = Math.max(0, (targetBitmap._trSpriteTextReplayDepth || 1) - 1);
             }
         }
         

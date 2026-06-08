@@ -1,15 +1,16 @@
 // Game Message foresight scanner public runtime module.
-// Support files register catalog, traversal, budget, and diagnostics pieces under LiveTranslatorForesightParts.
+// Support files register catalog, traversal, budget, and diagnostics pieces in the internal parts registry.
 (() => {
     'use strict';
     const globalScope = typeof window !== 'undefined'
         ? window
         : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
     const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    if (typeof defineRuntimeModule !== 'function') {
+    const requireRuntimeModule = globalScope.LiveTranslatorRequire;
+    if (typeof defineRuntimeModule !== 'function' || typeof requireRuntimeModule !== 'function') {
         throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/foresight.js.');
     }
-    const parts = globalScope.LiveTranslatorForesightParts || {};
+    const parts = requireRuntimeModule('adapters.foresight.partsRegistry').getParts();
     const commandCatalog = parts.commandCatalog;
     defineRuntimeModule('adapters.foresight', {
         createGameMessageForesight: parts.createGameMessageForesight,

@@ -30,11 +30,11 @@ function normalizeLocalConfig(rootConfig) {
         address: cfg.Address || cfg.address || '127.0.0.1',
         port: Number(cfg.port || cfg.Port || 1234),
         model: cfg.model || cfg.Model || null,
-        temperature: optionalNumber(cfg.temperature || cfg.Temperature),
-        top_p: optionalNumber(cfg.top_p || cfg.TopP),
-        top_k: optionalNumber(cfg.top_k || cfg.TopK),
-        min_p: optionalNumber(cfg.min_p || cfg.MinP),
-        repeat_penalty: optionalNumber(cfg.repeat_penalty || cfg.repeatPenalty || cfg.repetition_penalty),
+        temperature: optionalNumber(firstDefined(cfg.temperature, cfg.Temperature)),
+        top_p: optionalNumber(firstDefined(cfg.top_p, cfg.TopP)),
+        top_k: optionalNumber(firstDefined(cfg.top_k, cfg.TopK)),
+        min_p: optionalNumber(firstDefined(cfg.min_p, cfg.MinP)),
+        repeat_penalty: optionalNumber(firstDefined(cfg.repeat_penalty, cfg.repeatPenalty, cfg.repetition_penalty)),
     };
 
     if (!out.model || typeof out.model !== 'string' || !out.model.trim()) {
@@ -49,6 +49,13 @@ function normalizeLocalConfig(rootConfig) {
 function optionalNumber(value) {
     const numeric = Number(value);
     return Number.isFinite(numeric) ? numeric : null;
+}
+
+function firstDefined(...values) {
+    for (const value of values) {
+        if (value !== undefined && value !== null) return value;
+    }
+    return undefined;
 }
 
 function getLocalApiBaseUrl(cfg) {
@@ -115,8 +122,8 @@ async function resolveLocalChatModelSelection(cfg, options = {}) {
     if (configuredModel.toLowerCase() === 'auto') {
         if (loadedInstances.length !== 1) {
             throw new Error(
-                `settings.local.model is "auto", but LM Studio has ${loadedInstances.length} loaded LLM instance(s): `
-                + `${describeLoadedLlmInstances(loadedInstances)}.`
+                `The LM Studio model in settings.json is "auto", but LM Studio currently has ${loadedInstances.length} loaded LLM instance(s): `
+                + `${describeLoadedLlmInstances(loadedInstances)}. Load exactly one LLM instance or set the LM Studio model in settings.json to a specific loaded instance identifier.`
             );
         }
         return {
@@ -136,7 +143,7 @@ async function resolveLocalChatModelSelection(cfg, options = {}) {
         if (instances.length > 1) {
             throw new Error(
                 `Configured model "${configuredModel}" has ${instances.length} loaded instances: `
-                + `${describeLoadedLlmInstances(instances)}. Set settings.local.model to an instance id.`
+                + `${describeLoadedLlmInstances(instances)}. Set the LM Studio model in settings.json to a specific loaded instance identifier.`
             );
         }
         return {

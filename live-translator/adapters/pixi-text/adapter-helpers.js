@@ -16,7 +16,8 @@
     function create(options = {}) {
         const {
             adapterContract,
-            encodeText,
+            textCodec,
+            createTextSource,
             telemetry,
             logger,
             safeCall,
@@ -25,17 +26,15 @@
 
         function prepareTranslationInput(text) {
             try {
-                return encodeText(text) || {};
+                return createTextSource(text, { surfaceType: 'pixi' });
             } catch (error) {
                 warn('[PIXI] Failed to prepare text for translation.', error);
-                return {
-                    originalText: text,
-                    visibleText: text.trim(),
-                    translationText: text,
-                    normalizedText: text.trim(),
-                    tokens: [],
-                };
+                return createPlainTextSource(text);
             }
+        }
+
+        function createPlainTextSource(text) {
+            return textCodec.createPlainTextSource(text, { surfaceType: 'pixi' });
         }
 
         function describePixiTextEligibility(input) {

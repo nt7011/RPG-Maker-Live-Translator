@@ -12,70 +12,29 @@
     }
 
     function createController(scope = {}) {
-        const callScope = (name) => (...args) => scope[name](...args);
+        const renderTransaction = scope.renderTransaction;
+        const { getSpriteObservationStatus, hasRenderedTranslation, isRecordActive, isRecordRequestActive } = scope.controllerFacades.entries;
+        const { applyEligibilityToSpriteRecord, describeSpriteRecordEligibility, getBitmapState, logTextDetected, restoreTranslatedText, safePrepareText, updateItem } = scope.controllerFacades.state;
         const {
-            applyEligibilityToSpriteRecord,
             claimGlyphGroupForRun,
             clearParentRunSlot,
-            createObservationSignature,
             createParentRunSlotKey,
-            describeSpriteRecordEligibility,
-            errorMessage,
-            getBitmapState,
-            getParentId,
-            getSpriteObservationStatus,
-            hasRenderedTranslation,
             isActiveParentRunSlot,
-            isAdapterContractFailure,
-            isParentRunScreenVisible,
-            isRecordActive,
-            isRecordRequestActive,
-            isValidRect,
-            logTextDetected,
-            markRecordVisibilitySynced,
             parentRunLayerKey,
             registerParentRunSlot,
             removeParentRun,
-            renderParentRunOverlay,
-            restoreTranslatedText,
-            safePrepareText,
+        } = scope.controllerFacades.parentRunLifecycle;
+        const { renderParentRunOverlay } = scope.controllerFacades.parentRunOverlay;
+        const { createObservationSignature, isParentRunScreenVisible, markRecordVisibilitySynced, shouldPublishObservation } = scope.controllerFacades.visibility;
+        const {
+            errorMessage,
+            getParentId,
+            isAdapterContractFailure,
+            isValidRect,
             sanitizeVisibleText,
-            shouldPublishObservation,
             stringify,
-            updateItem,
             warn,
-        } = Object.fromEntries([
-            'applyEligibilityToSpriteRecord',
-            'claimGlyphGroupForRun',
-            'clearParentRunSlot',
-            'createObservationSignature',
-            'createParentRunSlotKey',
-            'describeSpriteRecordEligibility',
-            'errorMessage',
-            'getBitmapState',
-            'getParentId',
-            'getSpriteObservationStatus',
-            'hasRenderedTranslation',
-            'isActiveParentRunSlot',
-            'isAdapterContractFailure',
-            'isParentRunScreenVisible',
-            'isRecordActive',
-            'isRecordRequestActive',
-            'isValidRect',
-            'logTextDetected',
-            'markRecordVisibilitySynced',
-            'parentRunLayerKey',
-            'registerParentRunSlot',
-            'removeParentRun',
-            'renderParentRunOverlay',
-            'restoreTranslatedText',
-            'safePrepareText',
-            'sanitizeVisibleText',
-            'shouldPublishObservation',
-            'stringify',
-            'updateItem',
-            'warn',
-        ].map((name) => [name, callScope(name)]));
+        } = scope.controllerFacades.utils;
 
         /**
          * Create or refresh a parent glyph run.
@@ -104,6 +63,7 @@
                 existing.fontSignature = fontSignature;
                 existing.layerKey = layerKey;
                 existing.slotKey = slotKey;
+                existing.drawBoundary = createParentRunDrawBoundary(existing, group, slotKey);
                 existing.lastSeenAt = Date.now();
                 claimGlyphGroupForRun(group, existing);
                 registerParentRunSlot(existing);
@@ -113,8 +73,9 @@
             }
             if (existing) removeParentRun(existing, 'replaced');
         
-            const codecState = safePrepareText(rawText);
-            const translationSource = stringify(codecState.translationText !== undefined ? codecState.translationText : rawText);
+            const textSource = safePrepareText(rawText);
+            const codecState = textSource.codecState;
+            const translationSource = stringify(textSource.translationSource);
             const runId = `str-${(++scope.nextRunId).toString(36)}`;
             const run = {
                 id: runId,
@@ -125,7 +86,7 @@
                 trimmedText,
                 codecState,
                 translationSource,
-                normalizedSource: translationSource.trim(),
+                normalizedSource: textSource.normalizedSource,
                 bounds,
                 fontSignature,
                 layerKey,
@@ -142,6 +103,7 @@
                 lastSeenAt: Date.now(),
                 stale: false,
             };
+            run.drawBoundary = createParentRunDrawBoundary(run, group, slotKey);
             applyEligibilityToSpriteRecord(run);
             runMap.set(key, run);
             scope.recordsByItemId.set(run.recordId, run);
@@ -175,6 +137,7 @@
                 priority: scope.SPRITE_PRIORITY,
                 generation: run.surfaceRevision,
                 renderStrategy: scope.RENDER_STRATEGY,
+                drawBoundary: createRunDrawBoundary(run),
                 visible,
                 screenState: visible ? 'visible' : 'hidden',
                 bounds: run.bounds,
@@ -193,6 +156,71 @@
                 markRecordVisibilitySynced(run, payload.visible, payload.screenState, payload.priority);
             }
             return payload;
+        }
+
+        function createParentRunDrawBoundary(run, group, slotKey) {
+            const source = findParentRunSourceBoundary(group);
+            if (!source) return null;
+            const sourceBoundaryIds = collectParentRunBoundaryIds(group);
+            const details = Object.assign({}, source.details && typeof source.details === 'object' ? source.details : {}, {
+                sourceBoundaryIds,
+                sourceBoundaryCount: sourceBoundaryIds.length,
+            });
+            const generation = Number(run && run.surfaceRevision) || Number(source.generation) || 0;
+            return renderTransaction.createSourceDrawBoundary(Object.assign({}, source, {
+                id: `${run.recordId}:draw:${generation}`,
+                adapterId: scope.ADAPTER_ID,
+                itemId: run.recordId || source.itemId || '',
+                recordId: run.recordId || source.recordId || '',
+                surfaceId: `sprite-parent:${getParentId(run.parent)}`,
+                slotKey: slotKey || run.slotKey || source.slotKey || '',
+                generation,
+                details,
+            }));
+        }
+
+        function createRunDrawBoundary(run) {
+            const source = run && run.drawBoundary && typeof run.drawBoundary === 'object'
+                ? run.drawBoundary
+                : null;
+            if (!source) return null;
+            const generation = Number(run.surfaceRevision) || Number(source.generation) || 0;
+            return renderTransaction.createSourceDrawBoundary(Object.assign({}, source, {
+                itemId: run.recordId || source.itemId || '',
+                recordId: run.recordId || source.recordId || '',
+                surfaceId: `sprite-parent:${getParentId(run.parent)}`,
+                slotKey: run.slotKey || source.slotKey || '',
+                generation,
+            }));
+        }
+
+        function findParentRunSourceBoundary(group) {
+            if (!Array.isArray(group)) return null;
+            for (let index = 0; index < group.length; index += 1) {
+                const boundary = readGlyphBoundary(group[index]);
+                if (boundary) return boundary;
+            }
+            return null;
+        }
+
+        function collectParentRunBoundaryIds(group) {
+            if (!Array.isArray(group)) return [];
+            return group
+                .map((item) => {
+                    const boundary = readGlyphBoundary(item);
+                    return boundary && boundary.id ? String(boundary.id) : '';
+                })
+                .filter((id, index, ids) => id && ids.indexOf(id) === index);
+        }
+
+        function readGlyphBoundary(item) {
+            const entry = item && item.entry;
+            if (entry && entry.drawBoundary && typeof entry.drawBoundary === 'object') return entry.drawBoundary;
+            if (entry && entry.group && entry.group.drawBoundary && typeof entry.group.drawBoundary === 'object') {
+                return entry.group.drawBoundary;
+            }
+            if (item && item.drawBoundary && typeof item.drawBoundary === 'object') return item.drawBoundary;
+            return null;
         }
 
         /**
@@ -236,7 +264,7 @@
                         slotKey: run.slotKey || '',
                     },
                 });
-                if (!requested) {
+                if (!requested || requested.handled !== true) {
                     updateItem(run, { status: 'failed' }, 'item.failed', { reason: 'translation request failed', mode: 'sprite-run' });
                     return false;
                 }

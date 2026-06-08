@@ -10,11 +10,23 @@
     if (typeof defineRuntimeModule !== 'function') {
         throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/game-message/session.js.');
     }
+    const requireRuntimeModule = globalScope.LiveTranslatorRequire;
+    if (typeof requireRuntimeModule !== 'function') {
+        throw new Error('[LiveTranslator] runtime module require is unavailable before adapters/game-message/session.js.');
+    }
+    const lifecycleReasons = requireRuntimeModule('runtime.lifecycleReasons').reasons;
 
     function createController(scope = {}) {
         const { globalScope, diag, preview, stripControls, registeredWindows, pruneDetachedRegisteredWindows, trackedMessageWindows } = scope;
-        const callScope = (name) => (...args) => scope[name](...args);
-        const { getGameMessageForWindow, isMessageWindowLike, markDedicatedMessageWindow, createEscapeAwarePayload, getResolvedTextForWindow, disposeTextScaleScope, applyPendingMessageRedraw, clearPendingMessageRedraw, processCompleteMessage, hasHookInChain, clearRecordFields, detachCurrentMessageRecord, updateRecordVisibility, rememberPendingBitmapGlyphSource, forgetPendingBitmapGlyphSource, resetStreamState, getMessageScreenState, warn, isAdapterContractFailure } = Object.fromEntries(['getGameMessageForWindow', 'isMessageWindowLike', 'markDedicatedMessageWindow', 'createEscapeAwarePayload', 'getResolvedTextForWindow', 'disposeTextScaleScope', 'applyPendingMessageRedraw', 'clearPendingMessageRedraw', 'processCompleteMessage', 'hasHookInChain', 'clearRecordFields', 'detachCurrentMessageRecord', 'updateRecordVisibility', 'rememberPendingBitmapGlyphSource', 'forgetPendingBitmapGlyphSource', 'resetStreamState', 'getMessageScreenState', 'warn', 'isAdapterContractFailure'].map((name) => [name, callScope(name)]));
+        const { getGameMessageForWindow, isMessageWindowLike, markDedicatedMessageWindow } = scope.controllerFacades.install;
+        const { createEscapeAwarePayload, getResolvedTextForWindow } = scope.controllerFacades.text;
+        const { readMessageOriginText, readMessageTextData } = scope.controllerFacades.foresightContext;
+        const { disposeTextScaleScope } = scope.controllerFacades.wrapping;
+        const { applyPendingMessageRedraw, clearPendingMessageRedraw } = scope.controllerFacades.redraw;
+        const { processCompleteMessage } = scope.controllerFacades.detection;
+        const { hasHookInChain, clearRecordFields, detachCurrentMessageRecord, updateRecordVisibility } = scope.controllerFacades.clear;
+        const { rememberPendingBitmapGlyphSource, forgetPendingBitmapGlyphSource } = scope.controllerFacades.records;
+        const { getMessageScreenState, warn, isAdapterContractFailure } = scope.controllerFacades.render;
 
         /**
          * Create a stable mutable state object for one message window.
@@ -22,11 +34,354 @@
         function createMessageState() {
             return {
                 currentText: '',
+                currentPayload: null,
                 isActive: false,
                 lastUpdate: 0,
                 session: 0,
                 source: null,
+                started: false,
+                translationRequested: false,
+                translationSessionId: null,
             };
+        }
+
+        /**
+         * Create stream-preview state owned by the render session.
+         *
+         * The preview loop may stop while preserving text temporarily so
+         * failure/skip paths can restore the source message. Keeping the
+         * lifecycle in one object avoids orphaned preview fields on windows.
+         */
+        function createMessageStreamPreviewState() {
+            return {
+                abort: null,
+                text: '',
+                sessionId: null,
+                loopActive: false,
+                deferredLogged: false,
+            };
+        }
+
+        /**
+         * Create the adapter-owned start position for message redraws.
+         */
+        function createMessageStartState() {
+            return {
+                x: null,
+                y: null,
+                sessionId: null,
+                wrappedText: '',
+            };
+        }
+
+        /**
+         * Create the render-session state for one Window_Message surface.
+         *
+         * This object is the adapter-owned source of truth for the current
+         * render target, request token, retained render target, and queued
+         * redraw. Mutation goes through these helpers so close/clear,
+         * streaming, and retained-render transitions cannot drift apart.
+         */
+        function createMessageRenderSession() {
+            return {
+                recordId: '',
+                record: null,
+                payload: null,
+                recordSessionId: 0,
+                requestToken: null,
+                translationSessionId: null,
+                translationRecordId: '',
+                translationPriority: null,
+                seenVisible: false,
+                onScreen: false,
+                screenState: null,
+                renderRetained: false,
+                renderRetainedReason: '',
+                pendingRedraw: null,
+                streamPreview: createMessageStreamPreviewState(),
+                messageStart: createMessageStartState(),
+            };
+        }
+
+        function ensureMessageStreamPreviewState(renderSession) {
+            if (!renderSession.streamPreview || typeof renderSession.streamPreview !== 'object') {
+                renderSession.streamPreview = createMessageStreamPreviewState();
+            }
+            return renderSession.streamPreview;
+        }
+
+        function ensureMessageStartState(renderSession) {
+            if (!renderSession.messageStart || typeof renderSession.messageStart !== 'object') {
+                renderSession.messageStart = createMessageStartState();
+            }
+            return renderSession.messageStart;
+        }
+
+        function getMessageRenderSession(windowInstance) {
+            if (!windowInstance) {
+                if (!scope.fallbackMessageRenderSession) {
+                    scope.fallbackMessageRenderSession = createMessageRenderSession();
+                }
+                return scope.fallbackMessageRenderSession;
+            }
+            let session = windowInstance._trMessageRenderSession;
+            if (!session || typeof session !== 'object') {
+                session = createMessageRenderSession();
+                try { windowInstance._trMessageRenderSession = session; } catch (_) {}
+            }
+            return session;
+        }
+
+        function attachMessageRecordSession(windowInstance, record, payload, sessionId, observation = {}) {
+            const renderSession = getMessageRenderSession(windowInstance);
+            renderSession.recordId = record && record.id ? String(record.id) : '';
+            renderSession.record = record || null;
+            renderSession.payload = payload || null;
+            renderSession.recordSessionId = Number(sessionId) || 0;
+            renderSession.seenVisible = observation && observation.onScreen === true;
+            renderSession.onScreen = observation && observation.onScreen === true;
+            renderSession.screenState = observation && observation.screenState ? observation.screenState : null;
+            renderSession.renderRetained = false;
+            renderSession.renderRetainedReason = '';
+            return renderSession;
+        }
+
+        function clearMessageRenderSession(windowInstance, options = {}) {
+            const renderSession = getMessageRenderSession(windowInstance);
+            renderSession.recordId = '';
+            renderSession.record = null;
+            renderSession.payload = null;
+            renderSession.recordSessionId = null;
+            renderSession.requestToken = null;
+            renderSession.translationSessionId = null;
+            renderSession.translationRecordId = '';
+            renderSession.translationPriority = null;
+            renderSession.seenVisible = false;
+            renderSession.onScreen = false;
+            renderSession.screenState = null;
+            renderSession.renderRetained = false;
+            renderSession.renderRetainedReason = '';
+            if (options.clearPendingRedraw !== false) renderSession.pendingRedraw = null;
+            resetMessageStreamPreviewState(renderSession);
+            resetMessageStartState(renderSession);
+            return renderSession;
+        }
+
+        function setMessageRequestSession(windowInstance, requestToken, sessionId, recordId, priority) {
+            const renderSession = getMessageRenderSession(windowInstance);
+            renderSession.requestToken = requestToken || null;
+            renderSession.translationSessionId = sessionId || null;
+            renderSession.translationRecordId = recordId ? String(recordId) : '';
+            renderSession.translationPriority = priority || null;
+            return renderSession;
+        }
+
+        function clearMessageRequestSession(windowInstance, requestToken = null) {
+            if (!windowInstance) {
+                return { handled: false, changed: false, reason: 'missing-window' };
+            }
+            const renderSession = getMessageRenderSession(windowInstance);
+            if (requestToken && renderSession.requestToken !== requestToken) {
+                return {
+                    handled: true,
+                    changed: false,
+                    reason: 'request-token-mismatch',
+                    recordId: renderSession.recordId || '',
+                };
+            }
+            const changed = !!(renderSession.requestToken
+                || renderSession.translationSessionId
+                || renderSession.translationRecordId
+                || renderSession.translationPriority);
+            renderSession.requestToken = null;
+            renderSession.translationSessionId = null;
+            renderSession.translationRecordId = '';
+            renderSession.translationPriority = null;
+            return {
+                handled: true,
+                changed,
+                reason: changed ? 'request-cleared' : 'request-empty',
+                recordId: renderSession.recordId || '',
+            };
+        }
+
+        function setMessageRenderRetained(windowInstance, retained, reason = '') {
+            const renderSession = getMessageRenderSession(windowInstance);
+            renderSession.renderRetained = retained === true;
+            renderSession.renderRetainedReason = retained === true ? String(reason || 'message-detached') : '';
+            return renderSession;
+        }
+
+        function updateMessageVisibilitySession(windowInstance, screenState, options = {}) {
+            const renderSession = getMessageRenderSession(windowInstance);
+            const nextScreenState = options.opening ? 'opening' : (screenState || renderSession.screenState || null);
+            const onScreen = nextScreenState === 'visible';
+            const changed = renderSession.screenState !== nextScreenState
+                || renderSession.onScreen !== onScreen
+                || (onScreen && renderSession.seenVisible !== true);
+            renderSession.screenState = nextScreenState;
+            renderSession.onScreen = onScreen;
+            if (onScreen) renderSession.seenVisible = true;
+            return { renderSession, changed, screenState: nextScreenState, onScreen };
+        }
+
+        function setPendingMessageRedrawSession(windowInstance, pending) {
+            const renderSession = getMessageRenderSession(windowInstance);
+            renderSession.pendingRedraw = pending || null;
+            return renderSession.pendingRedraw;
+        }
+
+        function getPendingMessageRedrawSession(windowInstance) {
+            return getMessageRenderSession(windowInstance).pendingRedraw || null;
+        }
+
+        function clearPendingMessageRedrawSession(windowInstance, pending = null) {
+            const renderSession = getMessageRenderSession(windowInstance);
+            if (pending && renderSession.pendingRedraw !== pending) {
+                return { handled: true, changed: false, reason: 'pending-redraw-mismatch' };
+            }
+            const changed = !!renderSession.pendingRedraw;
+            renderSession.pendingRedraw = null;
+            return {
+                handled: true,
+                changed,
+                reason: changed ? 'pending-redraw-cleared' : 'pending-redraw-empty',
+            };
+        }
+
+        function getMessageStreamPreviewSession(windowInstance) {
+            return ensureMessageStreamPreviewState(getMessageRenderSession(windowInstance));
+        }
+
+        function resetMessageStreamPreviewState(renderSession, options = {}) {
+            const streamPreview = ensureMessageStreamPreviewState(renderSession);
+            streamPreview.abort = null;
+            if (options.preserveText !== true) streamPreview.text = '';
+            streamPreview.sessionId = null;
+            streamPreview.loopActive = false;
+            streamPreview.deferredLogged = false;
+            return streamPreview;
+        }
+
+        function beginMessageStreamPreview(windowInstance, sessionId) {
+            clearPendingStreamPreviewSession(windowInstance);
+            const streamPreview = getMessageStreamPreviewSession(windowInstance);
+            streamPreview.abort = null;
+            streamPreview.text = '';
+            streamPreview.sessionId = sessionId || null;
+            streamPreview.loopActive = false;
+            streamPreview.deferredLogged = false;
+            return streamPreview;
+        }
+
+        function setMessageStreamPreviewText(windowInstance, text, sessionId = null) {
+            const streamPreview = getMessageStreamPreviewSession(windowInstance);
+            streamPreview.text = String(text || '');
+            if (sessionId !== null && sessionId !== undefined) streamPreview.sessionId = sessionId;
+            return streamPreview;
+        }
+
+        function getMessageStreamPreviewText(windowInstance) {
+            const streamPreview = getMessageStreamPreviewSession(windowInstance);
+            return typeof streamPreview.text === 'string' ? streamPreview.text : '';
+        }
+
+        function isMessageStreamPreviewCurrent(windowInstance, sessionId) {
+            if (!windowInstance) return false;
+            const streamPreview = getMessageStreamPreviewSession(windowInstance);
+            return streamPreview.sessionId === sessionId;
+        }
+
+        function stopMessageStreamPreview(windowInstance, sessionId, options = {}) {
+            if (!windowInstance) {
+                return { handled: false, changed: false, reason: 'missing-window' };
+            }
+            const renderSession = getMessageRenderSession(windowInstance);
+            const streamPreview = ensureMessageStreamPreviewState(renderSession);
+            if (sessionId !== null && sessionId !== undefined && streamPreview.sessionId !== sessionId) {
+                return {
+                    handled: true,
+                    changed: false,
+                    reason: 'stream-preview-session-mismatch',
+                };
+            }
+            const clearsText = options.preserveText !== true && !!streamPreview.text;
+            const changed = clearsText
+                || streamPreview.sessionId !== null
+                || streamPreview.loopActive === true
+                || streamPreview.deferredLogged === true
+                || !!streamPreview.abort;
+            resetMessageStreamPreviewState(renderSession, {
+                preserveText: options.preserveText === true,
+            });
+            return {
+                handled: true,
+                changed,
+                reason: changed ? 'stream-preview-stopped' : 'stream-preview-empty',
+            };
+        }
+
+        function clearPendingStreamPreviewSession(windowInstance, sessionId = null) {
+            const pending = getPendingMessageRedrawSession(windowInstance);
+            if (!pending || pending.streamingPreview !== true) {
+                return { handled: true, changed: false, reason: 'pending-stream-preview-empty' };
+            }
+            if (sessionId !== null && pending.sessionId && pending.sessionId !== sessionId) {
+                return { handled: true, changed: false, reason: 'pending-stream-preview-session-mismatch' };
+            }
+            return clearPendingMessageRedrawSession(windowInstance, pending);
+        }
+
+        function resetStreamState(windowInstance) {
+            if (!windowInstance) return null;
+            clearPendingStreamPreviewSession(windowInstance);
+            const renderSession = getMessageRenderSession(windowInstance);
+            return resetMessageStreamPreviewState(renderSession);
+        }
+
+        function getMessageStartSession(windowInstance) {
+            return ensureMessageStartState(getMessageRenderSession(windowInstance));
+        }
+
+        function resetMessageStartState(renderSession) {
+            const messageStart = ensureMessageStartState(renderSession);
+            messageStart.x = null;
+            messageStart.y = null;
+            messageStart.sessionId = null;
+            messageStart.wrappedText = '';
+            return messageStart;
+        }
+
+        function clearMessageStartSession(windowInstance) {
+            if (!windowInstance) return null;
+            return resetMessageStartState(getMessageRenderSession(windowInstance));
+        }
+
+        function setMessageStartCoordinates(windowInstance, coordinates = {}, options = {}) {
+            const messageStart = getMessageStartSession(windowInstance);
+            if (hasFiniteNumber(coordinates.x)) messageStart.x = Number(coordinates.x);
+            if (hasFiniteNumber(coordinates.y)) messageStart.y = Number(coordinates.y);
+            if (options.sessionId !== undefined) {
+                messageStart.sessionId = options.sessionId === null ? null : (Number(options.sessionId) || null);
+            }
+            if (Object.prototype.hasOwnProperty.call(options, 'wrappedText')) {
+                messageStart.wrappedText = String(options.wrappedText || '');
+            }
+            return messageStart;
+        }
+
+        function getMessageStartCoordinates(windowInstance) {
+            const messageStart = getMessageStartSession(windowInstance);
+            return {
+                x: messageStart.x,
+                y: messageStart.y,
+                sessionId: messageStart.sessionId,
+                wrappedText: messageStart.wrappedText,
+            };
+        }
+
+        function hasFiniteNumber(value) {
+            return typeof value === 'number' && Number.isFinite(value);
         }
 
         /**
@@ -57,15 +412,14 @@
             state.session += 1;
             state.isActive = true;
             state.lastUpdate = Date.now();
-            windowInstance._trMessageSession = state.session;
-            windowInstance._trStartedThisSession = !!options.started;
-            windowInstance._trSentTranslateThisSession = false;
-            windowInstance._trMsgStartSession = windowInstance._trMessageSession;
-            windowInstance._trCurrentMessagePayload = null;
+            state.started = !!options.started;
+            state.translationRequested = false;
+            state.translationSessionId = null;
+            state.currentPayload = null;
             clearPendingMessageRedraw(windowInstance, 'message-session-replaced', {
                 sessionId: state.session,
             });
-            windowInstance._trWrappedMessageText = null;
+            clearMessageStartSession(windowInstance);
             resetStreamState(windowInstance);
             return state;
         }
@@ -76,7 +430,7 @@
         function resetWindowMessageState(windowInstance) {
             if (!windowInstance) return null;
             detachCurrentMessageRecord(windowInstance, 'message-cleared');
-            const renderRetained = windowInstance._trMessageRenderRetained === true;
+            const renderRetained = getMessageRenderSession(windowInstance).renderRetained === true;
             forgetPendingBitmapGlyphSource(windowInstance);
             const state = getMessageState(windowInstance);
             state.currentText = '';
@@ -84,18 +438,15 @@
             state.lastUpdate = Date.now();
             if (!renderRetained) {
                 state.session += 1;
+                state.started = false;
+                state.translationRequested = false;
+                state.translationSessionId = null;
+                state.currentPayload = null;
                 disposeTextScaleScope(windowInstance);
-                windowInstance._trStartedThisSession = false;
-                windowInstance._trSentTranslateThisSession = false;
-                windowInstance._trMsgStartSession = null;
-                windowInstance._trCurrentMessagePayload = null;
-                windowInstance._trMsgStartX = undefined;
-                windowInstance._trMsgStartY = undefined;
-                windowInstance._trSessionId = null;
                 clearPendingMessageRedraw(windowInstance, 'message-cleared', {
                     sessionId: state.session,
                 });
-                windowInstance._trWrappedMessageText = null;
+                clearMessageStartSession(windowInstance);
                 clearRecordFields(windowInstance);
                 resetStreamState(windowInstance);
             }
@@ -107,21 +458,58 @@
          */
         function isSessionCurrent(windowInstance, sessionId) {
             const state = getMessageState(windowInstance);
+            const renderSession = getMessageRenderSession(windowInstance);
             return !!(windowInstance
-                && windowInstance._trSessionId === sessionId
-                && (state.isActive || windowInstance._trMessageRenderRetained === true)
+                && state.translationSessionId === sessionId
+                && (state.isActive || renderSession.renderRetained === true)
                 && state.session === sessionId);
+        }
+
+        function getCurrentMessageSessionId(windowInstance) {
+            const state = getMessageState(windowInstance);
+            return Number(state.session) || 0;
+        }
+
+        function setMessageTranslationSession(windowInstance, sessionId) {
+            const state = getMessageState(windowInstance);
+            state.translationSessionId = Number(sessionId) || null;
+            return state;
+        }
+
+        function markMessageTranslationRequested(windowInstance) {
+            const state = getMessageState(windowInstance);
+            state.translationRequested = true;
+            return state;
+        }
+
+        function getCurrentMessagePayload(windowInstance) {
+            const state = getMessageState(windowInstance);
+            return state.currentPayload || null;
+        }
+
+        function setCurrentMessagePayload(windowInstance, payload) {
+            const state = getMessageState(windowInstance);
+            state.currentPayload = payload || null;
+            return state.currentPayload;
+        }
+
+        function takeCurrentMessagePayload(windowInstance) {
+            const state = getMessageState(windowInstance);
+            const payload = state.currentPayload || null;
+            state.currentPayload = null;
+            return payload;
         }
 
         /**
          * Decide whether a request token still belongs to this window/session.
          */
         function isCurrentTranslation(windowInstance, sessionId, requestToken) {
+            const renderSession = getMessageRenderSession(windowInstance);
             return !!(windowInstance
                 && requestToken
-                && windowInstance._trMessageRequestToken === requestToken
-                && windowInstance._trMessageTranslationSessionId === sessionId
-                && windowInstance._trMessageRecordId
+                && renderSession.requestToken === requestToken
+                && renderSession.translationSessionId === sessionId
+                && renderSession.recordId
                 && isSessionCurrent(windowInstance, sessionId));
         }
 
@@ -132,9 +520,13 @@
             try {
                 const textState = windowInstance && windowInstance._textState;
                 if (!textState) return;
-                if (typeof textState.startX === 'number') windowInstance._trMsgStartX = textState.startX;
-                else if (typeof textState.x === 'number') windowInstance._trMsgStartX = textState.x;
-                if (typeof textState.y === 'number') windowInstance._trMsgStartY = textState.y;
+                const state = windowInstance && windowInstance._trGameMessageState;
+                setMessageStartCoordinates(windowInstance, {
+                    x: typeof textState.startX === 'number' ? textState.startX : textState.x,
+                    y: textState.y,
+                }, {
+                    sessionId: state && state.session,
+                });
             } catch (_) {}
         }
 
@@ -265,21 +657,25 @@
          * Update orchestrator priority/visibility or detach if the message left screen.
          */
         function updateMessageVisibilityFromWindow(windowInstance, reason) {
-            if (!windowInstance || !windowInstance._trMessageRecordId) return;
+            const renderSession = windowInstance ? getMessageRenderSession(windowInstance) : null;
+            if (!renderSession || !renderSession.recordId) return;
             const screenState = getMessageScreenState(windowInstance);
             if (screenState === 'visible') {
                 updateRecordVisibility(windowInstance, screenState);
                 return;
             }
             const hasPendingText = messageHasQueuedText(windowInstance);
-            if (hasPendingText && !windowInstance._trMessageSeenVisible) {
+            if (hasPendingText && !renderSession.seenVisible) {
                 updateRecordVisibility(windowInstance, screenState, { opening: true });
                 return;
             }
-            detachCurrentMessageRecord(windowInstance, reason || `message-window-${screenState}`, {
+            const detachReason = screenState === 'inactive-scene'
+                ? lifecycleReasons.NOT_CURRENT_SCENE
+                : (reason || `message-window-${screenState}`);
+            detachCurrentMessageRecord(windowInstance, detachReason, {
                 screenState,
                 hasPendingText,
-                forceDetach: windowInstance._trMessageRenderRetained === true,
+                forceDetach: renderSession.renderRetained === true,
             });
         }
 
@@ -289,10 +685,16 @@
         function messageHasQueuedText(windowInstance) {
             const gameMessage = getGameMessageForWindow(windowInstance);
             try {
-                if (gameMessage && typeof gameMessage.hasText === 'function') return !!gameMessage.hasText();
+                const data = readMessageTextData(gameMessage);
+                if (data && data.hasOwnData) {
+                    return data.lineCount > 0 || !!String(data.text || '').trim();
+                }
             } catch (_) {}
             try {
-                if (gameMessage && typeof gameMessage.allText === 'function') return !!String(gameMessage.allText() || '').trim();
+                if (String(readMessageOriginText(gameMessage) || '').trim()) return true;
+            } catch (_) {}
+            try {
+                if (gameMessage && typeof gameMessage.hasText === 'function') return !!gameMessage.hasText();
             } catch (_) {}
             try {
                 const state = windowInstance && windowInstance._trGameMessageState;
@@ -344,8 +746,8 @@
             if (!finalText || finalText === state.currentText) return;
             state.currentText = finalText;
             diag(`[GameMessage] Final rendered text: "${preview(finalText)}"`);
-            if (!windowInstance._trSentTranslateThisSession) {
-                windowInstance._trSentTranslateThisSession = true;
+            if (!state.translationRequested) {
+                markMessageTranslationRequested(windowInstance);
                 windowInstance.processCompleteMessage(payload || resolved, state.session);
             }
         }
@@ -402,17 +804,23 @@
                 if (this._trBypassProcessCharacter && this._trBypassProcessCharacter > 0) {
                     return original.call(this, textState);
                 }
+                // RPG Maker MZ and several message plugins run virtual text
+                // states through processCharacter for layout measurement. Those
+                // passes explicitly set drawing=false, so they must not create
+                // or replace a logical message session.
+                if (textState && textState.drawing === false) {
+                    return original.call(this, textState);
+                }
 
                 const state = getMessageState(this);
                 if (state.isActive
-                    && this._trStartedThisSession
-                    && this._trSentTranslateThisSession
-                    && this._trMessageSession === state.session) {
+                    && state.started === true
+                    && state.translationRequested === true) {
                     return original.call(this, textState);
                 }
 
                 const sourceText = textState && textState.text ? String(textState.text) : '';
-                if (!this._trCurrentMessagePayload) prepareProcessCharacterPayload(this, sourceText);
+                if (!getCurrentMessagePayload(this)) prepareProcessCharacterPayload(this, sourceText);
 
                 const result = original.call(this, textState);
                 if (textState && typeof textState.text === 'string' && textState.index >= textState.text.length) {
@@ -428,32 +836,33 @@
          * Initialize fallback payload capture before processCharacter draws text.
          */
         function prepareProcessCharacterPayload(windowInstance, sourceText) {
-            beginMessageSession(windowInstance, { started: false });
+            const state = beginMessageSession(windowInstance, { started: false });
             const resolvedInfo = getResolvedTextForWindow(windowInstance);
             const hasResolvedText = resolvedInfo && typeof resolvedInfo.text === 'string' && resolvedInfo.text.length > 0;
             const resolved = hasResolvedText ? resolvedInfo.text : sourceText;
-            windowInstance._trCurrentMessagePayload = createEscapeAwarePayload(resolved, 'processCharacter', {
+            const payload = createEscapeAwarePayload(resolved, 'processCharacter', {
                 messageBreakInfo: hasResolvedText && resolvedInfo.messageBreakInfo,
                 rawText: hasResolvedText ? resolvedInfo.rawText : sourceText,
                 messageOrigin: resolvedInfo && resolvedInfo.messageOrigin,
             });
-            rememberPendingBitmapGlyphSource(windowInstance, windowInstance._trCurrentMessagePayload);
+            setCurrentMessagePayload(windowInstance, payload);
+            rememberPendingBitmapGlyphSource(windowInstance, payload);
+            return state;
         }
 
         /**
          * Report the fallback processCharacter payload once native text ends.
          */
         function completeProcessCharacterFallback(windowInstance, sourceText) {
-            const payload = windowInstance._trCurrentMessagePayload || createEscapeAwarePayload(sourceText, 'processCharacter-final');
-            windowInstance._trCurrentMessagePayload = null;
+            const payload = takeCurrentMessagePayload(windowInstance) || createEscapeAwarePayload(sourceText, 'processCharacter-final');
             const activeState = getMessageState(windowInstance);
             const finalText = payload ? payload.visible : stripControls(sourceText).trim();
             if (finalText && finalText !== activeState.currentText) {
                 activeState.currentText = finalText;
                 diag(`[GameMessage] Final rendered text: "${preview(finalText)}"`);
-                windowInstance.processCompleteMessage(payload || sourceText, windowInstance._trMessageSession);
+                windowInstance.processCompleteMessage(payload || sourceText, activeState.session);
             } else if (payload) {
-                windowInstance.processCompleteMessage(payload, windowInstance._trMessageSession);
+                windowInstance.processCompleteMessage(payload, activeState.session);
             }
         }
 
@@ -469,11 +878,42 @@
 
         return {
             createMessageState,
+            createMessageRenderSession,
             getMessageState,
+            getMessageRenderSession,
+            createMessageStreamPreviewState,
+            createMessageStartState,
+            attachMessageRecordSession,
+            clearMessageRenderSession,
+            setMessageRequestSession,
+            clearMessageRequestSession,
+            setMessageRenderRetained,
+            updateMessageVisibilitySession,
+            setPendingMessageRedrawSession,
+            getPendingMessageRedrawSession,
+            clearPendingMessageRedrawSession,
+            getMessageStreamPreviewSession,
+            beginMessageStreamPreview,
+            setMessageStreamPreviewText,
+            getMessageStreamPreviewText,
+            isMessageStreamPreviewCurrent,
+            stopMessageStreamPreview,
+            clearPendingStreamPreviewSession,
+            resetStreamState,
+            getMessageStartSession,
+            clearMessageStartSession,
+            setMessageStartCoordinates,
+            getMessageStartCoordinates,
             beginMessageSession,
             resetWindowMessageState,
             isSessionCurrent,
             isCurrentTranslation,
+            getCurrentMessageSessionId,
+            setMessageTranslationSession,
+            markMessageTranslationRequested,
+            getCurrentMessagePayload,
+            setCurrentMessagePayload,
+            takeCurrentMessagePayload,
             captureTextStateStart,
             collectWindowsForGameMessage,
             collectSceneMessageWindows,

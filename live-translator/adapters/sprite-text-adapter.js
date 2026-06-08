@@ -23,7 +23,11 @@
         throw new Error('[LiveTranslator] runtime module require is unavailable before adapters/sprite-text-adapter.js.');
     }
 
+    const measuredBounds = requireRuntimeModule('runtime.measuredBounds');
+    const operationDiagnostics = requireRuntimeModule('runtime.operationDiagnostics');
+    const renderTransaction = requireRuntimeModule('runtime.renderTransaction');
     const controllers = {
+        controllerFacades: requireRuntimeModule('adapters.spriteText.controllerFacades'),
         install: requireRuntimeModule('adapters.spriteText.install'),
         bitmapObservation: requireRuntimeModule('adapters.spriteText.bitmapobservation'),
         bitmapOwnership: requireRuntimeModule('adapters.spriteText.bitmapownership'),
@@ -71,23 +75,23 @@
      * Build one sprite adapter instance and compose the focused controllers.
      */
     function createSpriteTextAdapter(context = {}) {
+        const perf = context.perf || {
+            count() {},
+            top() {},
+            time() {},
+            isEnabled() { return false; },
+            now() { return Date.now(); },
+        };
         const scope = {
             globalScope,
             logger: context.logger || console,
             diag: typeof context.diag === 'function' ? context.diag : () => {},
             preview: typeof context.preview === 'function' ? context.preview : (text) => String(text ?? ''),
+            textCodec: requireTextCodec(context.textCodec, 'SpriteText'),
             stripControls: typeof context.stripControls === 'function'
                 ? context.stripControls
                 : (text) => String(text ?? ''),
-            encodeText: typeof context.encodeText === 'function'
-                ? context.encodeText
-                : (text) => ({
-                    originalText: String(text ?? ''),
-                    visibleText: String(text ?? '').trim(),
-                    translationText: String(text ?? ''),
-                    normalizedText: String(text ?? '').trim(),
-                    tokens: [],
-                }),
+            createTextSource: requireTextSourceHelper(context.createTextSource, 'SpriteText'),
             restoreText: typeof context.restoreText === 'function'
                 ? context.restoreText
                 : (translated) => translated,
@@ -107,14 +111,14 @@
             adapterContract: context.adapterContract || null,
             settings: context.settings && typeof context.settings === 'object' ? context.settings : {},
             contentsOwners: context.contentsOwners || null,
-            bitmapServices: normalizeBitmapServices(context.bitmapServices),
-            perf: context.perf || {
-                count() {},
-                top() {},
-                time() {},
-                isEnabled() { return false; },
-                now() { return Date.now(); },
-            },
+            surfaceOwnership: context.surfaceOwnership || null,
+            bitmapServices: normalizeBitmapServices(context.bitmapServices, {
+                perf,
+                logger: context.logger || console,
+            }),
+            measuredBounds,
+            renderTransaction,
+            perf,
             bitmapStates: new WeakMap(),
             bitmapOwners: new WeakMap(),
             spriteSurfaceClaims: new WeakMap(),
@@ -133,11 +137,11 @@
             nextEntryId: 0,
             nextRunId: 0,
             flushing: false,
-            frameFallbackTimer: null,
             lastMaintenanceFrameKey: null,
             lastBitmapFallbackFrameKey: null,
             lastAdoptedScene: null,
             bitmapMutationObserver: null,
+            controllerFacades: null,
             hasRequiredOrchestrator,
             ADAPTER_ID, HOOK_NAME, SURFACE_TYPE, RENDER_STRATEGY, SPRITE_PRIORITY, ADAPTER_TOKEN,
             BITMAP_OBSERVER_TOKEN, CHILD_OBSERVER_TOKEN, FALLBACK_MUTATION_TOKEN, FRAME_TOKEN,
@@ -161,6 +165,7 @@
         scope.textScaleOthers = typeof scope.resolveTextScalePercent === 'function'
             ? scope.resolveTextScalePercent(scope.settings, 'textScaleOthers', 100)
             : 100;
+        scope.controllerFacades = controllers.controllerFacades.create(scope);
 
         [controllers.install, controllers.bitmapObservation, controllers.bitmapOwnership, controllers.frame, controllers.entries, controllers.overlayBitmap, controllers.overlaySprite, controllers.glyphCandidates, controllers.parentRunRecords, controllers.parentRunOverlay, controllers.parentRunLifecycle, controllers.visibility, controllers.state, controllers.utils].forEach((controllerModule) => {
             if (!controllerModule || typeof controllerModule.createController !== 'function') {
@@ -174,42 +179,83 @@
         };
     }
 
+    function requireTextSourceHelper(value, label) {
+        if (typeof value === 'function') return value;
+        throw new Error(`[${label}] createTextSource helper is required.`);
+    }
+
+    function requireTextCodec(value, label) {
+        if (value && typeof value.createPlainTextSource === 'function') return value;
+        throw new Error(`[${label}] textCodec service is required.`);
+    }
+
     /**
      * Normalize the sprite-facing bitmap capability facet.
      */
-    function normalizeBitmapServices(services) {
+    function normalizeBitmapServices(services, diagnostics = {}) {
         const api = services && typeof services === 'object' ? services : {};
+        const onError = operationDiagnostics.createOperationErrorReporter({
+            component: 'SpriteText',
+            operationLabel: 'Bitmap service',
+            metricBase: 'bitmapServices.error',
+            perf: diagnostics.perf,
+            logger: diagnostics.logger,
+        });
         return {
             hasMutationPublisher() {
                 if (typeof api.watchBitmap !== 'function'
                     || typeof api.hasMutationPublisher !== 'function') {
                     return false;
                 }
-                try { return api.hasMutationPublisher() === true; } catch (_) { return false; }
+                try { return api.hasMutationPublisher() === true; } catch (error) { onError('hasMutationPublisher', error); return false; }
             },
             watchBitmap(bitmap, handler) {
                 if (typeof api.watchBitmap !== 'function') return () => {};
-                try { return api.watchBitmap(bitmap, handler) || (() => {}); } catch (_) { return () => {}; }
+                try { return api.watchBitmap(bitmap, handler) || (() => {}); } catch (error) { onError('watchBitmap', error); return () => {}; }
             },
             flushBitmapFallback(reason) {
                 if (typeof api.flushBitmapFallback !== 'function') return false;
-                try { return api.flushBitmapFallback(reason) === true; } catch (_) { return false; }
+                try { return api.flushBitmapFallback(reason) === true; } catch (error) { onError('flushBitmapFallback', error); return false; }
+            },
+            getRenderGuardState(bitmap) {
+                if (typeof api.getRenderGuardState !== 'function') throw new Error('[SpriteText] bitmapServices.getRenderGuardState is required.');
+                return api.getRenderGuardState(bitmap);
+            },
+            getRenderGuardReason(bitmap) {
+                if (typeof api.getRenderGuardReason !== 'function') throw new Error('[SpriteText] bitmapServices.getRenderGuardReason is required.');
+                return api.getRenderGuardReason(bitmap);
+            },
+            withBitmapSkipGuard(bitmap, callback) {
+                if (typeof api.withBitmapSkipGuard !== 'function') throw new Error('[SpriteText] bitmapServices.withBitmapSkipGuard is required.');
+                return api.withBitmapSkipGuard(bitmap, callback);
+            },
+            withSpriteTextReplayGuard(bitmap, callback) {
+                if (typeof api.withSpriteTextReplayGuard !== 'function') throw new Error('[SpriteText] bitmapServices.withSpriteTextReplayGuard is required.');
+                return api.withSpriteTextReplayGuard(bitmap, callback);
+            },
+            withBitmapSkipAndSpriteReplayGuard(bitmap, callback) {
+                if (typeof api.withBitmapSkipAndSpriteReplayGuard !== 'function') throw new Error('[SpriteText] bitmapServices.withBitmapSkipAndSpriteReplayGuard is required.');
+                return api.withBitmapSkipAndSpriteReplayGuard(bitmap, callback);
+            },
+            scheduleDeferredFlush(options) {
+                if (typeof api.scheduleDeferredFlush !== 'function') throw new Error('[SpriteText] bitmapServices.scheduleDeferredFlush is required.');
+                return api.scheduleDeferredFlush(options);
             },
             subscribeDrawBatches(options) {
                 if (typeof api.subscribeDrawBatches !== 'function') return () => {};
-                try { return api.subscribeDrawBatches(options) || (() => {}); } catch (_) { return () => {}; }
+                try { return api.subscribeDrawBatches(options) || (() => {}); } catch (error) { onError('subscribeDrawBatches', error); return () => {}; }
             },
             flushDrawBatches(reason, bitmap) {
                 if (typeof api.flushDrawBatches !== 'function') return 0;
-                try { return api.flushDrawBatches(reason, bitmap) || 0; } catch (_) { return 0; }
+                try { return api.flushDrawBatches(reason, bitmap) || 0; } catch (error) { onError('flushDrawBatches', error); return 0; }
             },
             flushOwnerDrawBatches(reason, bitmap) {
                 if (typeof api.flushOwnerDrawBatches !== 'function') return 0;
-                try { return api.flushOwnerDrawBatches(reason, bitmap) || 0; } catch (_) { return 0; }
+                try { return api.flushOwnerDrawBatches(reason, bitmap) || 0; } catch (error) { onError('flushOwnerDrawBatches', error); return 0; }
             },
             hasPendingDrawBatches(bitmap) {
                 if (typeof api.hasPendingDrawBatches !== 'function') return false;
-                try { return api.hasPendingDrawBatches(bitmap) === true; } catch (_) { return false; }
+                try { return api.hasPendingDrawBatches(bitmap) === true; } catch (error) { onError('hasPendingDrawBatches', error); return false; }
             },
         };
     }
@@ -256,6 +302,7 @@
                 'setItemTranslationPriority',
                 'claimSurface',
                 'releaseSurface',
+                'describeTextEligibility',
                 'subscribeSurfaceDraws',
                 'subscribeRecords',
             ]));

@@ -58,6 +58,98 @@
         };
     }
 
+    function createTextModel(input, options = {}) {
+        const source = options && typeof options === 'object' ? options : {};
+        const codecState = encodeText(input);
+        const methodName = String(source.methodName || source.type || '');
+        const surfaceType = String(source.surfaceType || source.surface || '');
+        const visibleText = sanitizeVisibleText(codecState.originalText, source);
+        const translationSource = String(codecState.translationText ?? '');
+        const normalizedSource = normalizeTranslationSource(codecState.normalizedText, translationSource);
+        const drawableText = sanitizeDrawTextOutput(codecState.originalText, {
+            methodName,
+            type: source.type,
+        });
+        return {
+            originalText: codecState.originalText,
+            rawText: codecState.originalText,
+            visibleText,
+            translationSource,
+            normalizedSource,
+            drawableText,
+            methodName,
+            surfaceType,
+            codecState,
+            tokens: codecState.tokens,
+            hasControls: codecState.tokens.length > 0,
+            placeholderCount: countPlaceholders(translationSource),
+            iconCount: countIconEscapes(codecState.originalText),
+        };
+    }
+
+    function createTextSource(input, options = {}) {
+        const model = createTextModel(input, options);
+        return {
+            originalText: model.originalText,
+            visibleText: model.visibleText,
+            translationSource: model.translationSource,
+            normalizedSource: model.normalizedSource,
+            codecState: model.codecState,
+            textModel: model,
+        };
+    }
+
+    function createPlainTextSource(input, options = {}) {
+        const model = createPlainTextModel(input, options);
+        return {
+            originalText: model.originalText,
+            visibleText: model.visibleText,
+            translationSource: model.translationSource,
+            normalizedSource: model.normalizedSource,
+            codecState: model.codecState,
+            textModel: model,
+        };
+    }
+
+    function createPlainTextModel(input, options = {}) {
+        const source = options && typeof options === 'object' ? options : {};
+        const originalText = String(input ?? '');
+        const methodName = String(source.methodName || source.type || '');
+        const surfaceType = String(source.surfaceType || source.surface || '');
+        const visibleText = sanitizeVisibleText(originalText, source);
+        const translationSource = source.translationSource !== undefined
+            ? String(source.translationSource ?? '')
+            : originalText;
+        const normalizedSource = normalizeTranslationSource(source.normalizedSource, translationSource);
+        const codecState = {
+            originalText,
+            visibleText,
+            translationText: translationSource,
+            normalizedText: normalizedSource,
+            tokens: [],
+            controlCodes: [],
+            controlCodeMarker: CONTROL_CODE_PLACEHOLDER,
+        };
+        return {
+            originalText,
+            rawText: originalText,
+            visibleText,
+            translationSource,
+            normalizedSource,
+            drawableText: sanitizeDrawTextOutput(originalText, {
+                methodName,
+                type: source.type,
+            }),
+            methodName,
+            surfaceType,
+            codecState,
+            tokens: codecState.tokens,
+            hasControls: false,
+            placeholderCount: 0,
+            iconCount: countIconEscapes(originalText),
+        };
+    }
+
     function restoreText(translatedText, codecState = {}) {
         if (translatedText === null || translatedText === undefined) return translatedText;
         const replacements = getReplacementValues(codecState);
@@ -66,6 +158,19 @@
             const value = index < replacements.length ? replacements[index] : '';
             index += 1;
             return value;
+        });
+    }
+
+    function toDrawTextExInputText(input) {
+        if (input === null || input === undefined) return '';
+        const text = String(input);
+        // drawTextEx is the RPG Maker escape-conversion boundary. Restored
+        // translations may carry already-converted ESC control codes because
+        // the observed source text was captured after conversion. Feeding those
+        // converted codes back into drawTextEx asks plugins to process an
+        // internal form they did not receive from native refresh code.
+        return text.replace(/\x1b([A-Za-z0-9_#]+|[^\s\w])(\[[^\]]*\]|<[^>]*>)?/g, (_match, code, suffix) => {
+            return `\\${code}${suffix || ''}`;
         });
     }
 
@@ -86,15 +191,56 @@
         return String(input).replace(createControlCodeRegex(), '');
     }
 
+    function sanitizeVisibleText(input, options = {}) {
+        const source = options && typeof options === 'object' ? options : {};
+        let value = stripControls(input);
+        if (source.perCharPattern) {
+            try {
+                value = value.replace(source.perCharPattern, '');
+            } catch (_) {}
+        }
+        return source.trim === false ? value : value.trim();
+    }
+
+    function sanitizeDrawTextOutput(input, options = {}) {
+        if (input === null || input === undefined) return '';
+        const text = String(input);
+        const methodName = String(options && (options.methodName || options.type) || '');
+        return shouldStripDrawTextOutput(methodName) ? stripControls(text) : text;
+    }
+
+    function shouldStripDrawTextOutput(methodName) {
+        const method = String(methodName || '');
+        return method === 'drawText' || method === 'drawTextS' || method === 'drawTextM';
+    }
+
+    function countIconEscapes(input) {
+        const matches = String(input ?? '').match(/(?:\x1b|\\)i\[[^\]]*\]/gi);
+        return matches ? matches.length : 0;
+    }
+
     function countPlaceholders(input) {
         const matches = String(input ?? '').match(createPlaceholderRegex());
         return matches ? matches.length : 0;
     }
 
+    function normalizeTranslationSource(value, fallback = '') {
+        const source = value === undefined || value === null ? fallback : value;
+        return String(source ?? '').trim();
+    }
+
     defineRuntimeModule('runtime.textCodec', {
         encodeText,
+        createTextModel,
+        createTextSource,
+        createPlainTextModel,
+        createPlainTextSource,
         restoreText,
+        toDrawTextExInputText,
         stripControls,
+        sanitizeVisibleText,
+        sanitizeDrawTextOutput,
+        countIconEscapes,
         countPlaceholders,
         CONTROL_CODE_PATTERN,
         CONTROL_CODE_PLACEHOLDER,

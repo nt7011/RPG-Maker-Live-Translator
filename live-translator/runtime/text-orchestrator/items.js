@@ -12,9 +12,11 @@
     }
 
     function createController(scope = {}) {
-        const { ACTIVE_STATUSES, applyPatch, normalizeId, normalizeStatus, pruneMap, archivedLimit, activeItems, detachedItems, detachedItemsBySlotSignature, archivedItems, slotIndex } = scope;
-        const callScope = (name) => (...args) => scope[name](...args);
-        const { buildSlotSignature, rememberSourceTranslation, isSkippedItem, schedulePublish, resolveLifecyclePolicy, applyLifecyclePolicy } = Object.fromEntries(['buildSlotSignature', 'rememberSourceTranslation', 'isSkippedItem', 'schedulePublish', 'resolveLifecyclePolicy', 'applyLifecyclePolicy'].map((name) => [name, callScope(name)]));
+        const { textLifecycle, renderTransaction, applyPatch, normalizeId, normalizeStatus, firstString, mergeDetails, pickSerializableObject, pruneMap, archivedLimit, activeItems, detachedItems, detachedItemsBySlotSignature, archivedItems, slotIndex } = scope;
+        const { resolveLifecyclePolicy, applyLifecyclePolicy } = scope.controllerFacades.policy;
+        const { buildSlotSignature } = scope.controllerFacades.identity;
+        const { rememberSourceTranslation, isSkippedItem } = scope.controllerFacades.sourceCache;
+        const { schedulePublish } = scope.controllerFacades.diagnostics;
 
         /**
          * Insert or update the canonical mutable item record.
@@ -44,7 +46,7 @@
             item.updatedAt = now;
             item.lastSeenAt = now;
             item.sequence = ++scope.sequence;
-            item.active = ACTIVE_STATUSES[item.status] === true;
+            textLifecycle.applyTransition(item, item.status);
             if (item.active) {
                 item.deactivatedAt = null;
                 moveToActive(item);
@@ -86,6 +88,7 @@
                 priority: null,
                 generation: 0,
                 renderStrategy: '',
+                renderCycle: null,
                 visible: true,
                 screenState: 'visible',
                 backgrounded: false,
@@ -226,15 +229,229 @@
             item.sourceHint = '';
             item.renderStrategy = '';
             item.translationRenderStrategy = '';
+            item.renderCycle = null;
             item.priority = null;
             item.metadata = {};
             return true;
+        }
+
+        function setItemRenderCycleFromObservation(item, source = {}) {
+            if (!item || !item.id || !source || typeof source.drawBoundary !== 'object' || !source.drawBoundary) return null;
+            const boundary = renderTransaction.createSourceDrawBoundary(source.drawBoundary);
+            const patch = createRenderCyclePatch(item, source, {
+                drawBoundary: boundary,
+                reason: firstString(source.reason, source.message, 'item-observed'),
+                details: {
+                    status: source.status || item.status || '',
+                    observed: true,
+                },
+            });
+            const targetPhase = boundary.sourceCommitted === true || boundary.phase === renderTransaction.PHASES.SOURCE_DRAW_COMMITTED
+                ? renderTransaction.PHASES.SOURCE_DRAW_COMMITTED
+                : renderTransaction.PHASES.SOURCE_DRAW_OBSERVED;
+            const existing = item.renderCycle && typeof item.renderCycle === 'object'
+                ? renderTransaction.createRenderCycle(item.renderCycle)
+                : null;
+            const sameBoundary = !!(existing
+                && existing.drawBoundary
+                && existing.drawBoundary.id
+                && boundary.id
+                && existing.drawBoundary.id === boundary.id
+                && existing.terminal !== true);
+            let transition = null;
+            if (!sameBoundary) {
+                transition = targetPhase === renderTransaction.PHASES.SOURCE_DRAW_OBSERVED
+                    ? renderTransaction.observeRenderCycleSourceDraw(patch)
+                    : renderTransaction.transitionRenderCycle(null, targetPhase, patch);
+            } else if (existing.phase === renderTransaction.PHASES.SOURCE_DRAW_OBSERVED
+                && targetPhase === renderTransaction.PHASES.SOURCE_DRAW_COMMITTED) {
+                transition = renderTransaction.commitRenderCycleSourceDraw(existing, patch);
+            } else if (existing.phase === targetPhase) {
+                item.renderCycle = renderTransaction.createRenderCycle(Object.assign({}, existing, patch, {
+                    phase: existing.phase,
+                    details: mergeDetails(existing.details, patch.details),
+                }));
+                return {
+                    ok: true,
+                    accepted: true,
+                    valid: true,
+                    status: item.renderCycle.status,
+                    phase: item.renderCycle.phase,
+                    previousPhase: existing.phase,
+                    state: item.renderCycle,
+                    event: null,
+                    commit: null,
+                };
+            } else {
+                transition = renderTransaction.transitionRenderCycle(existing, targetPhase, patch);
+            }
+            if (transition && transition.ok && transition.state) {
+                item.renderCycle = transition.state;
+            }
+            return transition;
+        }
+
+        function markItemRenderCycleTranslationKnown(item, translation, details = {}) {
+            if (!item || !item.id) return null;
+            const patch = createRenderCyclePatch(item, details, {
+                translationReceived: firstString(translation, details && details.translationReceived, item.translationReceived, item.translation),
+                reason: firstString(details && details.reason, 'translation-known'),
+                details: mergeDetails(details, {
+                    sourceHint: item.sourceHint || '',
+                }),
+            });
+            return advanceItemRenderCycleToPhase(item, renderTransaction.PHASES.TRANSLATION_KNOWN, patch);
+        }
+
+        function markItemRenderCycleAdmitted(item, command = {}) {
+            if (!item || !item.id) return null;
+            const patch = createRenderCyclePatch(item, command, {
+                commandId: firstString(command && command.id, command && command.commandId),
+                commandGeneration: Number(command && command.generation) || Number(item.generation) || 0,
+                renderCommand: pickSerializableObject(command || {}),
+                translationReceived: firstString(command && command.text, item.translationReceived, item.translation),
+                reason: firstString(command && command.reason, 'render-admitted'),
+                details: mergeDetails(command && command.metadata, {
+                    strategy: firstString(command && command.strategy, item.renderStrategy),
+                }),
+            });
+            const prepared = ensureRenderCycleReadyForRender(item, patch);
+            if (!prepared || !prepared.ok) return prepared;
+            return advanceItemRenderCycleToPhase(item, renderTransaction.PHASES.RENDER_ADMITTED, patch);
+        }
+
+        function markItemRenderCycleDecision(item, status, decision = {}, command = null) {
+            if (!item || !item.id) return null;
+            const normalizedStatus = renderTransaction.normalizeCommitStatus(status);
+            const decisionSource = decision && typeof decision === 'object' ? decision : {};
+            const commandSource = command && typeof command === 'object' ? command : {};
+            const patch = createRenderCyclePatch(item, decisionSource, {
+                commandId: firstString(decisionSource.commandId, commandSource.id),
+                commandGeneration: Number(decisionSource.commandGeneration) || Number(commandSource.generation) || Number(item.generation) || 0,
+                renderCommand: pickSerializableObject(commandSource),
+                renderCommit: decisionSource.renderCommit && typeof decisionSource.renderCommit === 'object'
+                    ? decisionSource.renderCommit
+                    : null,
+                translationReceived: firstString(
+                    decisionSource.translationReceived,
+                    decisionSource.details && decisionSource.details.translationReceived,
+                    commandSource.text,
+                    item.translationReceived,
+                    item.translation
+                ),
+                translationDrawn: firstString(
+                    decisionSource.translationDrawn,
+                    decisionSource.details && decisionSource.details.translationDrawn,
+                    item.translationDrawn
+                ),
+                reason: firstString(decisionSource.reason, normalizedStatus),
+                details: mergeDetails(decisionSource.details, {
+                    strategy: firstString(decisionSource.strategy, commandSource.strategy, item.renderStrategy),
+                }),
+            });
+            const prepared = ensureRenderCycleReadyForRender(item, patch);
+            if (!prepared || !prepared.ok) return prepared;
+            const targetPhase = normalizedStatus === 'accepted'
+                ? renderTransaction.PHASES.RENDER_COMMITTED
+                : (normalizedStatus === 'deferred'
+                    ? renderTransaction.PHASES.RENDER_DEFERRED
+                    : (normalizedStatus === 'noop'
+                        ? renderTransaction.PHASES.RENDER_NOOP
+                        : renderTransaction.PHASES.RENDER_REJECTED));
+            return advanceItemRenderCycleToPhase(item, targetPhase, patch);
+        }
+
+        function ensureRenderCycleReadyForRender(item, patch) {
+            const current = item && item.renderCycle && typeof item.renderCycle === 'object'
+                ? renderTransaction.createRenderCycle(item.renderCycle)
+                : null;
+            if (!current) {
+                return advanceItemRenderCycleToPhase(item, renderTransaction.PHASES.TRANSLATION_KNOWN, patch);
+            }
+            if (current.phase === renderTransaction.PHASES.SOURCE_DRAW_COMMITTED) {
+                return advanceItemRenderCycleToPhase(item, renderTransaction.PHASES.TRANSLATION_KNOWN, patch);
+            }
+            if (current.phase === renderTransaction.PHASES.TRANSLATION_KNOWN
+                || current.phase === renderTransaction.PHASES.RENDER_ADMITTED
+                || current.phase === renderTransaction.PHASES.RENDER_DEFERRED) {
+                return {
+                    ok: true,
+                    accepted: true,
+                    valid: true,
+                    status: current.status,
+                    phase: current.phase,
+                    previousPhase: current.phase,
+                    state: current,
+                    event: null,
+                    commit: null,
+                };
+            }
+            return renderTransaction.transitionRenderCycle(current, renderTransaction.PHASES.TRANSLATION_KNOWN, patch);
+        }
+
+        function advanceItemRenderCycleToPhase(item, phase, patch = {}) {
+            if (!item || !item.id) return null;
+            const current = item.renderCycle && typeof item.renderCycle === 'object'
+                ? renderTransaction.createRenderCycle(item.renderCycle)
+                : null;
+            if (current && current.phase === phase) {
+                item.renderCycle = renderTransaction.createRenderCycle(Object.assign({}, current, patch, {
+                    phase,
+                    details: mergeDetails(current.details, patch && patch.details),
+                }));
+                return {
+                    ok: true,
+                    accepted: true,
+                    valid: true,
+                    status: item.renderCycle.status,
+                    phase: item.renderCycle.phase,
+                    previousPhase: current.phase,
+                    state: item.renderCycle,
+                    event: null,
+                    commit: null,
+                };
+            }
+            const transition = renderTransaction.transitionRenderCycle(current, phase, patch);
+            if (transition && transition.ok && transition.state) {
+                item.renderCycle = transition.state;
+            }
+            return transition;
+        }
+
+        function createRenderCyclePatch(item, source = {}, extra = {}) {
+            const sourceObject = source && typeof source === 'object' ? source : {};
+            const extraObject = extra && typeof extra === 'object' ? extra : {};
+            const boundary = sourceObject.drawBoundary && typeof sourceObject.drawBoundary === 'object'
+                ? sourceObject.drawBoundary
+                : (item && item.drawBoundary && typeof item.drawBoundary === 'object' ? item.drawBoundary : null);
+            return Object.assign({
+                adapterId: firstString(sourceObject.adapterId, sourceObject.sourceAdapter, item && (item.sourceAdapter || item.hook)),
+                itemId: item && item.id ? item.id : firstString(sourceObject.itemId, sourceObject.recordId),
+                recordId: item && item.id ? item.id : firstString(sourceObject.recordId, sourceObject.itemId),
+                surfaceId: firstString(sourceObject.surfaceId, item && item.surfaceId),
+                identitySurfaceId: firstString(sourceObject.identitySurfaceId, item && item.identitySurfaceId),
+                slotKey: firstString(sourceObject.slotKey, item && item.slotKey),
+                generation: Number(sourceObject.generation) || Number(item && item.generation) || 0,
+                entryGeneration: Number(sourceObject.entryGeneration) || Number(sourceObject.generation) || Number(item && item.generation) || 0,
+                strategy: firstString(sourceObject.strategy, sourceObject.renderStrategy, item && item.renderStrategy),
+                renderStrategy: firstString(sourceObject.renderStrategy, sourceObject.strategy, item && item.renderStrategy),
+                commandId: firstString(sourceObject.commandId),
+                commandGeneration: Number(sourceObject.commandGeneration) || Number(sourceObject.generation) || Number(item && item.generation) || 0,
+                translationReceived: firstString(sourceObject.translationReceived, item && item.translationReceived, item && item.translation),
+                translationDrawn: firstString(sourceObject.translationDrawn, item && item.translationDrawn),
+                drawBoundary: boundary,
+                details: mergeDetails(sourceObject.details),
+            }, extraObject);
         }
 
         return {
             upsertItem,
             createEmptyItem,
             clearItemTranslationRequest,
+            setItemRenderCycleFromObservation,
+            markItemRenderCycleTranslationKnown,
+            markItemRenderCycleAdmitted,
+            markItemRenderCycleDecision,
             getItemById,
             hasItem,
             hasLiveTranslationRequest,

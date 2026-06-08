@@ -7,28 +7,18 @@
         ? window
         : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
     const defineRuntimeModule = globalScope.LiveTranslatorDefine;
+    const requireRuntimeModule = globalScope.LiveTranslatorRequire;
     if (typeof defineRuntimeModule !== 'function') {
         throw new Error('[LiveTranslator] runtime module registry is unavailable before runtime/text-orchestrator/ownership-surface-draw.js.');
     }
+    if (typeof requireRuntimeModule !== 'function') {
+        throw new Error('[LiveTranslator] runtime module require is unavailable before runtime/text-orchestrator/ownership-surface-draw.js.');
+    }
+    const renderTransaction = requireRuntimeModule('runtime.renderTransaction');
 
     function createController(scope = {}) {
         const { firstString, surfaceDrawListeners } = scope;
-        const callScope = (name) => (...args) => scope[name](...args);
-        const {
-            claimText,
-            findTextOwnershipBlocker,
-            getOwnershipBucket,
-            getSurfaceWinner,
-            normalizeOwnershipDescriptor,
-            ownershipNumber,
-        } = Object.fromEntries([
-            'claimText',
-            'findTextOwnershipBlocker',
-            'getOwnershipBucket',
-            'getSurfaceWinner',
-            'normalizeOwnershipDescriptor',
-            'ownershipNumber',
-        ].map((name) => [name, callScope(name)]));
+        const { claimText, findTextOwnershipBlocker, getOwnershipBucket, getSurfaceWinner, normalizeOwnershipDescriptor, ownershipNumber } = scope.controllerFacades.ownership;
 
         /**
          * Publish a raw Bitmap draw through the ownership registry.
@@ -98,7 +88,7 @@
             const candidateAdapters = Array.isArray(source.candidateAdapters)
                 ? source.candidateAdapters.map((value) => firstString(value)).filter(Boolean)
                 : [];
-            return Object.assign(descriptor, {
+            const normalized = Object.assign(descriptor, {
                 methodName: firstString(source.methodName, 'drawText'),
                 x: ownershipNumber(source.x, 0),
                 y: ownershipNumber(source.y, 0),
@@ -116,6 +106,35 @@
                 standaloneGlyph: source.standaloneGlyph === true,
                 candidateAdapters,
             });
+            return Object.assign(normalized, {
+                drawBoundary: createSurfaceDrawBoundary(normalized, source),
+            });
+        }
+
+        function createSurfaceDrawBoundary(descriptor, source = {}) {
+            return renderTransaction.createSourceDrawBoundary(Object.assign({
+                adapterId: descriptor.adapterId,
+                surfaceId: descriptor.surfaceId,
+                slotKey: descriptor.slotKey || createSurfaceDrawSlotKey(descriptor),
+                generation: ownershipNumber(source.generation !== undefined ? source.generation : source.revision, 0),
+                reason: 'surface-draw-observed',
+                details: {
+                    methodName: descriptor.methodName,
+                    mode: descriptor.mode,
+                    ownerType: descriptor.ownerType,
+                },
+            }, source.drawBoundary && typeof source.drawBoundary === 'object' ? source.drawBoundary : {}));
+        }
+
+        function createSurfaceDrawSlotKey(descriptor) {
+            return [
+                descriptor.methodName || 'drawText',
+                descriptor.x,
+                descriptor.y,
+                descriptor.maxWidth,
+                descriptor.lineHeight,
+                descriptor.align || 'left',
+            ].map((value) => firstString(value)).join(':');
         }
 
         function hasSurfaceDrawListener(adapterId) {
@@ -136,6 +155,7 @@
                 ownerClaimId: ownerClaim ? ownerClaim.id : '',
                 reason: ownerClaim ? 'surface-owned' : status,
                 target: descriptor.target,
+                drawBoundary: descriptor.drawBoundary,
                 payload: createSurfaceDrawPayload(descriptor, status),
             };
             let drawDecision = null;
@@ -198,6 +218,7 @@
                 ownerType: descriptor.ownerType,
                 ownershipStatus: status,
                 sourceAdapter: descriptor.adapterId,
+                drawBoundary: descriptor.drawBoundary,
             };
         }
 
@@ -213,6 +234,7 @@
                 token: claimResult ? claimResult.token : null,
                 ownershipToken: claimResult ? claimResult.token : null,
                 claimId: claimResult ? claimResult.claimId : '',
+                drawBoundary: descriptor.drawBoundary,
             }, drawDecision ? { drawDecision } : {});
         }
 

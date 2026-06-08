@@ -154,7 +154,7 @@ function buildTextRecordCopyPayload(item) {
             deactivatedAt: copyTimestamp(item.deactivatedAt),
         },
         metadata: item.metadata || {},
-        policy: getTextRecordPolicyDiagnostics(item),
+        policy: getTextRecordRuntimePolicyDiagnostics(item),
         history,
     };
     return payload;

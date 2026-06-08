@@ -23,26 +23,16 @@
     }
 
     const utils = requireModule('runtime.adapterContractUtils');
+    const textLifecycle = requireModule('runtime.textLifecycle');
+    if (!utils || !textLifecycle) {
+        throw new Error('[LiveTranslator] adapter record state dependencies are unavailable before runtime/adapter-record-state.js.');
+    }
     const {
         getRecordId,
         isRecordObject,
         nonEmptyString,
-        normalizeRecordStatus,
         safeIdPart,
     } = utils;
-
-    const REQUEST_ACTIVE_STATUSES = Object.freeze({
-        pending: true,
-        translating: true,
-    });
-    const RECORD_ACTIVE_STATUSES = Object.freeze({
-        detected: true,
-        pending: true,
-        translating: true,
-        completed: true,
-        skipped: true,
-        failed: true,
-    });
     let recordStateKeySequence = 0;
 
     function requireModule(name) {
@@ -50,7 +40,11 @@
             return requireRuntimeModule(name);
         }
         const modules = globalScope.LiveTranslatorModules || {};
-        return modules[name] || (modules.runtime && modules.runtime.adapterContractUtils) || null;
+        if (modules[name]) return modules[name];
+        if (name === 'runtime.adapterContractUtils') {
+            return modules.runtime && modules.runtime.adapterContractUtils || null;
+        }
+        return null;
     }
 
     function createAdapterRecordStateStore(options = {}) {
@@ -66,13 +60,10 @@
 
         function rememberRecord(record, id, snapshot = {}) {
             if (!isRecordObject(record) || !id) return null;
-            const status = normalizeRecordStatus(snapshot && snapshot.status, 'detected');
+            const status = textLifecycle.normalizeStatus(snapshot && snapshot.status, 'detected');
             const state = getOrCreateRecordState(record, id);
             setRecordStateId(state, id);
-            state.status = status;
-            state.active = RECORD_ACTIVE_STATUSES[status] === true;
-            state.detached = false;
-            state.requestActive = REQUEST_ACTIVE_STATUSES[status] === true;
+            textLifecycle.applyTransition(state, status, { detached: false });
             state.updatedAt = Date.now();
             return state;
         }
@@ -96,16 +87,12 @@
             setRecordStateId(state, id);
             if (event && event.status) updateRecordStateStatus(state, event.status);
             const eventType = String(event && event.type || '');
-            if (eventType === 'item.render_queued') updateRecordStateStatus(state, 'completed');
-            if (eventType === 'item.skipped') updateRecordStateStatus(state, 'skipped');
-            if (eventType === 'item.failed') updateRecordStateStatus(state, 'failed');
-            if (eventType === 'item.translation_noop'
-                || eventType === 'item.translation_noop_detached') {
-                updateRecordStateStatus(state, 'failed');
-            }
-            if (eventType === 'item.stale' || eventType === 'item.disappeared' || eventType === 'item.removed') {
-                state.active = false;
-                state.requestActive = false;
+            const eventStatus = textLifecycle.statusFromRecordEvent(eventType);
+            if (eventStatus) {
+                updateRecordStateStatus(state, eventStatus, {
+                    retire: textLifecycle.isRetiredStatus(eventStatus),
+                    detached: eventType === 'item.translation_noop_detached' ? true : state.detached,
+                });
             }
             state.updatedAt = Date.now();
             return state;
@@ -123,12 +110,9 @@
             return state;
         }
 
-        function updateRecordStateStatus(state, status) {
+        function updateRecordStateStatus(state, status, options = {}) {
             if (!state) return null;
-            const normalized = normalizeRecordStatus(status, state.status || 'detected');
-            state.status = normalized;
-            state.active = RECORD_ACTIVE_STATUSES[normalized] === true;
-            state.requestActive = REQUEST_ACTIVE_STATUSES[normalized] === true;
+            textLifecycle.applyTransition(state, status, options);
             return state;
         }
 
@@ -244,17 +228,19 @@
 
         function isRecordTerminal(target) {
             const status = getRecordStatus(target);
-            return status === 'completed' || status === 'skipped' || status === 'failed';
+            return textLifecycle.isTerminalStatus(status);
         }
 
         function markRetired(target, id, status, recordDetached) {
             const state = getExactRecordState(target);
             if (!state) return;
             setRecordStateId(state, nonEmptyString(id, state.id));
-            state.status = normalizeRecordStatus(status, state.status);
-            state.active = false;
-            state.detached = recordDetached === true;
-            state.requestActive = state.detached && REQUEST_ACTIVE_STATUSES[state.status] === true;
+            textLifecycle.applyTransition(state, status, {
+                active: false,
+                detached: recordDetached === true,
+                requestActive: recordDetached === true && textLifecycle.isRequestActiveStatus(status),
+                retire: true,
+            });
             state.updatedAt = Date.now();
             if (!state.detached) forgetRecordId(state.id, state);
         }

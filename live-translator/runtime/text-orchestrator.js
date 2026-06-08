@@ -24,11 +24,14 @@
     }
 
     const constants = requireRuntimeModule('runtime.textOrchestratorConstants');
+    const textLifecycle = requireRuntimeModule('runtime.textLifecycle');
+    const renderTransaction = requireRuntimeModule('runtime.renderTransaction');
     const baseUtils = requireRuntimeModule('runtime.textOrchestratorBaseUtils');
     const recordUtils = requireRuntimeModule('runtime.textOrchestratorRecordUtils');
     const eligibilityUtils = requireRuntimeModule('runtime.textOrchestratorEligibility');
     const serviceUtils = requireRuntimeModule('runtime.textOrchestratorServiceUtils');
     const controllers = {
+        controllerFacades: requireRuntimeModule('runtime.textOrchestratorControllerFacades'),
         policy: requireRuntimeModule('runtime.textOrchestratorPolicy'),
         lifecycle: requireRuntimeModule('runtime.textOrchestratorLifecycle'),
         ownership: requireRuntimeModule('runtime.textOrchestratorOwnership'),
@@ -42,7 +45,10 @@
         sourceCache: requireRuntimeModule('runtime.textOrchestratorSourceCache'),
         diagnostics: requireRuntimeModule('runtime.textOrchestratorDiagnostics'),
     };
-    const shared = Object.assign({}, constants, baseUtils, recordUtils, eligibilityUtils, serviceUtils);
+    const shared = Object.assign({}, constants, baseUtils, recordUtils, eligibilityUtils, serviceUtils, {
+        textLifecycle,
+        renderTransaction,
+    });
 
     function resolveDiagnosticsPolicy(globalScopeRef, settings) {
         const policy = globalScopeRef && globalScopeRef.LiveTranslatorDiagnosticsPolicy;
@@ -68,12 +74,15 @@
         });
         function fallbackSnapshotPolicy(optionsArg = {}) {
             const guiState = globalScopeRef && globalScopeRef.LiveTranslatorGuiState;
-            const guiActive = !guiState || typeof guiState !== 'object'
-                ? true
-                : guiState.translatorOpen === true;
             const diagnostics = settings && settings.diagnostics && typeof settings.diagnostics === 'object'
                 ? settings.diagnostics
                 : null;
+            const guiActive = (optionsArg.forceDiagnosticsSurface === true
+                || !guiState
+                || typeof guiState !== 'object')
+                ? true
+                : guiState.translatorOpen === true
+                    || !!(diagnostics && diagnostics.captureWhenGuiClosed === true);
             const configuredLevel = normalizeLevel(optionsArg.mode || optionsArg.level || optionsArg.diagnosticsMode)
                 || (diagnostics && normalizeLevel(diagnostics.mode || diagnostics.level))
                 || (diagnostics && Object.prototype.hasOwnProperty.call(diagnostics, 'performanceMode')
@@ -170,6 +179,7 @@
             publishQueued: false,
             lastSnapshot: null,
             detailDiagnosticsActive: false,
+            controllerFacades: null,
         });
 
         const methodControllers = {
@@ -221,6 +231,7 @@
             normalizeOwnershipText: 'ownership',
             ownershipNumber: 'ownership',
             requestItemTranslation: 'request',
+            retryFailedTranslations: 'request',
             refreshJoinedTranslationItem: 'request',
             shouldReplaceJoinedTranslationSubscriber: 'request',
             requestWantsStreaming: 'request',
@@ -257,6 +268,10 @@
             upsertItem: 'items',
             createEmptyItem: 'items',
             clearItemTranslationRequest: 'items',
+            setItemRenderCycleFromObservation: 'items',
+            markItemRenderCycleTranslationKnown: 'items',
+            markItemRenderCycleAdmitted: 'items',
+            markItemRenderCycleDecision: 'items',
             getItemById: 'items',
             hasItem: 'items',
             hasLiveTranslationRequest: 'items',
@@ -321,6 +336,7 @@
             if (typeof method !== 'function') throw new Error('[TextOrchestrator] Missing controller method: ' + methodName);
             return method(...args);
         }
+        scope.controllerFacades = controllers.controllerFacades.create({ callController });
         Object.keys(methodControllers).forEach((methodName) => {
             scope[methodName] = (...args) => callController(methodName, ...args);
         });
@@ -337,6 +353,7 @@
             updateItem: scope.updateItem,
             retireItem: scope.retireItem,
             requestItemTranslation: scope.requestItemTranslation,
+            retryFailedTranslations: scope.retryFailedTranslations,
             cancelItemTranslation: scope.cancelItemTranslation,
             setItemTranslationPriority: scope.setItemTranslationPriority,
             markTranslationRequested: scope.markTranslationRequested,

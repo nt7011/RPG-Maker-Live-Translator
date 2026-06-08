@@ -15,11 +15,6 @@ function renderHookResults() {
 
     const summary = state.hookSummary || summarizeHookResults(state.hookResults);
     const tone = summary.failed > 0 ? 'bad' : (summary.skipped > 0 ? 'warn' : 'ok');
-    const hooksReady = summary.total > 0
-        && summary.failed === 0
-        && summary.skipped === 0
-        && summary.installed === summary.total;
-    setPanelAutoCollapsed('hook-installation-panel', 'hookInstallation', hooksReady);
     setSummaryStatus(
         'hook-summary',
         summary.total > 0 ? tone : 'neutral',
@@ -27,6 +22,7 @@ function renderHookResults() {
             ? `${formatNumber(summary.installed)} installed, ${formatNumber(summary.skipped)} skipped, ${formatNumber(summary.failed)} failed`
             : '0 hooks'
     );
+    renderDiagnosticsSummary();
 
     if (!state.hookResults.length) {
         body.innerHTML = '<tr><td colspan="3" class="empty">No hook installation records.</td></tr>';
@@ -43,63 +39,71 @@ function renderHookResults() {
     }
 }
 
-function renderTextRecordSections() {
-    pruneActiveTextRecordDetail();
+function renderTextRecordSections(policySnapshot = refreshGuiPolicySnapshot()) {
+    const renderContext = createTextRecordRenderContext(policySnapshot);
+    pruneActiveTextRecordDetail(renderContext);
     state.renderedTextRecordDetailKey = '';
-    renderActiveTexts();
-    renderDetachedTexts();
-    renderArchivedTexts();
+    renderActiveTexts(renderContext);
+    renderDetachedTexts(renderContext);
+    renderArchivedTexts(renderContext);
 }
 
-function renderActiveTexts() {
+function renderActiveTexts(renderContext = createTextRecordRenderContext()) {
     renderTextRecordList({
+        panelId: 'active-text-panel',
         bodyId: 'active-texts',
         summaryId: 'active-text-summary',
         records: state.activeTexts,
         emptyText: 'No active text records.',
-    });
+        hideWhenEmpty: true,
+    }, renderContext);
 }
 
-function renderDetachedTexts() {
+function renderDetachedTexts(renderContext = createTextRecordRenderContext()) {
+    const textRecordPolicy = renderContext.policy;
+    const records = Array.isArray(state.detachedTexts) ? state.detachedTexts : [];
     renderTextRecordList({
+        panelId: 'detached-text-panel',
         bodyId: 'detached-texts',
         summaryId: 'detached-text-summary',
-        records: state.detachedTexts,
+        records,
         emptyText: 'No detached text records.',
-        limit: INACTIVE_TEXT_DISPLAY_LIMIT,
+        hideWhenEmpty: true,
+        limit: textRecordPolicy.inactiveDisplayLimit,
         itemOptions: { inactive: true, lifecycleLabel: 'detached' },
-    });
+    }, renderContext);
 }
 
-function renderArchivedTexts() {
+function renderArchivedTexts(renderContext = createTextRecordRenderContext()) {
+    const textRecordPolicy = renderContext.policy;
     renderTextRecordList({
+        panelId: 'archived-text-panel',
         bodyId: 'archived-texts',
         summaryId: 'archived-text-summary',
         records: state.archivedTexts,
         emptyText: 'No archived text records.',
-        limit: INACTIVE_TEXT_DISPLAY_LIMIT,
+        hideWhenEmpty: true,
+        limit: textRecordPolicy.inactiveDisplayLimit,
         itemOptions: { inactive: true, lifecycleLabel: 'archived' },
-    });
+    }, renderContext);
 }
 
-function renderTextRecordList(options) {
+function renderTextRecordList(options, renderContext = createTextRecordRenderContext()) {
     const body = refs[options.bodyId];
     if (!body) return;
 
     const records = Array.isArray(options.records) ? options.records : [];
     setSummaryStatus(options.summaryId, 'neutral', `${formatNumber(records.length)} entries`);
+    syncTextRecordListBodyVisibility(options, records.length > 0);
 
     if (!records.length) {
         body.innerHTML = '';
-        const empty = document.createElement('div');
-        empty.className = 'empty';
-        empty.textContent = options.emptyText || 'No text records.';
-        body.appendChild(empty);
+        if (!options.hideWhenEmpty) appendEmptyState(body, options.emptyText || 'No text records.');
         return;
     }
 
     const rows = createTextRecordRows(getPrioritizedTextRecords(records, options.limit), options);
-    const activeIndex = findActiveTextRecordIndex(rows);
+    const activeIndex = findActiveTextRecordIndex(rows, renderContext);
     const activeRow = activeIndex >= 0 ? rows[activeIndex] : null;
     const detailInsertIndex = activeIndex >= 0
         ? getTextRecordDetailInsertIndex(body, activeIndex, rows.length)
@@ -112,12 +116,22 @@ function renderTextRecordList(options) {
             active,
             detailKey: row.detailKey,
             recordKey: row.recordKey,
-        }, row.itemOptions)));
+        }, row.itemOptions), renderContext));
         if (index === detailInsertIndex) {
-            body.appendChild(createTextRecordDetail(activeRow.item, activeRow.itemOptions));
+            body.appendChild(createTextRecordDetail(activeRow.item, activeRow.itemOptions, renderContext));
             state.renderedTextRecordDetailKey = activeRow.detailKey;
         }
     });
+}
+
+function syncTextRecordListBodyVisibility(options, hasRecords) {
+    const body = options.body || refs[options.bodyId];
+    const panel = options.panel || (options.panelId ? refs[options.panelId] : null);
+    const hidden = options.hideWhenEmpty === true && hasRecords !== true;
+    if (body) body.hidden = hidden;
+    if (panel && panel.classList) {
+        panel.classList.toggle('collapsible-panel-body-empty', hidden);
+    }
 }
 
 function createTextRecordRows(records, options = {}) {
@@ -169,10 +183,32 @@ function isGameMessageRecord(item) {
     return normalizeHookClass(item.hookKey || item.hook || item.methodName) === 'message';
 }
 
-function shouldCensorForesightSpoilerRecord(item, records = getForesightTextRecords()) {
-    return !shouldShowForesightSpoilers()
+function createTextRecordRenderContext(policySnapshot = getGuiPolicySnapshot(), records = getForesightTextRecords()) {
+    const allRecords = Array.isArray(records) ? records : [];
+    const policy = getGuiTextRecordPolicy(policySnapshot);
+    const foregroundSpoilerKeys = policy.showForesightSpoilers
+        ? new Set()
+        : getForegroundGameMessageSourceKeys(allRecords);
+    return {
+        policySnapshot,
+        policy,
+        records: allRecords,
+        foregroundSpoilerKeys,
+    };
+}
+
+function isGuiTextRecordSpoilerCensored(item, records = getForesightTextRecords(), policySnapshot = null) {
+    return isTextRecordSpoilerCensoredForContext(
+        item,
+        createTextRecordRenderContext(policySnapshot || getGuiPolicySnapshot(), records)
+    );
+}
+
+function isTextRecordSpoilerCensoredForContext(item, renderContext) {
+    const context = renderContext || createTextRecordRenderContext();
+    return !context.policy.showForesightSpoilers
         && isUnconsumedForesightMessageRecord(item)
-        && !hasForegroundGameMessageEquivalent(item, records);
+        && !hasForegroundGameMessageEquivalent(item, context.foregroundSpoilerKeys);
 }
 
 function isUnconsumedForesightMessageRecord(item) {
@@ -182,10 +218,12 @@ function isUnconsumedForesightMessageRecord(item) {
         && metadata.foresightConsumed !== true;
 }
 
-function hasForegroundGameMessageEquivalent(item, records) {
+function hasForegroundGameMessageEquivalent(item, recordsOrKeys) {
     const keys = getForesightSpoilerSourceKeys(item);
     if (!keys.length) return false;
-    const foregroundKeys = getForegroundGameMessageSourceKeys(records);
+    const foregroundKeys = recordsOrKeys instanceof Set
+        ? recordsOrKeys
+        : getForegroundGameMessageSourceKeys(recordsOrKeys);
     return keys.some((key) => foregroundKeys.has(key));
 }
 
@@ -232,10 +270,10 @@ function normalizeForesightSpoilerText(value) {
     return String(value === undefined || value === null ? '' : value).replace(/\s+/gu, ' ').trim();
 }
 
-function findActiveTextRecordIndex(rows) {
+function findActiveTextRecordIndex(rows, renderContext = createTextRecordRenderContext()) {
     return (rows || []).findIndex((row) => (
-        canOpenTextRecordDetail(row.item)
-        && shouldRenderActiveTextRecordDetail(row.detailKey)
+        isGuiTextRecordDetailAllowed(row.item, renderContext)
+        && shouldRenderActiveTextRecordDetail(row.detailKey, renderContext)
     ));
 }
 
@@ -286,10 +324,22 @@ function getForesightTextRecords() {
         .concat(state.archivedTexts || []);
 }
 
+function getCurrentForesightGameMessageRecord(records = state.activeTexts || []) {
+    return getPrioritizedTextRecords(records)
+        .find((item) => isForegroundGameMessageRecord(item) && item.onScreen !== false)
+        || null;
+}
+
 function createForesightTranslationPill(item) {
     if (!item) return null;
-    const censored = shouldCensorForesightSpoilerRecord(item);
-    const detailEnabled = canOpenTextRecordDetail(item);
+    const renderContext = createTextRecordRenderContext(getGuiPolicySnapshot());
+    return createForesightTranslationPillForContext(item, renderContext);
+}
+
+function createForesightTranslationPillForContext(item, renderContext) {
+    if (!item) return null;
+    const censored = isTextRecordSpoilerCensoredForContext(item, renderContext);
+    const detailEnabled = isGuiTextRecordDetailAllowed(item, renderContext);
     const railInfo = getTextRecordTranslationRailInfo(item);
     const button = document.createElement('button');
     button.type = 'button';
@@ -310,10 +360,10 @@ function createForesightTranslationPill(item) {
     } else if (detailEnabled) {
         button.addEventListener('click', (event) => {
             event.stopPropagation();
-            const detailKey = findTextRecordDetailKeyForRecord(item);
+            const detailKey = findTextRecordDetailKeyForRecord(item, renderContext);
             if (!detailKey) return;
             state.activeTextRecordDetailKey = detailKey;
-            renderTextRecordSections();
+            renderTextRecordSections(refreshGuiPolicySnapshot());
             scrollTextRecordDetailIntoView(detailKey);
         });
     } else {
@@ -331,12 +381,13 @@ function createForesightTranslationPill(item) {
     return button;
 }
 
-function findTextRecordDetailKeyForRecord(record) {
+function findTextRecordDetailKeyForRecord(record, renderContext = createTextRecordRenderContext()) {
     if (!record) return '';
+    const textRecordPolicy = renderContext.policy;
     const sections = [
         { bodyId: 'active-texts', records: getPrioritizedTextRecords(state.activeTexts || []) },
-        { bodyId: 'detached-texts', records: getPrioritizedTextRecords(state.detachedTexts || [], INACTIVE_TEXT_DISPLAY_LIMIT) },
-        { bodyId: 'archived-texts', records: getPrioritizedTextRecords(state.archivedTexts || [], INACTIVE_TEXT_DISPLAY_LIMIT) },
+        { bodyId: 'detached-texts', records: getPrioritizedTextRecords(state.detachedTexts || [], textRecordPolicy.inactiveDisplayLimit) },
+        { bodyId: 'archived-texts', records: getPrioritizedTextRecords(state.archivedTexts || [], textRecordPolicy.inactiveDisplayLimit) },
     ];
     for (const section of sections) {
         const rows = createTextRecordRows(section.records, { bodyId: section.bodyId });

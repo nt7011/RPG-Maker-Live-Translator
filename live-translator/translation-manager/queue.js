@@ -13,8 +13,30 @@
 
     function createController(scope = {}) {
         const { logger, provider, capacityRefreshMs, requestTimeoutMs, queuedJobs } = scope;
-        const callScope = (name) => (...args) => scope[name](...args);
-        const { forgetJobKey, compareQueuedJobsForDispatch, getEnabledReservedPriorityLanes, jobMatchesReservedLane, jobMatchesAnyReservedLane, countLaneQueuedJobs, getNormalDispatchCapacity, countNormalRunningJobs, hasBlockingReservedLaneWork, startJob } = Object.fromEntries(['forgetJobKey', 'compareQueuedJobsForDispatch', 'getEnabledReservedPriorityLanes', 'jobMatchesReservedLane', 'jobMatchesAnyReservedLane', 'countLaneQueuedJobs', 'getNormalDispatchCapacity', 'countNormalRunningJobs', 'hasBlockingReservedLaneWork', 'startJob'].map((name) => [name, callScope(name)]));
+        const {
+            forgetJobKey,
+            compareQueuedJobsForDispatch,
+            getEnabledReservedPriorityLanes,
+            jobMatchesReservedLane,
+            jobMatchesAnyReservedLane,
+            getReservedLaneDispatchState,
+            getNormalDispatchState,
+            getQueueDispatchState,
+        } = scope.controllerFacades.jobs;
+        const { startJob } = scope.controllerFacades.runner;
+
+        function isCapacityVerifiedByProvider() {
+            if (!provider || typeof provider.getStatus !== 'function') return true;
+            try {
+                const status = provider.getStatus() || {};
+                if (Object.prototype.hasOwnProperty.call(status, 'capacityVerified')) {
+                    return status.capacityVerified === true;
+                }
+            } catch (_) {
+                return false;
+            }
+            return true;
+        }
 
         async function refreshCapacityIfNeeded(force = false) {
             const now = Date.now();
@@ -22,6 +44,7 @@
             if (scope.capacityPromise) return scope.capacityPromise;
             if (!provider || typeof provider.getCapacity !== 'function') {
                 scope.providerCapacity = 1;
+                scope.providerCapacityVerified = false;
                 scope.capacityExpiresAt = now + capacityRefreshMs;
                 return scope.providerCapacity;
             }
@@ -30,20 +53,24 @@
                 .then(() => provider.getCapacity({ timeoutMs: Math.min(requestTimeoutMs, 10000) }))
                 .then((capacity) => {
                     const numeric = Number(capacity);
-                    scope.providerCapacity = Number.isInteger(numeric) && numeric > 0
+                    const validCapacity = Number.isInteger(numeric) && numeric > 0;
+                    scope.providerCapacity = validCapacity
                         ? Math.min(numeric, Number.MAX_SAFE_INTEGER)
                         : 1;
+                    scope.providerCapacityVerified = validCapacity && isCapacityVerifiedByProvider();
                     scope.capacityExpiresAt = Date.now() + capacityRefreshMs;
                     scope.lastCapacityRefreshAt = Date.now();
                     scope.lastCapacityRefreshError = '';
                     scope.translationDiagnostics.recordLazy('capacity.refreshed', () => ({
                         capacity: scope.providerCapacity,
                     }));
+                    scope.recordProviderAvailability('capacity-refreshed');
                     return scope.providerCapacity;
                 })
                 .catch((error) => {
                     logger.warn('[TranslationService] Failed to refresh provider capacity; using 1.', error);
                     scope.providerCapacity = 1;
+                    scope.providerCapacityVerified = false;
                     scope.capacityExpiresAt = Date.now() + capacityRefreshMs;
                     scope.lastCapacityRefreshAt = Date.now();
                     scope.lastCapacityRefreshError = scope.translationDiagnostics.formatError(error);
@@ -51,6 +78,7 @@
                         capacity: scope.providerCapacity,
                         error: scope.lastCapacityRefreshError,
                     }));
+                    scope.recordProviderAvailability('capacity-failed', error);
                     return scope.providerCapacity;
                 })
                 .finally(() => {
@@ -93,17 +121,8 @@
         }
 
         function dispatchReservedPriorityLaneJobs(lanes) {
-            // Reserved lanes are checked before the normal queue. In v1 the only
-            // lane is adapter-agnostic priority 1000. reservedSlots is the
-            // normal-work reservation, not a cap on matching work: if multiple
-            // priority-1000 jobs are ready, they may use every free provider
-            // slot. We do not preempt already-running normal work; the idle slot
-            // prevents most latency without depending on provider cancellation
-            // actually stopping token generation.
-            // TODO(priority-lanes): when lane policies become configurable,
-            // decide whether each lane should have a separate matching-job cap.
             for (const lane of lanes) {
-                while (scope.activeCount < scope.providerCapacity) {
+                while (getReservedLaneDispatchState(lane).canDispatch) {
                     const job = takeNextQueuedJob((candidate) => jobMatchesReservedLane(candidate, lane));
                     if (!job) break;
                     startJob(job);
@@ -112,19 +131,12 @@
         }
 
         function dispatchNormalJobs(lanes) {
-            // Normal jobs can never consume reserved slots while the lane is
-            // enabled. If priority-1000 work is queued or running, v1 stops
-            // admitting new normal work so token generation speed is not further
-            // diluted while urgent text is being translated.
-            // TODO(priority-lanes): make the blocking behavior lane-specific and
-            // configurable after real-world diagnostics show whether all normal
-            // classes should pause, or only lower-priority/background work.
-            if (hasBlockingReservedLaneWork(lanes)) return;
-            const normalCapacity = getNormalDispatchCapacity(lanes);
-            while (scope.activeCount < scope.providerCapacity && countNormalRunningJobs(lanes) < normalCapacity) {
+            let state = getNormalDispatchState(lanes);
+            while (state.canDispatch) {
                 const job = takeNextQueuedJob((candidate) => !jobMatchesAnyReservedLane(candidate, lanes));
                 if (!job) break;
                 startJob(job);
+                state = getNormalDispatchState(lanes);
             }
         }
 
@@ -132,12 +144,7 @@
             pruneQueuedJobs();
             if (!queuedJobs.length || scope.activeCount >= scope.providerCapacity) return false;
             const lanes = getEnabledReservedPriorityLanes();
-            if (lanes.some((lane) => countLaneQueuedJobs(lane) > 0)) {
-                return true;
-            }
-            if (hasBlockingReservedLaneWork(lanes)) return false;
-            if (countNormalRunningJobs(lanes) >= getNormalDispatchCapacity(lanes)) return false;
-            return queuedJobs.some((job) => !jobMatchesAnyReservedLane(job, lanes));
+            return getQueueDispatchState(lanes).canDispatch === true;
         }
 
         async function pump() {

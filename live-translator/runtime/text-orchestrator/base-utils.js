@@ -181,6 +181,42 @@
         return value.length <= max ? value : `${value.slice(0, Math.max(0, max - 3))}...`;
     }
 
+    /**
+     * Build an explicit lifecycle result for non-render item operations.
+     *
+     * These results deliberately separate "handled" from "changed": a valid
+     * request can be handled without mutating anything, while missing ids or
+     * unavailable gateway methods should be observable without collapsing into
+     * a bare false/null.
+     */
+    function createLifecycleResult(status, options = {}) {
+        const source = options && typeof options === 'object' ? options : {};
+        const handled = source.handled === true;
+        const changed = source.changed === true;
+        const terminal = source.terminal === true || isTerminalStatus(status);
+        return Object.freeze(Object.assign({}, source, {
+            status: firstString(status, source.status, handled ? 'handled' : 'ignored'),
+            handled,
+            changed,
+            terminal,
+            recordId: firstString(source.recordId, source.id),
+            id: firstString(source.id, source.recordId),
+            reason: firstString(source.reason, status),
+        }));
+    }
+
+    function isTerminalStatus(status) {
+        const value = String(status || '').toLowerCase();
+        return value === 'retired'
+            || value === 'skipped'
+            || value === 'failed'
+            || value === 'canceled'
+            || value === 'missing-id'
+            || value === 'missing-record'
+            || value === 'unavailable'
+            || value === 'rejected';
+    }
+
     defineRuntimeModule('runtime.textOrchestratorBaseUtils', {
         settingBoolean,
         firstDefined,
@@ -196,5 +232,6 @@
         pickSerializableObject,
         pickSerializableValue,
         defaultPreview,
+        createLifecycleResult,
     });
 })();

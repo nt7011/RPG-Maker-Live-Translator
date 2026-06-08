@@ -5,8 +5,10 @@
     const globalScope = typeof window !== 'undefined'
         ? window
         : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const parts = globalScope.LiveTranslatorForesightTreeViewerParts || {};
-    globalScope.LiveTranslatorForesightTreeViewerParts = parts;
+    const registry = globalScope.LiveTranslatorForesightTreeViewerRegistry;
+    if (!registry || typeof registry.registerPart !== 'function') {
+        throw new Error('[ForesightTreeViewer] parts registry must load before utility helpers.');
+    }
 
     // Shared value normalization and formatting for model and DOM modules.
     function normalizeComparableText(value) {
@@ -105,10 +107,10 @@
             return typeof value === 'string' && value.trim() ? value.trim() : '';
         }
     
-    parts.utils = Object.freeze({
+    registry.registerPart('utils', Object.freeze({
         cloneList, cloneValue, cssToken, defaultFormatTime, finiteNumber, formatControlFlowKind,
         formatControlFlowTarget, formatCount, nonEmptyString, normalizeAction, normalizeClass,
         normalizeComparableText, normalizeControlFlowTarget, positiveInteger,
-    });
+    }));
 
 })();

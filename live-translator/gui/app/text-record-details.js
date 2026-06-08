@@ -2,12 +2,12 @@
 // These functions share state from gui/app/state.js and are loaded before app.js boots.
 'use strict';
 
-function createTextRecordItem(item, options = {}) {
+function createTextRecordItem(item, options = {}, renderContext = createTextRecordRenderContext()) {
     const recordKey = options.recordKey || getTextRecordKey(item);
     const detailKey = options.detailKey || recordKey;
     const railInfo = getTextRecordTranslationRailInfo(item);
-    const censored = shouldCensorForesightSpoilerRecord(item);
-    const detailEnabled = canOpenTextRecordDetail(item);
+    const censored = isTextRecordSpoilerCensoredForContext(item, renderContext);
+    const detailEnabled = isGuiTextRecordDetailAllowed(item, renderContext);
     const record = document.createElement('article');
     record.className = `text-record text-status-${normalizeStatusClass(item.status)} text-hook-${normalizeHookClass(item.hookKey || item.hook)} text-translation-${railInfo.state}`;
     if (options.inactive) record.className += ' text-record-inactive';
@@ -57,15 +57,11 @@ function createTextTranslationRail(info) {
     const rail = document.createElement('span');
     rail.className = `text-translation-rail text-translation-rail-${railInfo.state || 'neutral'}`;
     rail.title = railInfo.title || '';
-
-    const label = document.createElement('span');
-    label.className = 'text-translation-rail-label';
-    label.textContent = railInfo.label || 'WAIT';
-    rail.appendChild(label);
+    rail.appendChild(createTextElement('span', 'text-translation-rail-label', railInfo.label || 'WAIT'));
     return rail;
 }
 
-function createTextRecordDetail(item, options = {}) {
+function createTextRecordDetail(item, options = {}, renderContext = createTextRecordRenderContext()) {
     const recordKey = getTextRecordKey(item);
     const expanded = document.createElement('div');
     expanded.className = `text-expanded text-detail-row text-status-${normalizeStatusClass(item.status)} text-hook-${normalizeHookClass(item.hookKey || item.hook)}`;
@@ -82,7 +78,7 @@ function createTextRecordDetail(item, options = {}) {
 }
 
 function createPolicyDiagnosticDetail(item) {
-    const policy = getTextRecordPolicyDiagnostics(item);
+    const policy = getTextRecordRuntimePolicyDiagnostics(item);
     if (!policy || !Object.keys(policy).length) return null;
     const panel = createExpandedRelatedPanel('Text Policy', formatPolicyHeadline(policy));
     const rows = [];
@@ -122,8 +118,7 @@ function createTranslationDiagnosticDetail(item) {
     const panel = createExpandedRelatedPanel('Translation Job', primary.id || '-');
     panel.className += ` diagnostic-job-${normalizeDiagnosticStatusClass(primary.status || primary.displayMode)}`;
 
-    const grid = document.createElement('div');
-    grid.className = 'text-meta-grid';
+    const grid = createMetadataGrid();
     appendMeta(grid, 'Job', primary.id || '-');
     appendMeta(grid, 'Status', primary.status || primary.displayMode || '-');
     appendMeta(grid, 'Hook', primary.hook || '-');
@@ -158,42 +153,27 @@ function createTranslationDiagnosticDetail(item) {
 function createExpandedRelatedPanel(titleText, metaText) {
     const panel = document.createElement('section');
     panel.className = 'expanded-related-panel';
-
-    const header = document.createElement('div');
-    header.className = 'expanded-related-header';
-    const title = document.createElement('h3');
-    title.textContent = titleText || 'Details';
-    header.appendChild(title);
-    const meta = document.createElement('span');
-    meta.className = 'expanded-related-meta';
-    meta.textContent = metaText || '-';
-    header.appendChild(meta);
-    panel.appendChild(header);
+    panel.appendChild(createTitledMetaHeader({
+        className: 'expanded-related-header',
+        titleTag: 'h3',
+        titleText: titleText || 'Details',
+        metaClassName: 'expanded-related-meta',
+        metaText: metaText || '-',
+    }));
     return panel;
 }
 
 function createRelatedRowList(titleText, rows) {
-    const wrap = document.createElement('div');
-    wrap.className = 'related-row-list';
-    const title = document.createElement('div');
-    title.className = 'history-title';
-    title.textContent = titleText || 'Details';
-    wrap.appendChild(title);
+    const wrap = createTitledContainer('related-row-list', titleText || 'Details');
 
     const list = Array.isArray(rows) ? rows.filter(Boolean) : [];
     if (!list.length) {
-        const empty = document.createElement('div');
-        empty.className = 'history-empty';
-        empty.textContent = 'No related records.';
-        wrap.appendChild(empty);
+        wrap.appendChild(createHistoryEmpty('No related records.'));
         return wrap;
     }
 
     list.forEach((rowText) => {
-        const row = document.createElement('div');
-        row.className = 'related-row';
-        row.textContent = rowText;
-        wrap.appendChild(row);
+        wrap.appendChild(createTextElement('div', 'related-row', rowText));
     });
     return wrap;
 }
@@ -218,53 +198,58 @@ function formatSubscriberRecord(subscriber) {
 }
 
 function toggleTextRecordDetail(recordKey) {
-    if (!recordKey || !isDiagnosticsDetailViewEnabled()) return;
+    const policySnapshot = refreshGuiPolicySnapshot();
+    if (!recordKey || !getGuiTextRecordPolicy(policySnapshot).detailView) return;
     state.activeTextRecordDetailKey = state.activeTextRecordDetailKey === recordKey
         ? ''
         : recordKey;
-    renderTextRecordSections();
+    renderTextRecordSections(refreshGuiPolicySnapshot());
 }
 
-function shouldRenderActiveTextRecordDetail(recordKey) {
+function shouldRenderActiveTextRecordDetail(recordKey, renderContext = createTextRecordRenderContext()) {
+    const textRecordPolicy = renderContext.policy;
     return Boolean(recordKey
-        && state.activeTextRecordDetailKey === recordKey
-        && state.renderedTextRecordDetailKey !== recordKey);
+        && textRecordPolicy.selectedDetailKey === recordKey
+        && textRecordPolicy.renderedDetailKey !== recordKey);
 }
 
-function canOpenTextRecordDetail(item) {
-    return isDiagnosticsDetailViewEnabled() && !shouldCensorForesightSpoilerRecord(item);
+function isGuiTextRecordDetailAllowed(item, renderContext = createTextRecordRenderContext()) {
+    return renderContext.policy.detailView
+        && !isTextRecordSpoilerCensoredForContext(item, renderContext);
 }
 
 function createExpandedRecordHeader(item, options = {}) {
     const header = document.createElement('div');
     header.className = 'text-expanded-header';
-    const meta = document.createElement('span');
-    meta.className = 'text-expanded-meta';
     const labels = [];
     const lifecycleLabel = String(options.lifecycleLabel || item.displayLifecycle || item.lifecycleState || '').trim();
     if (lifecycleLabel && lifecycleLabel !== 'active' && !labels.includes(lifecycleLabel)) labels.push(lifecycleLabel);
-    meta.textContent = `${item.hook || '-'} | ${item.status || 'detected'}${labels.length ? ` | ${labels.join(' | ')}` : ''}`;
-    header.appendChild(meta);
+    header.appendChild(createTextElement(
+        'span',
+        'text-expanded-meta',
+        `${item.hook || '-'} | ${item.status || 'detected'}${labels.length ? ` | ${labels.join(' | ')}` : ''}`
+    ));
     header.appendChild(createTextRecordCopyButton(item));
     return header;
 }
 
-function pruneActiveTextRecordDetail() {
+function pruneActiveTextRecordDetail(renderContext = createTextRecordRenderContext()) {
     if (!state.activeTextRecordDetailKey) return;
-    const activeKeys = getVisibleTextRecordDetailKeys();
+    const activeKeys = getVisibleTextRecordDetailKeys(renderContext);
     if (!activeKeys.includes(state.activeTextRecordDetailKey)) state.activeTextRecordDetailKey = '';
 }
 
-function getVisibleTextRecordDetailKeys() {
+function getVisibleTextRecordDetailKeys(renderContext = createTextRecordRenderContext()) {
+    const textRecordPolicy = renderContext.policy;
     return []
         .concat(createTextRecordRows(getPrioritizedTextRecords(state.activeTexts || []), { bodyId: 'active-texts' }))
-        .concat(createTextRecordRows(getPrioritizedTextRecords(state.detachedTexts || [], INACTIVE_TEXT_DISPLAY_LIMIT), {
+        .concat(createTextRecordRows(getPrioritizedTextRecords(state.detachedTexts || [], textRecordPolicy.inactiveDisplayLimit), {
             bodyId: 'detached-texts',
         }))
-        .concat(createTextRecordRows(getPrioritizedTextRecords(state.archivedTexts || [], INACTIVE_TEXT_DISPLAY_LIMIT), {
+        .concat(createTextRecordRows(getPrioritizedTextRecords(state.archivedTexts || [], textRecordPolicy.inactiveDisplayLimit), {
             bodyId: 'archived-texts',
         }))
-        .filter((row) => canOpenTextRecordDetail(row.item))
+        .filter((row) => isGuiTextRecordDetailAllowed(row.item, renderContext))
         .map((row) => row.detailKey)
         .filter(Boolean);
 }

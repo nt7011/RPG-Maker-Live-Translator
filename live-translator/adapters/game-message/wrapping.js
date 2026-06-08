@@ -13,8 +13,7 @@
 
     function createController(scope = {}) {
         const { ESCAPE_CODE_PATTERN, NUMERIC_PARAM_PATTERN, CJK_CHAR_PATTERN, captureBitmapDrawState, applyBitmapDrawState } = scope;
-        const callScope = (name) => (...args) => scope[name](...args);
-        const { resolveMessageStartCoordinates } = Object.fromEntries(['resolveMessageStartCoordinates'].map((name) => [name, callScope(name)]));
+        const { resolveMessageStartCoordinates } = scope.controllerFacades.install;
 
         /**
          * Create a scoped text-scale override for translated message rendering.

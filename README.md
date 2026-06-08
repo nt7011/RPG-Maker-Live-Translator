@@ -33,8 +33,9 @@ Simply visit https://nt7011.github.io/ with a Chromium browser and point the gam
 ### Manual Installation
 1. Copy `live-translator/` to `js/plugins/live-translator/` or `www/js/plugins/live-translator/`.
 2. Copy `live-translator/config-templates/settings.release.json` to `js/plugins/live-translator/settings.json` or `www/js/plugins/live-translator/settings.json`.
-3. Add an enabled `plugins.js` entry named `live-translator/live-translator-loader`.
-4. Inspect `package.json` and make sure `name` field is not empty.
+3. Copy `live-translator/config-templates/translator.release.json` to `js/plugins/live-translator/translator.json` or `www/js/plugins/live-translator/translator.json`.
+4. Add an enabled `plugins.js` entry named `live-translator/live-translator-loader`.
+5. Inspect `package.json` and make sure `name` field is not empty.
 
 Then, go to `js/plugins/live-translator/` or `www/js/plugins/live-translator/` to edit `translator.json` for provider settings and `settings.json` for addon behavior.
 

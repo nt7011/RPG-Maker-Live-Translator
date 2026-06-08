@@ -12,26 +12,13 @@
     }
 
     function createController(scope = {}) {
-        const callScope = (name) => (...args) => scope[name](...args);
+        const { removeSpriteOverlay } = scope.controllerFacades.overlaySprite;
+        const { retireSpriteEntry } = scope.controllerFacades.entries;
+        const { ensureSpriteState, getBitmapState, isOverlayBitmap, isWindowOwnedBitmap } = scope.controllerFacades.state;
         const {
             bucketCount,
-            ensureSpriteState,
             findPropertyDescriptor,
-            getBitmapState,
-            isOverlayBitmap,
-            isWindowOwnedBitmap,
-            removeSpriteOverlay,
-            retireSpriteEntry,
-        } = Object.fromEntries([
-            'bucketCount',
-            'ensureSpriteState',
-            'findPropertyDescriptor',
-            'getBitmapState',
-            'isOverlayBitmap',
-            'isWindowOwnedBitmap',
-            'removeSpriteOverlay',
-            'retireSpriteEntry',
-        ].map((name) => [name, callScope(name)]));
+        } = scope.controllerFacades.utils;
 
         /**
          * Wrap Sprite.bitmap so bitmap ownership stays current.
@@ -147,7 +134,8 @@
             if (!existing || (bitmap && existing.bitmap !== bitmap)) return false;
             scope.spriteSurfaceClaims.delete(sprite);
             if (!scope.adapterContract || typeof scope.adapterContract.releaseSurface !== 'function') return false;
-            return scope.adapterContract.releaseSurface(existing.token, reason || 'sprite-bitmap-released') === true;
+            const result = scope.adapterContract.releaseSurface(existing.token, reason || 'sprite-bitmap-released');
+            return !!(result && result.released === true);
         }
         
         /**

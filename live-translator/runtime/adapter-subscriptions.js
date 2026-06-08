@@ -23,6 +23,10 @@
     }
 
     const utils = requireModule('runtime.adapterContractUtils');
+    const renderTransaction = requireModule('runtime.renderTransaction');
+    if (!renderTransaction || typeof renderTransaction.createRenderCommit !== 'function') {
+        throw new Error('[LiveTranslator] runtime.renderTransaction is unavailable before runtime/adapter-subscriptions.js.');
+    }
     const {
         copyPlainObject,
         freezePlainObject,
@@ -94,7 +98,7 @@
         function dispatchRenderCommand(source, event, command, records) {
             if (typeof source.onRenderQueued !== 'function') return false;
             const recordId = getEventRecordId(event, command);
-            const route = createRenderRoute(event, command, recordId);
+            const route = createRenderRoute(event, command, recordId, adapterId);
             const target = resolveEventRecord(source, recordId, event, command, records);
             if (!target) {
                 dispatchRenderRejected(
@@ -314,12 +318,12 @@
         });
     }
 
-    function createRenderRoute(event, command, recordId) {
+    function createRenderRoute(event, command, recordId, adapterId = '') {
         return freezePlainObject({
             recordId: nonEmptyString(recordId),
             itemId: nonEmptyString(recordId),
             eventType: event && event.type ? String(event.type) : '',
-            adapterId: event && event.adapterId ? String(event.adapterId) : '',
+            adapterId: nonEmptyString(event && event.adapterId, adapterId),
             surfaceId: nonEmptyString(command && command.surfaceId, event && event.surfaceId),
             status: event && event.status ? String(event.status) : '',
             message: event && event.message ? String(event.message) : '',
@@ -329,16 +333,28 @@
         });
     }
 
-    function createRenderDecision(status, reason, command, route, details = {}) {
+    function createRenderDecision(status, reason, command, route, details = {}, source = {}) {
+        const normalizedStatus = nonEmptyString(status, 'rejected');
+        const normalizedReason = nonEmptyString(reason, status, 'rejected');
+        const normalizedDetails = normalizeRenderDecisionDetails(details, source);
+        const renderCommit = createDecisionRenderCommit(
+            normalizedStatus,
+            normalizedReason,
+            command,
+            route,
+            normalizedDetails,
+            source
+        );
         return freezePlainObject({
-            status: nonEmptyString(status, 'rejected'),
-            reason: nonEmptyString(reason, status, 'rejected'),
+            status: normalizedStatus,
+            reason: normalizedReason,
             recordId: route && route.recordId ? route.recordId : '',
             itemId: route && route.itemId ? route.itemId : '',
             commandId: command && command.id ? command.id : '',
             strategy: command && command.strategy ? command.strategy : '',
             commandGeneration: numberOrZero(command && command.generation),
-            details: freezePlainObject(copyPlainObject(details, {})),
+            details: normalizedDetails,
+            renderCommit,
         });
     }
 
@@ -353,9 +369,70 @@
         if (value && typeof value === 'object') {
             const status = normalizeRenderDecisionStatus(value.status || value.result || value.decision);
             const reason = nonEmptyString(value.reason, status === 'accepted' ? 'accepted' : (status === 'deferred' ? 'deferred' : 'adapter-declined'));
-            return createRenderDecision(status, reason, command, route, value.details || {});
+            return createRenderDecision(status, reason, command, route, value.details || {}, value);
         }
         return createRenderDecision('rejected', 'adapter-declined', command, route);
+    }
+
+    function normalizeRenderDecisionDetails(details, source = {}) {
+        const normalized = copyPlainObject(details, {});
+        if (normalized.renderCommit && typeof normalized.renderCommit === 'object') {
+            delete normalized.renderCommit;
+        }
+        const sourceDetails = source && typeof source === 'object' ? source : {};
+        if (sourceDetails.renderCommit && typeof sourceDetails.renderCommit === 'object') {
+            const commitDetails = copyPlainObject(sourceDetails.renderCommit.details, null);
+            if (commitDetails) Object.assign(normalized, commitDetails);
+        }
+        return freezePlainObject(normalized);
+    }
+
+    function createDecisionRenderCommit(status, reason, command, route, details = {}, source = {}) {
+        const sourceObject = source && typeof source === 'object' ? source : {};
+        const existingCommit = sourceObject.renderCommit && typeof sourceObject.renderCommit === 'object'
+            ? sourceObject.renderCommit
+            : null;
+        const existingDetailsCommit = sourceObject.details
+            && sourceObject.details.renderCommit
+            && typeof sourceObject.details.renderCommit === 'object'
+            ? sourceObject.details.renderCommit
+            : null;
+        const commitSource = existingCommit || existingDetailsCommit || {};
+        const commandMetadata = command && command.metadata && typeof command.metadata === 'object'
+            ? command.metadata
+            : {};
+        return renderTransaction.createRenderCommit(Object.assign({}, commitSource, {
+            status,
+            phase: resolveDecisionRenderPhase(status),
+            reason,
+            route: nonEmptyString(commitSource.route, 'adapter-subscription'),
+            adapterId: nonEmptyString(route && route.adapterId, commitSource.adapterId),
+            itemId: nonEmptyString(route && route.itemId, commitSource.itemId),
+            recordId: nonEmptyString(route && route.recordId, commitSource.recordId),
+            surfaceId: nonEmptyString(route && route.surfaceId, command && command.surfaceId, commitSource.surfaceId),
+            slotKey: nonEmptyString(sourceObject.slotKey, details && details.slotKey, commandMetadata.slotKey, commitSource.slotKey),
+            strategy: nonEmptyString(command && command.strategy, route && route.strategy, commitSource.strategy),
+            commandId: nonEmptyString(command && command.id, route && route.commandId, commitSource.commandId),
+            commandGeneration: numberOrZero(command && command.generation) || numberOrZero(route && route.commandGeneration) || numberOrZero(commitSource.commandGeneration),
+            generation: numberOrZero(command && command.generation) || numberOrZero(commitSource.generation),
+            translationReceived: nonEmptyString(details && details.translationReceived, sourceObject.translationReceived, command && command.text, commitSource.translationReceived),
+            translationDrawn: nonEmptyString(details && details.translationDrawn, sourceObject.translationDrawn, commitSource.translationDrawn),
+            drawBoundary: sourceObject.drawBoundary
+                || details && details.drawBoundary
+                || commandMetadata.drawBoundary
+                || commitSource.drawBoundary
+                || null,
+            details,
+        }));
+    }
+
+    function resolveDecisionRenderPhase(status) {
+        const phases = renderTransaction.PHASES || {};
+        const normalized = String(status || '').toLowerCase();
+        if (normalized === 'accepted') return phases.RENDER_COMMITTED || 'render-committed';
+        if (normalized === 'deferred') return phases.RENDER_DEFERRED || 'render-deferred';
+        if (normalized === 'noop') return phases.RENDER_NOOP || 'render-noop';
+        return phases.RENDER_REJECTED || 'render-rejected';
     }
 
     defineRuntimeModule('runtime.adapterSubscriptions', {

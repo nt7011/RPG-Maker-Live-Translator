@@ -14,13 +14,24 @@
         throw new Error('[LiveTranslator] runtime module require is unavailable before adapters/window-text/bitmap-replay.js.');
     }
     const bitmapDiagnostics = requireRuntimeModule('adapters.windowTextBitmapDiagnostics');
+    const drawGraph = requireRuntimeModule('runtime.drawGraph');
+    const replayFilter = requireRuntimeModule('runtime.replayFilter');
 
     function createBitmapReplayController(context = {}) {
-    const callContext = (name) => (...args) => context[name](...args);
-    const { logger, telemetry, adapterContract, windowRegistry, registeredWindows, windowLifecycle, ensureWindowRegistered, pruneDetachedRegisteredWindows, generateKey, captureBitmapDrawState, applyBitmapDrawState, createWindowTextScaleScope, preview, diag, dbg, drawCaptureTrace, bitmapReplay, settings, stripControls, encodeText, restoreText, entriesByRecordId, redrawSettings, textScaleOthers, ADAPTER_ID, ADAPTER_LABEL, RENDER_STRATEGY, WINDOW_PRIORITY_VISIBLE, WINDOW_WRAPPER_TOKEN, REDRAW_DIAGNOSTIC_ITEM_LIMIT, MAX_BACKGROUND_SNAPSHOT_PIXELS } = context;
-    const { install, installOrchestratorSubscription, getRenderGeneration, isRenderTargetCurrent, handleRenderRejected, installWindowBaseWrappers, hasHookInChain, handleDrawText, handleDrawTextEx, createObservedEntry, recordSkippedEntry, createEntry, refreshEntry, requestEntryTranslation, observeEntry, syncEntryFromObservedItem, getEntryStatus, isEntryActive, isEntryRequestActive, isEntryCompleted, firstNonEmptyString, recordDrawTrace, windowTraceDetails, getRegisteredWindowData, markEntryObservedInRefresh, safeStripRpgmEscapes, describeWindowScreenState, buildOrchestratorPayload, applyRenderCommand, markRequestSkipped, markRequestFailed, updateOrchestratorItem, beginPendingRenderCommand, markPendingRenderDeferred, completePendingRenderCommand, rejectPendingRender, clearPendingRenderCommand, getPendingRenderDetails, redrawTranslatedText, drawTranslatedEntry, calculateRedrawBounds, drawTranslatedWindowText, invokeCompletedEntry, invokeOriginalDrawText, invokeOriginalDrawTextEx, withTranslatedWindowTextScale, withWindowTranslatedDrawScope, isWindowTranslatedDrawActive, withWindowDrawTextExReplayScope, findExistingEntry, retireEntriesInSameSlot, markEntryStale, cancelEntryTranslation, markRecordDisappeared, recordDecision, queuePendingRedraw, clearPendingInvalidation, getCurrentEntry, getTextEntryKey, dropPendingRedraw, resolveWindowData, resolveTargetWindow, isWindowReadyForRedraw, refreshEntryBounds, estimateEntryBounds, measurePlainTextWidth, estimateDrawTextExFallbackWidth, estimateDrawTextExFallbackHeight, estimateMaxDrawTextExFallbackHeight, getDrawTextExLineCount, getLineHeight, getWindowIconWidth, countDrawTextExIcons, prepareTranslationSource, restoreTranslatedWindowText, sanitizeDrawTextOutput, convertWindowText, describeWindowTextEligibility, describeEntryEligibility, isDedicatedMessageWindow, rememberMessageStart, getSurfaceId, createSlotKey, createWindowTextRecordId, safeRecordIdPart, hashTextForRecordId, normalizeSlotNumber, getWindowTypeName, getWindowCtorName, normalizeDrawTextAlignValue } = Object.fromEntries(['install', 'installOrchestratorSubscription', 'getRenderGeneration', 'isRenderTargetCurrent', 'handleRenderRejected', 'installWindowBaseWrappers', 'hasHookInChain', 'handleDrawText', 'handleDrawTextEx', 'createObservedEntry', 'recordSkippedEntry', 'createEntry', 'refreshEntry', 'requestEntryTranslation', 'observeEntry', 'syncEntryFromObservedItem', 'getEntryStatus', 'isEntryActive', 'isEntryRequestActive', 'isEntryCompleted', 'firstNonEmptyString', 'recordDrawTrace', 'windowTraceDetails', 'getRegisteredWindowData', 'markEntryObservedInRefresh', 'safeStripRpgmEscapes', 'describeWindowScreenState', 'buildOrchestratorPayload', 'applyRenderCommand', 'markRequestSkipped', 'markRequestFailed', 'updateOrchestratorItem', 'beginPendingRenderCommand', 'markPendingRenderDeferred', 'completePendingRenderCommand', 'rejectPendingRender', 'clearPendingRenderCommand', 'getPendingRenderDetails', 'redrawTranslatedText', 'drawTranslatedEntry', 'calculateRedrawBounds', 'drawTranslatedWindowText', 'invokeCompletedEntry', 'invokeOriginalDrawText', 'invokeOriginalDrawTextEx', 'withTranslatedWindowTextScale', 'withWindowTranslatedDrawScope', 'isWindowTranslatedDrawActive', 'withWindowDrawTextExReplayScope', 'findExistingEntry', 'retireEntriesInSameSlot', 'markEntryStale', 'cancelEntryTranslation', 'markRecordDisappeared', 'recordDecision', 'queuePendingRedraw', 'clearPendingInvalidation', 'getCurrentEntry', 'getTextEntryKey', 'dropPendingRedraw', 'resolveWindowData', 'resolveTargetWindow', 'isWindowReadyForRedraw', 'refreshEntryBounds', 'estimateEntryBounds', 'measurePlainTextWidth', 'estimateDrawTextExFallbackWidth', 'estimateDrawTextExFallbackHeight', 'estimateMaxDrawTextExFallbackHeight', 'getDrawTextExLineCount', 'getLineHeight', 'getWindowIconWidth', 'countDrawTextExIcons', 'prepareTranslationSource', 'restoreTranslatedWindowText', 'sanitizeDrawTextOutput', 'convertWindowText', 'describeWindowTextEligibility', 'describeEntryEligibility', 'isDedicatedMessageWindow', 'rememberMessageStart', 'getSurfaceId', 'createSlotKey', 'createWindowTextRecordId', 'safeRecordIdPart', 'hashTextForRecordId', 'normalizeSlotNumber', 'getWindowTypeName', 'getWindowCtorName', 'normalizeDrawTextAlignValue'].map((name) => [name, callContext(name)]));
+    const { entryLifecycleState } = context;
+    const { replay: replayService, surface: surfaceService, draw: drawService } = context.services;
+    const { entryRecords, renderDraw, textConversion } = context.facades;
+    const { getEntryStatus, isEntryCompleted, firstNonEmptyString } = entryRecords;
+    const { drawTranslatedEntry, drawTranslatedWindowText } = renderDraw;
+    const { sanitizeDrawTextOutput } = textConversion;
     const bitmapTools = bitmapDiagnostics.create(context);
     const { mergeBounds, isValidRect, roundDiagnosticNumber, cloneDiagnosticRect, cloneDiagnosticArea, calculateBitmapSurfaceTextYOffset, estimateBitmapSurfaceTextBounds, createClearRectFromArea, getReplayItemRect, mergeReplayRect, expandReplayDirtyRect, replayRectsOverlap, getBitmapCanvasContext, supportsBitmapReplayClip, getReplayClipArea, getBitmapSnapshotContext, getEntryContentsRevision, getSnapshotContentsRevision, getWindowDataContentsRevision, getEntrySnapshotPadding, getSnapshotArea, getSnapshotDiagnostics, summarizeReplayItemsForDiagnostics, summarizeReplayStateForDiagnostics } = bitmapTools;
+    const replayFilterService = replayFilter.create({
+                getItemRect: getReplayItemRect,
+                getEntryStatus,
+                isEntryCompleted,
+                firstNonEmptyString,
+            });
     
     
     
@@ -58,8 +69,8 @@
             }
     
     function getRedrawContents(windowInstance, entry = null) {
-                if (entry && isUsableBitmap(entry.contentsBitmap)) return entry.contentsBitmap;
-                return windowInstance && isUsableBitmap(windowInstance.contents) ? windowInstance.contents : null;
+                if (windowInstance && isUsableBitmap(windowInstance.contents)) return windowInstance.contents;
+                return null;
             }
     
     function wasDrawnToDetachedContents(windowInstance, entry) {
@@ -95,7 +106,7 @@
     
     function getBitmapReplayApi() {
                 try {
-                    const api = bitmapReplay;
+                    const api = replayService.bitmapReplay;
                     if (!api || typeof api !== 'object') return null;
                     if (typeof api.hasProvider !== 'function' || api.hasProvider() !== true) return null;
                     if (typeof api.ensureBitmapState !== 'function'
@@ -136,7 +147,7 @@
                 const restored = [];
                 try {
                     match.windowData.texts.forEach((entry) => {
-                        if (!entry || entry._trStale || !windowEntryBelongsToContents(entry, bitmap)) return;
+                        if (!entry || entryLifecycleState.isStale(entry) || !windowEntryBelongsToContents(entry, bitmap)) return;
                         if (!isEntryCompleted(entry)) return;
                         const bounds = getWindowEntrySnapshotBounds(bitmap, entry) || entry.bounds;
                         if (rect && bounds && !replayRectsOverlap(rect, bounds)) return;
@@ -171,7 +182,7 @@
                 let redrawn = 0;
                 entries.forEach((entry) => {
                     try { delete entry._trSourceRestoredForMutation; } catch (_) { entry._trSourceRestoredForMutation = null; }
-                    if (!entry || entry._trStale || !windowEntryBelongsToContents(entry, bitmap)) return;
+                    if (!entry || entryLifecycleState.isStale(entry) || !windowEntryBelongsToContents(entry, bitmap)) return;
                     if (!isEntryCompleted(entry)) return;
                     if (drawTranslatedEntry(match.windowInstance, match.windowData, bitmap, entry)) {
                         redrawn += 1;
@@ -182,34 +193,13 @@
 
     function resolveBitmapWindowData(bitmap) {
                 if (!bitmap) return null;
-                let owner = null;
-                try {
-                    const owners = context.contentsOwners;
-                    if (owners && typeof owners.get === 'function') owner = owners.get(bitmap) || null;
-                } catch (_) {}
-                if (owner) {
-                    try {
-                        const data = windowRegistry && typeof windowRegistry.get === 'function'
-                            ? windowRegistry.get(owner)
-                            : null;
-                        if (data) return { windowInstance: owner, windowData: data };
-                    } catch (_) {}
+                const match = surfaceService.resolveWindowSurfaceForContents(bitmap);
+                if (match && match.windowData) {
+                    return {
+                        windowInstance: match.windowInstance || match.owner || null,
+                        windowData: match.windowData,
+                    };
                 }
-                try {
-                    if (registeredWindows && typeof registeredWindows.forEach === 'function') {
-                        let match = null;
-                        registeredWindows.forEach((candidate) => {
-                            if (match || !candidate) return;
-                            const data = windowRegistry && typeof windowRegistry.get === 'function'
-                                ? windowRegistry.get(candidate)
-                                : null;
-                            if (data && (candidate.contents === bitmap || data.contentsBitmap === bitmap)) {
-                                match = { windowInstance: candidate, windowData: data };
-                            }
-                        });
-                        return match;
-                    }
-                } catch (_) {}
                 return null;
             }
     
@@ -223,44 +213,46 @@
                 const items = [];
                 try {
                     windowData.texts.forEach((entry) => {
-                        if (!entry || entry === currentEntry || entry._trStale) return;
+                        if (!entry || entry === currentEntry || entryLifecycleState.isStale(entry)) return;
                         if (!windowEntryBelongsToContents(entry, contents)) return;
-                        if (!entry.bounds || !replayRectsOverlap(dirtyRect, entry.bounds)) return;
+                        const replayBounds = getWindowTextReplayBounds(entry);
+                        if (!replayBounds || !replayRectsOverlap(dirtyRect, replayBounds)) return;
                         const drawOrder = Number(entry.drawOrder) || (Number(currentOrder) + 0.5);
                         items.push({ type: 'windowText', drawOrder, entry });
                     });
                 } catch (_) {}
                 return items;
             }
+
+    function getWindowTextReplayBounds(entry) {
+                if (!entry) return null;
+                if (isValidRect(entry.renderedBounds)) return entry.renderedBounds;
+                return isValidRect(entry.bounds) ? entry.bounds : null;
+            }
     
     function windowEntryBelongsToContents(entry, contents) {
-                if (!entry || !contents) return false;
-                try {
-                    if (entry.contentsBitmap) return entry.contentsBitmap === contents;
-                } catch (_) {}
-                return true;
+                return surfaceService.windowEntryBelongsToContents(entry, contents);
             }
     
     function combineReplayItems(bitmapItems, windowItems) {
-                return []
-                    .concat(Array.isArray(bitmapItems) ? bitmapItems : [])
-                    .concat(Array.isArray(windowItems) ? windowItems : [])
-                    .sort((a, b) => (Number(a && a.drawOrder) || 0) - (Number(b && b.drawOrder) || 0));
+                return replayFilterService.combineReplayItems(bitmapItems, windowItems);
             }
     
     function filterReplayForEntry(items, entry) {
-                const list = Array.isArray(items) ? items : [];
-                if (!entry || entry.type !== 'drawTextEx') return list;
-                return list.filter((item) => !(item
-                    && item.type === 'renderOp'
-                    && item.op
-                    && item.op.windowDrawTextExReplay));
+                return replayFilterService.filterReplayForEntry(items, entry, {
+                    targetBitmap: entry && entry.contentsBitmap || null,
+                });
             }
     
     function replayMixedItems(contents, targetWindow, items, replayApi, clipRect = null) {
                 if (!contents || !Array.isArray(items) || !items.length) return;
+                const replayGraph = drawGraph.createDrawGraph(items, {
+                    getItemRect: getReplayItemRect,
+                    targetBitmap: contents,
+                });
                 const replay = () => {
-                    items.forEach((item) => {
+                    replayGraph.nodes.forEach((node) => {
+                        const item = node && node.item;
                         if (!item) return;
                         if (item.type === 'windowText') {
                             replayWindowTextEntry(targetWindow, contents, item.entry);
@@ -273,11 +265,11 @@
             }
     
     function replayWindowTextEntry(targetWindow, contents, entry) {
-                if (!targetWindow || !contents || !entry || entry._trStale) return;
+                if (!targetWindow || !contents || !entry || entryLifecycleState.isStale(entry)) return;
                 const text = getWindowReplayText(entry);
                 if (!text) return;
                 try {
-                    if (entry.drawState) applyBitmapDrawState(contents, entry.drawState);
+                    if (entry.drawState) drawService.applyBitmapDrawState(contents, entry.drawState);
                 } catch (_) {}
                 drawTranslatedWindowText(targetWindow, contents, entry, text, { route: 'replay' });
             }
@@ -365,6 +357,7 @@
                     };
                     entry.backgroundSnapshot = {
                         contentsBitmap: contents,
+                        bitmapSnapshot: patch.bitmap,
                         x: area.x,
                         y: area.y,
                         w: area.w,
@@ -500,7 +493,9 @@
                 const canvasContext = getBitmapSnapshotContext(contents);
                 if (!canvasContext || !snapshot.imageData) return false;
                 try {
+                    if (restoreWindowEntryBitmapSnapshot(contents, snapshot)) return true;
                     canvasContext.putImageData(snapshot.imageData, snapshot.x, snapshot.y);
+                    markBitmapPixelsDirty(contents);
                     return true;
                 } catch (_) {
                     return false;
@@ -509,6 +504,38 @@
 
     function restoreWindowEntryBackground(contents, entry, windowData = null, options = null) {
                 return restoreWindowEntryPixelSnapshot(contents, entry, 'backgroundSnapshot', windowData, options);
+            }
+
+    function markBitmapPixelsDirty(bitmap) {
+                if (!bitmap) return;
+                try {
+                    // putImageData writes behind RPG Maker's Bitmap API; mark the
+                    // texture dirty so the restored backdrop reaches the screen.
+                    if (typeof bitmap._setDirty === 'function') {
+                        bitmap._setDirty();
+                        return;
+                    }
+                } catch (_) {}
+                try {
+                    bitmap._dirty = true;
+                } catch (_) {}
+            }
+
+    function restoreWindowEntryBitmapSnapshot(contents, snapshot) {
+                if (!contents || !snapshot || !snapshot.bitmapSnapshot) return false;
+                const source = snapshot.bitmapSnapshot;
+                if (!isUsableBitmap(source) || typeof contents.blt !== 'function') return false;
+                const width = Math.floor(Number(snapshot.w) || 0);
+                const height = Math.floor(Number(snapshot.h) || 0);
+                if (width <= 0 || height <= 0) return false;
+                if (Number(source.width) < width || Number(source.height) < height) return false;
+                try {
+                    contents.blt(source, 0, 0, width, height, snapshot.x, snapshot.y, width, height);
+                    markBitmapPixelsDirty(contents);
+                    return true;
+                } catch (_) {
+                    return false;
+                }
             }
     
     

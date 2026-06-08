@@ -1,0 +1,10 @@
+{
+    "provider": "mockTranslator",
+    "settings": {
+        "mockTranslator": {
+            "capacity": 32,
+            "delayMs": 100,
+            "useRandomizedStrings": false
+        }
+    }
+}

@@ -20,9 +20,14 @@
         globalScope.LiveTranslatorModules.runtime = {};
     }
     const defineRuntimeModule = globalScope.LiveTranslatorDefine;
+    const requireRuntimeModule = globalScope.LiveTranslatorRequire;
     if (typeof defineRuntimeModule !== 'function') {
         throw new Error('[LiveTranslator] runtime module registry is unavailable before runtime/bitmap-services.js.');
     }
+    if (typeof requireRuntimeModule !== 'function') {
+        throw new Error('[LiveTranslator] runtime module require is unavailable before runtime/bitmap-services.js.');
+    }
+    const operationDiagnostics = requireRuntimeModule('runtime.operationDiagnostics');
 
     const REPLAY_REQUIRED_METHODS = [
         'ensureBitmapState',
@@ -39,6 +44,14 @@
 
     function createBitmapServices(options = {}) {
         const logger = options.logger || console;
+        const reportServiceError = operationDiagnostics.createOperationErrorReporter({
+            component: 'BitmapServices',
+            operationLabel: 'Bitmap service',
+            metricBase: 'bitmapServices.error',
+            domain: 'bitmap',
+            perf: options.perf || null,
+            logger,
+        });
         const settings = options.settings && typeof options.settings === 'object' ? options.settings : {};
         const captureBitmapDrawState = typeof options.captureBitmapDrawState === 'function'
             ? options.captureBitmapDrawState
@@ -48,6 +61,8 @@
         let mutationPublisherCount = 0;
         const bitmapSubscribers = new WeakMap();
         const drawStates = new WeakMap();
+        const renderGuardStates = new WeakMap();
+        const deferredFlushes = new Map();
         const pendingDrawBitmaps = new Set();
         const drawBatchSubscribers = [];
         let nextDrawStateId = 0;
@@ -61,6 +76,18 @@
         function warn(message, error) {
             if (!logger || typeof logger.warn !== 'function') return;
             try { logger.warn(message, error); } catch (_) {}
+        }
+
+        function perfCount(name, amount = 1) {
+            const perf = options.perf;
+            if (!perf || typeof perf.count !== 'function') return;
+            try { perf.count(name, amount); } catch (_) {}
+        }
+
+        function perfTop(name, label, amount = 1) {
+            const perf = options.perf;
+            if (!perf || typeof perf.top !== 'function') return;
+            try { perf.top(name, label, amount); } catch (_) {}
         }
 
         function freezeApi(api) {
@@ -105,7 +132,7 @@
             try {
                 return method(...args);
             } catch (error) {
-                warn(`[BitmapServices] Bitmap replay method failed: ${methodName}`, error);
+                reportServiceError(`replay.${methodName}`, error);
                 return fallback;
             }
         }
@@ -129,7 +156,7 @@
                 callback(reason);
                 return true;
             } catch (error) {
-                warn('[BitmapServices] Bitmap fallback flush failed.', error);
+                reportServiceError('fallbackFlush', error);
                 return false;
             }
         }
@@ -160,7 +187,9 @@
                 try {
                     watchers.delete(handler);
                     if (!watchers.size) bitmapSubscribers.delete(bitmap);
-                } catch (_) {}
+                } catch (error) {
+                    reportServiceError('watchBitmap.unregister', error);
+                }
             };
         }
 
@@ -168,8 +197,229 @@
             try {
                 const direct = bitmap ? bitmapSubscribers.get(bitmap) : null;
                 if (direct && direct.size) return true;
-            } catch (_) {}
+            } catch (error) {
+                reportServiceError('hasMutationInterest', error);
+            }
             return false;
+        }
+
+        function createDeferredFlushResult(status, input = {}) {
+            const token = stringify(input.token || '');
+            const reason = stringify(input.reason || status || 'deferred-flush');
+            const source = stringify(input.source || 'bitmap-services');
+            return {
+                handled: status === 'scheduled' || status === 'already-scheduled',
+                scheduled: status === 'scheduled',
+                pending: status === 'scheduled' || status === 'already-scheduled',
+                status,
+                token,
+                reason,
+                source,
+                mode: status === 'scheduled' || status === 'already-scheduled' ? 'deferred-timer' : '',
+            };
+        }
+
+        function scheduleDeferredFlush(input = {}) {
+            const request = input && typeof input === 'object' ? input : {};
+            const token = stringify(request.token || '');
+            const reason = stringify(request.reason || token || 'deferred-flush');
+            const source = stringify(request.source || 'bitmap-services');
+            const callback = typeof request.callback === 'function' ? request.callback : null;
+            const resultInput = { token, reason, source };
+            if (!token) return createDeferredFlushResult('missing-token', resultInput);
+            if (!callback) return createDeferredFlushResult('missing-callback', resultInput);
+            if (deferredFlushes.has(token)) {
+                perfCount('bitmapServices.deferredFlush.coalesced');
+                perfTop('bitmapServices.deferredFlush.source', source);
+                return createDeferredFlushResult('already-scheduled', resultInput);
+            }
+            const setTimer = globalScope && typeof globalScope.setTimeout === 'function'
+                ? globalScope.setTimeout.bind(globalScope)
+                : null;
+            if (!setTimer) {
+                perfCount('bitmapServices.deferredFlush.unavailable');
+                perfTop('bitmapServices.deferredFlush.source', source);
+                return createDeferredFlushResult('timer-unavailable', resultInput);
+            }
+
+            const scheduled = { token, reason, source, callback, timerId: null };
+            let timerCallbackError = null;
+            const run = () => {
+                if (deferredFlushes.get(token) !== scheduled) return;
+                deferredFlushes.delete(token);
+                try {
+                    callback(reason);
+                } catch (error) {
+                    timerCallbackError = error;
+                    throw error;
+                }
+            };
+            deferredFlushes.set(token, scheduled);
+            try {
+                scheduled.timerId = setTimer(run, 0);
+            } catch (error) {
+                if (timerCallbackError === error) throw error;
+                if (deferredFlushes.get(token) === scheduled) deferredFlushes.delete(token);
+                reportServiceError('scheduleDeferredFlush', error);
+                return createDeferredFlushResult('schedule-failed', resultInput);
+            }
+            perfCount('bitmapServices.deferredFlush.scheduled');
+            perfTop('bitmapServices.deferredFlush.source', source);
+            return createDeferredFlushResult('scheduled', resultInput);
+        }
+
+        function createRenderGuardState() {
+            return {
+                bitmapReplayDepth: 0,
+                bitmapSkipDepth: 0,
+                spriteTextReplayDepth: 0,
+                bitmapReplaySources: [],
+                activeRedrawEntries: [],
+            };
+        }
+
+        function canStoreRenderGuardState(bitmap) {
+            const type = typeof bitmap;
+            return bitmap !== null && (type === 'object' || type === 'function');
+        }
+
+        function getOrCreateRenderGuardState(bitmap) {
+            if (!canStoreRenderGuardState(bitmap)) return null;
+            let state = renderGuardStates.get(bitmap);
+            if (!state) {
+                state = createRenderGuardState();
+                renderGuardStates.set(bitmap, state);
+            }
+            return state;
+        }
+
+        function getRenderGuardRecord(bitmap) {
+            if (!canStoreRenderGuardState(bitmap)) return null;
+            return renderGuardStates.get(bitmap) || null;
+        }
+
+        function pruneRenderGuardState(bitmap, state) {
+            if (!bitmap || !state) return;
+            if (state.bitmapReplayDepth > 0
+                || state.bitmapSkipDepth > 0
+                || state.spriteTextReplayDepth > 0
+                || state.bitmapReplaySources.length
+                || state.activeRedrawEntries.length) {
+                return;
+            }
+            renderGuardStates.delete(bitmap);
+        }
+
+        function normalizeRenderGuardInput(input = {}) {
+            const source = input && typeof input === 'object' ? input : {};
+            return {
+                bitmapReplay: source.bitmapReplay === true,
+                bitmapSkip: source.bitmapSkip === true,
+                spriteTextReplay: source.spriteTextReplay === true,
+                bitmapReplaySource: stringify(source.bitmapReplaySource || ''),
+            };
+        }
+
+        function enterRenderGuard(bitmap, input = {}) {
+            if (!bitmap) return () => {};
+            const guard = normalizeRenderGuardInput(input);
+            const state = getOrCreateRenderGuardState(bitmap);
+            if (!state) return () => {};
+            if (guard.bitmapReplay) {
+                state.bitmapReplayDepth += 1;
+                state.bitmapReplaySources.push(guard.bitmapReplaySource || 'bitmap-replay');
+            }
+            if (guard.bitmapSkip) state.bitmapSkipDepth += 1;
+            if (guard.spriteTextReplay) state.spriteTextReplayDepth += 1;
+            let active = true;
+            return () => {
+                if (!active) return;
+                active = false;
+                if (guard.bitmapReplay) {
+                    state.bitmapReplayDepth = Math.max(0, state.bitmapReplayDepth - 1);
+                    state.bitmapReplaySources.pop();
+                }
+                if (guard.bitmapSkip) state.bitmapSkipDepth = Math.max(0, state.bitmapSkipDepth - 1);
+                if (guard.spriteTextReplay) state.spriteTextReplayDepth = Math.max(0, state.spriteTextReplayDepth - 1);
+                pruneRenderGuardState(bitmap, state);
+            };
+        }
+
+        function withRenderGuard(bitmap, input, callback) {
+            if (typeof callback !== 'function') return undefined;
+            const release = enterRenderGuard(bitmap, input);
+            try {
+                return callback();
+            } finally {
+                release();
+            }
+        }
+
+        function withBitmapReplayGuard(bitmap, callback, source = 'bitmap-replay') {
+            return withRenderGuard(bitmap, {
+                bitmapReplay: true,
+                bitmapReplaySource: source || 'bitmap-replay',
+            }, callback);
+        }
+
+        function withBitmapSkipGuard(bitmap, callback) {
+            return withRenderGuard(bitmap, { bitmapSkip: true }, callback);
+        }
+
+        function withSpriteTextReplayGuard(bitmap, callback) {
+            return withRenderGuard(bitmap, { spriteTextReplay: true }, callback);
+        }
+
+        function withBitmapSkipAndSpriteReplayGuard(bitmap, callback) {
+            return withRenderGuard(bitmap, {
+                bitmapSkip: true,
+                spriteTextReplay: true,
+            }, callback);
+        }
+
+        function withActiveRedrawEntry(bitmap, entry, callback) {
+            if (typeof callback !== 'function') return undefined;
+            if (!bitmap) return callback();
+            const state = getOrCreateRenderGuardState(bitmap);
+            if (!state) return callback();
+            state.activeRedrawEntries.push(entry || null);
+            try {
+                return callback();
+            } finally {
+                state.activeRedrawEntries.pop();
+                pruneRenderGuardState(bitmap, state);
+            }
+        }
+
+        function getActiveRedrawEntry(bitmap) {
+            const state = getRenderGuardRecord(bitmap);
+            if (!state || !state.activeRedrawEntries.length) return null;
+            return state.activeRedrawEntries[state.activeRedrawEntries.length - 1] || null;
+        }
+
+        function getRenderGuardState(bitmap) {
+            const state = getRenderGuardRecord(bitmap);
+            const replaySource = state && state.bitmapReplaySources.length
+                ? state.bitmapReplaySources[state.bitmapReplaySources.length - 1]
+                : '';
+            return {
+                bitmapReplayDepth: state ? state.bitmapReplayDepth : 0,
+                bitmapSkipDepth: state ? state.bitmapSkipDepth : 0,
+                spriteTextReplayDepth: state ? state.spriteTextReplayDepth : 0,
+                bitmapReplaySource: replaySource || '',
+                activeRedrawEntry: getActiveRedrawEntry(bitmap),
+            };
+        }
+
+        function getRenderGuardReason(bitmap) {
+            const state = getRenderGuardRecord(bitmap);
+            if (!state) return '';
+            if (state.bitmapReplayDepth > 0) {
+                return state.bitmapReplaySources[state.bitmapReplaySources.length - 1] || 'bitmap-replay';
+            }
+            if (state.bitmapSkipDepth > 0) return 'bitmap-skip';
+            if (state.spriteTextReplayDepth > 0) return 'sprite-text-replay';
+            return '';
         }
 
         function invokeMutationSubscriber(handler, bitmap, methodName, args) {
@@ -177,7 +427,7 @@
             try {
                 handler(bitmap, methodName, args.slice());
             } catch (error) {
-                warn('[BitmapServices] Bitmap mutation subscriber failed.', error);
+                reportServiceError('mutationSubscriber', error);
             }
         }
 
@@ -185,7 +435,7 @@
             if (!hasMutationInterest(bitmap)) return;
             const argsList = Array.isArray(args) ? args.slice() : [];
             let direct = null;
-            try { direct = bitmap ? bitmapSubscribers.get(bitmap) : null; } catch (_) {}
+            try { direct = bitmap ? bitmapSubscribers.get(bitmap) : null; } catch (error) { reportServiceError('publishMutation.lookup', error); }
             Array.from(direct || []).forEach((subscription) => {
                 invokeMutationSubscriber(subscription, bitmap, methodName, argsList);
             });
@@ -214,7 +464,7 @@
 
         function getDrawState(bitmap) {
             if (!bitmap) return null;
-            try { return drawStates.get(bitmap) || null; } catch (_) { return null; }
+            try { return drawStates.get(bitmap) || null; } catch (error) { reportServiceError('getDrawState', error); return null; }
         }
 
         function recordDraw(bitmap, input = {}) {
@@ -240,6 +490,9 @@
                 maxWidth: finiteNumber(input.maxWidth, 0),
                 lineHeight: positiveNumber(input.lineHeight, bitmap && bitmap.fontSize, 24),
                 align: normalizeCanvasTextAlign(input.align),
+                ownerType: stringify(input.ownerType || ''),
+                normalCharacter: input.normalCharacter === true,
+                normalCharacterRunId: stringify(input.normalCharacterRunId || ''),
                 styleId: style.id,
                 drawState: style.state,
                 backgroundPatch: input.backgroundPatch || null,
@@ -417,7 +670,7 @@
                         phase: options.phase || '',
                     });
                 } catch (error) {
-                    warn('[BitmapServices] Bitmap draw batch subscriber failed.', error);
+                    reportServiceError('drawBatchSubscriber', error);
                 }
             });
         }
@@ -428,6 +681,15 @@
             registerMutationPublisher,
             publishMutation,
             hasMutationInterest,
+            getRenderGuardState,
+            getRenderGuardReason,
+            withBitmapReplayGuard,
+            withBitmapSkipGuard,
+            withSpriteTextReplayGuard,
+            withBitmapSkipAndSpriteReplayGuard,
+            withActiveRedrawEntry,
+            getActiveRedrawEntry,
+            scheduleDeferredFlush,
             recordDraw,
             subscribeDrawBatches,
             flushDrawBatches,
@@ -459,6 +721,11 @@
                 }
                 return typeof callback === 'function' ? callback() : undefined;
             },
+            getRenderGuardState,
+            getRenderGuardReason,
+            withBitmapSkipGuard,
+            withSpriteTextReplayGuard,
+            withBitmapSkipAndSpriteReplayGuard,
             rectFromDimensions(x, y, width, height) {
                 return callReplayProvider('rectFromDimensions', null, [x, y, width, height]);
             },
@@ -474,6 +741,12 @@
             watchBitmap,
             hasMutationPublisher,
             flushBitmapFallback,
+            getRenderGuardState,
+            getRenderGuardReason,
+            withBitmapSkipGuard,
+            withSpriteTextReplayGuard,
+            withBitmapSkipAndSpriteReplayGuard,
+            scheduleDeferredFlush,
             subscribeDrawBatches,
             flushDrawBatches,
             flushOwnerDrawBatches,

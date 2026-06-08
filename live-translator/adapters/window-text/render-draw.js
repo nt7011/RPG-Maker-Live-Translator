@@ -6,32 +6,125 @@
         ? window
         : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
     const defineRuntimeModule = globalScope.LiveTranslatorDefine;
+    const requireRuntimeModule = globalScope.LiveTranslatorRequire;
     if (typeof defineRuntimeModule !== 'function') {
         throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/window-text/render-draw.js.');
     }
+    if (typeof requireRuntimeModule !== 'function') {
+        throw new Error('[LiveTranslator] runtime module require is unavailable before adapters/window-text/render-draw.js.');
+    }
+    const backdropProviderModule = requireRuntimeModule('runtime.backdropProvider');
+    const measuredBounds = requireRuntimeModule('runtime.measuredBounds');
+    const renderTransaction = requireRuntimeModule('runtime.renderTransaction');
+    const completedSubstitutionModule = requireRuntimeModule('adapters.windowTextCompletedSubstitution');
+    const drawTextExRendererModule = requireRuntimeModule('adapters.windowTextDrawTextExRenderer');
 
     function createRenderDrawController(context = {}) {
-    const callContext = (name) => (...args) => context[name](...args);
-    const { logger, telemetry, adapterContract, windowRegistry, registeredWindows, windowLifecycle, ensureWindowRegistered, pruneDetachedRegisteredWindows, generateKey, captureBitmapDrawState, applyBitmapDrawState, createWindowTextScaleScope, preview, diag, dbg, perf, drawCaptureTrace, bitmapReplay, settings, stripControls, encodeText, restoreText, entriesByRecordId, redrawSettings, textScaleOthers, ADAPTER_ID, ADAPTER_LABEL, RENDER_STRATEGY, WINDOW_PRIORITY_VISIBLE, WINDOW_WRAPPER_TOKEN, REDRAW_DIAGNOSTIC_ITEM_LIMIT, MAX_BACKGROUND_SNAPSHOT_PIXELS } = context;
-    const { install, installOrchestratorSubscription, getRenderGeneration, isRenderTargetCurrent, handleRenderRejected, installWindowBaseWrappers, hasHookInChain, handleDrawText, handleDrawTextEx, createObservedEntry, recordSkippedEntry, createEntry, refreshEntry, requestEntryTranslation, observeEntry, syncEntryFromObservedItem, getEntryStatus, isEntryActive, isEntryRequestActive, isEntryCompleted, firstNonEmptyString, recordDrawTrace, windowTraceDetails, getRegisteredWindowData, markEntryObservedInRefresh, safeStripRpgmEscapes, describeWindowScreenState, buildOrchestratorPayload, applyRenderCommand, markRequestSkipped, markRequestFailed, updateOrchestratorItem, beginPendingRenderCommand, markPendingRenderDeferred, completePendingRenderCommand, rejectPendingRender, clearPendingRenderCommand, getPendingRenderDetails, redrawTranslatedText, findExistingEntry, retireEntriesInSameSlot, markEntryStale, cancelEntryTranslation, markRecordDisappeared, recordDecision, queuePendingRedraw, clearPendingInvalidation, getCurrentEntry, getTextEntryKey, dropPendingRedraw, resolveWindowData, resolveTargetWindow, isWindowReadyForRedraw, refreshEntryBounds, estimateEntryBounds, measurePlainTextWidth, estimateDrawTextExFallbackWidth, estimateDrawTextExFallbackHeight, estimateMaxDrawTextExFallbackHeight, getDrawTextExLineCount, getLineHeight, getWindowIconWidth, countDrawTextExIcons, prepareTranslationSource, restoreTranslatedWindowText, sanitizeDrawTextOutput, convertWindowText, describeWindowTextEligibility, describeEntryEligibility, isDedicatedMessageWindow, rememberMessageStart, getSurfaceId, createSlotKey, createWindowTextRecordId, safeRecordIdPart, hashTextForRecordId, normalizeSlotNumber, getWindowTypeName, getWindowCtorName, normalizeDrawTextAlignValue, mergeBounds, isValidRect, roundDiagnosticNumber, cloneDiagnosticRect, cloneDiagnosticArea, calculateBitmapSurfaceTextYOffset, estimateBitmapSurfaceTextBounds, withWindowRedrawClear, withWindowContents, isUsableBitmap, getRedrawContents, wasDrawnToDetachedContents, isTransientRefreshWindow, isCoreRefreshWindowType, getBitmapReplayApi, assignWindowTextDrawOrder, createClearRectFromArea, getReplayItemRect, mergeReplayRect, expandReplayDirtyRect, replayRectsOverlap, collectWindowTextReplayItems, windowEntryBelongsToContents, combineReplayItems, filterReplayForEntry, replayMixedItems, replayWindowTextEntry, getWindowReplayText, getBitmapCanvasContext, supportsBitmapReplayClip, withBitmapReplayClip, getReplayClipArea, getBitmapSnapshotContext, captureWindowEntryBackground, ensureWindowEntryBackground, getWindowEntryBackgroundSnapshotStatus, restoreWindowEntryBackground, getEntryContentsRevision, getSnapshotContentsRevision, getWindowDataContentsRevision, getEntrySnapshotPadding, getSnapshotArea, getSnapshotDiagnostics, summarizeReplayItemsForDiagnostics, summarizeReplayStateForDiagnostics } = Object.fromEntries(['install', 'installOrchestratorSubscription', 'getRenderGeneration', 'isRenderTargetCurrent', 'handleRenderRejected', 'installWindowBaseWrappers', 'hasHookInChain', 'handleDrawText', 'handleDrawTextEx', 'createObservedEntry', 'recordSkippedEntry', 'createEntry', 'refreshEntry', 'requestEntryTranslation', 'observeEntry', 'syncEntryFromObservedItem', 'getEntryStatus', 'isEntryActive', 'isEntryRequestActive', 'isEntryCompleted', 'firstNonEmptyString', 'recordDrawTrace', 'windowTraceDetails', 'getRegisteredWindowData', 'markEntryObservedInRefresh', 'safeStripRpgmEscapes', 'describeWindowScreenState', 'buildOrchestratorPayload', 'applyRenderCommand', 'markRequestSkipped', 'markRequestFailed', 'updateOrchestratorItem', 'beginPendingRenderCommand', 'markPendingRenderDeferred', 'completePendingRenderCommand', 'rejectPendingRender', 'clearPendingRenderCommand', 'getPendingRenderDetails', 'redrawTranslatedText', 'findExistingEntry', 'retireEntriesInSameSlot', 'markEntryStale', 'cancelEntryTranslation', 'markRecordDisappeared', 'recordDecision', 'queuePendingRedraw', 'clearPendingInvalidation', 'getCurrentEntry', 'getTextEntryKey', 'dropPendingRedraw', 'resolveWindowData', 'resolveTargetWindow', 'isWindowReadyForRedraw', 'refreshEntryBounds', 'estimateEntryBounds', 'measurePlainTextWidth', 'estimateDrawTextExFallbackWidth', 'estimateDrawTextExFallbackHeight', 'estimateMaxDrawTextExFallbackHeight', 'getDrawTextExLineCount', 'getLineHeight', 'getWindowIconWidth', 'countDrawTextExIcons', 'prepareTranslationSource', 'restoreTranslatedWindowText', 'sanitizeDrawTextOutput', 'convertWindowText', 'describeWindowTextEligibility', 'describeEntryEligibility', 'isDedicatedMessageWindow', 'rememberMessageStart', 'getSurfaceId', 'createSlotKey', 'createWindowTextRecordId', 'safeRecordIdPart', 'hashTextForRecordId', 'normalizeSlotNumber', 'getWindowTypeName', 'getWindowCtorName', 'normalizeDrawTextAlignValue', 'mergeBounds', 'isValidRect', 'roundDiagnosticNumber', 'cloneDiagnosticRect', 'cloneDiagnosticArea', 'calculateBitmapSurfaceTextYOffset', 'estimateBitmapSurfaceTextBounds', 'withWindowRedrawClear', 'withWindowContents', 'isUsableBitmap', 'getRedrawContents', 'wasDrawnToDetachedContents', 'isTransientRefreshWindow', 'isCoreRefreshWindowType', 'getBitmapReplayApi', 'assignWindowTextDrawOrder', 'createClearRectFromArea', 'getReplayItemRect', 'mergeReplayRect', 'expandReplayDirtyRect', 'replayRectsOverlap', 'collectWindowTextReplayItems', 'windowEntryBelongsToContents', 'combineReplayItems', 'filterReplayForEntry', 'replayMixedItems', 'replayWindowTextEntry', 'getWindowReplayText', 'getBitmapCanvasContext', 'supportsBitmapReplayClip', 'withBitmapReplayClip', 'getReplayClipArea', 'getBitmapSnapshotContext', 'captureWindowEntryBackground', 'ensureWindowEntryBackground', 'getWindowEntryBackgroundSnapshotStatus', 'restoreWindowEntryBackground', 'getEntryContentsRevision', 'getSnapshotContentsRevision', 'getWindowDataContentsRevision', 'getEntrySnapshotPadding', 'getSnapshotArea', 'getSnapshotDiagnostics', 'summarizeReplayItemsForDiagnostics', 'summarizeReplayStateForDiagnostics'].map((name) => [name, callContext(name)]));
-
+    const { logger, telemetry, generateKey, preview, perf, textCodec, textScaleOthers, ADAPTER_ID, RENDER_STRATEGY } = context;
+    const { draw: drawService, replay: replayService } = context.services;
+    const {
+                bitmapReplay,
+                diagnostics,
+                entryLifecycle,
+                renderCompletion,
+                renderQueue,
+                sourceDraw,
+                textConversion,
+                textMetrics,
+            } = context.facades;
+    const captureBitmapDrawState = drawService.captureBitmapDrawState;
+    const applyBitmapDrawState = drawService.applyBitmapDrawState;
+    const createWindowTextScaleScope = drawService.createWindowTextScaleScope;
+    const {
+                recordDrawTrace,
+                windowTraceDetails,
+                recordDecision,
+                roundDiagnosticNumber,
+                cloneDiagnosticRect,
+                cloneDiagnosticArea,
+                getSnapshotDiagnostics,
+                summarizeReplayItemsForDiagnostics,
+                summarizeReplayStateForDiagnostics,
+            } = diagnostics;
+    const { getCurrentEntry, getTextEntryKey, resolveWindowData, resolveTargetWindow } = entryLifecycle;
+    const { updateOrchestratorItem, completePendingRenderCommand, rejectPendingRender } = renderCompletion;
+    const { dropRenderRetry } = renderQueue;
+    const { captureWindowEntrySource, completeEntryNativeSourceDraw } = sourceDraw;
+    const { sanitizeDrawTextOutput, convertWindowText } = textConversion;
+    const {
+                estimateEntryBounds,
+                estimateMaxDrawTextExFallbackHeight,
+                getLineHeight,
+                getSurfaceId,
+                getWindowTypeName,
+                normalizeDrawTextAlignValue,
+            } = textMetrics;
+    const {
+                mergeBounds,
+                isValidRect,
+                calculateBitmapSurfaceTextYOffset,
+                estimateBitmapSurfaceTextBounds,
+                withWindowRedrawClear,
+                withWindowContents,
+                isUsableBitmap,
+                getRedrawContents,
+                getBitmapReplayApi,
+                assignWindowTextDrawOrder,
+                createClearRectFromArea,
+                getReplayItemRect,
+                expandReplayDirtyRect,
+                collectWindowTextReplayItems,
+                combineReplayItems,
+                filterReplayForEntry,
+                replayMixedItems,
+                supportsBitmapReplayClip,
+                getWindowEntryBackgroundSnapshotStatus,
+                restoreWindowEntryBackground,
+            } = bitmapReplay;
     const WINDOW_TEXT_PERF_DOMAIN = 'translator-render.windowText';
-    const DRAWTEXTEX_RENDER_CACHE_VERSION = 1;
-    const DRAWTEXTEX_RENDER_CACHE_DEFAULT_MAX_ENTRIES = 128;
-    const DRAWTEXTEX_RENDER_CACHE_DEFAULT_MAX_PIXELS = 8 * 1024 * 1024;
-    const drawTextExRenderCacheMaxEntries = resolveNonNegativeInteger(
-                settings && settings.drawTextExRenderCacheMaxEntries,
-                DRAWTEXTEX_RENDER_CACHE_DEFAULT_MAX_ENTRIES
-            );
-    const drawTextExRenderCacheMaxPixels = resolveNonNegativeInteger(
-                settings && settings.drawTextExRenderCacheMaxPixels,
-                DRAWTEXTEX_RENDER_CACHE_DEFAULT_MAX_PIXELS
-            );
-    const drawTextExRenderCache = new Map();
-    const drawTextExRenderFunctionIds = typeof WeakMap === 'function' ? new WeakMap() : null;
-    let drawTextExRenderCachePixels = 0;
-    let drawTextExRenderCacheClock = 0;
-    let drawTextExRenderFunctionId = 0;
+    const backdropProvider = backdropProviderModule.create({
+                getReplayItemRect,
+                isBitmapSurfaceTextEntry,
+                isValidRect,
+            });
+    const drawTextExRenderer = drawTextExRendererModule.create({
+                textCodec,
+                convertWindowText,
+                getLineHeight,
+                applyBitmapDrawState,
+            });
+    const {
+                toDrawTextExInputText,
+                toProcessedDrawTextExText,
+                drawProcessedDrawTextEx,
+                withCapturedDrawTextExState,
+            } = drawTextExRenderer;
+    const completedSubstitution = completedSubstitutionModule.create({
+                telemetry,
+                sanitizeDrawTextOutput,
+                toDrawTextExInputText,
+                getWindowTextMetricPrefix,
+                getWindowTextPerfMethod,
+                getWindowNativeDrawOwner,
+                getRedrawContents,
+                resolveWindowData,
+                resolveTargetWindow,
+                dropRenderRetry,
+                updateOrchestratorItem,
+                recordDecision,
+                recordDrawTrace,
+                windowTraceDetails,
+                captureWindowEntrySource,
+                completeEntryNativeSourceDraw,
+                perfCount,
+                perfTop,
+                perfStart,
+                perfElapsed,
+            });
+    const {
+                invokeCompletedEntry,
+                captureCompletedSourceSnapshot,
+            } = completedSubstitution;
 
     function isPerfEnabled() {
                 if (!perf) return false;
@@ -112,6 +205,48 @@
                     });
                     return false;
                 }
+
+                const geometry = describeEntryRenderGeometry(entry);
+                if (!geometry.drawable) {
+                    redrawOutcome = 'invalidGeometry';
+                    perfCount('windowText.redraw.invalidGeometry');
+                    perfTop('windowText.redraw.outcome', redrawOutcome);
+                    perfElapsed('windowText.redraw.ms', redrawStart);
+                    return rejectTerminalRedraw(entry, 'invalid-render-geometry', 'window redraw skipped because draw geometry is invalid', {
+                        windowType: getWindowTypeName(targetWindow, windowData),
+                        method: entry.type || '',
+                        geometry: geometry.details,
+                    });
+                }
+
+                contents = bindEntryToLiveRenderContents(targetWindow, windowData, contents, entry);
+                const targetProof = validateRenderTargetBeforeDraw(targetWindow, windowData, contents, entry);
+                if (!targetProof.accepted) {
+                    redrawOutcome = targetProof.reason || 'targetRejected';
+                    perfCount('windowText.redraw.targetRejected');
+                    perfTop('windowText.redraw.outcome', redrawOutcome);
+                    perfElapsed('windowText.redraw.ms', redrawStart);
+                    return rejectTerminalRedraw(entry, targetProof.reason || 'window-redraw-target-rejected', 'window redraw skipped because target contents is not current', {
+                        windowType: getWindowTypeName(targetWindow, windowData),
+                        method: entry.type || '',
+                        target: targetProof.details,
+                    });
+                }
+
+                let sourceInkDiagnostics = getSourceInkDiagnostics(entry);
+                updateSourceInkObservation(entry, sourceInkDiagnostics);
+                if (shouldSuppressRedrawForSourceInk(entry, sourceInkDiagnostics)) {
+                    redrawOutcome = 'sourceNoInk';
+                    perfCount('windowText.redraw.sourceNoInk');
+                    perfTop('windowText.redraw.outcome', redrawOutcome);
+                    perfElapsed('windowText.redraw.ms', redrawStart);
+                    return rejectTerminalRedraw(entry, 'source-draw-empty', 'window redraw skipped because native source draw produced no ink', {
+                        windowType: getWindowTypeName(targetWindow, windowData),
+                        method: entry.type || '',
+                        sourceInk: sourceInkDiagnostics,
+                    });
+                }
+                clearTerminalRedrawSuppression(entry);
     
                 const prevDrawState = contents ? captureBitmapDrawState(contents) : null;
                 const storedDrawState = contents ? entry.drawState : null;
@@ -136,6 +271,7 @@
                 let snapshotPartialClearCount = 0;
                 let replayBeforeAppliedCount = 0;
                 let clearMode = 'none';
+                let backdropDiagnostics = null;
                 let clearArea = null;
                 let originalBounds = null;
                 let translatedBounds = null;
@@ -209,12 +345,12 @@
     
                         contents._trAggregationDepth = (contents._trAggregationDepth || 0) + 1;
                         aggregationIncremented = true;
-                        const clearSnapshotOutsideArea = () => {
+                        const clearSnapshotOutsideArea = (backdropPlan) => {
                             const partialClearRects = [];
                             const count = shouldClearOutsideSnapshot(entry)
                                 ? clearAreaOutsideSnapshot(contents, clearArea, entry && entry.backgroundSnapshot, { clearedRects: partialClearRects })
                                 : 0;
-                            if (count > 0) {
+                            if (count > 0 && shouldReplayAfterSnapshotPartialClear(backdropPlan)) {
                                 const replayed = replaySnapshotPartialClearBackground(
                                     contents,
                                     targetWindow,
@@ -232,41 +368,50 @@
                             if (!snapshotStatus.usable && snapshotRestoreAttempted) {
                                 snapshotRestoreSkippedReason = snapshotStatus.reason || 'unusable';
                             }
-                            if (snapshotStatus.usable && restoreWindowEntryBackground(contents, entry, windowData)) {
-                                usedBackgroundSnapshot = true;
-                                snapshotPartialClearCount = clearSnapshotOutsideArea();
-                                clearMode = snapshotPartialClearCount > 0 ? 'snapshotPartialClear' : 'snapshot';
+                            const clearBitmapAreaAndReplay = (mode, shouldReplay) => {
+                                if (clearArea) {
+                                    clearMode = mode || 'clearRectReplay';
+                                    contents.clearRect(clearArea.x, clearArea.y, clearArea.w, clearArea.h);
+                                } else {
+                                    clearMode = mode || 'clearReplay';
+                                    contents.clear();
+                                }
+                                if (shouldReplay && replayApi && replayBefore.length) {
+                                    replayMixedItems(contents, targetWindow, replayBefore, replayApi, replayClipRect);
+                                    replayBeforeAppliedCount = Math.max(replayBeforeAppliedCount, replayBefore.length);
+                                }
+                            };
+                            const backdropPlan = backdropProvider.chooseRestorePlan({
+                                entry,
+                                replayBefore,
+                                replayRect: replayClipRect,
+                                snapshotStatus,
+                                clearArea,
+                                targetBitmap: contents,
+                            });
+                            backdropDiagnostics = summarizeBackdropPlanForDiagnostics(backdropPlan);
+                            snapshotRestoreSkippedReason = backdropPlan.snapshot && backdropPlan.snapshot.skippedReason
+                                ? backdropPlan.snapshot.skippedReason
+                                : snapshotRestoreSkippedReason;
+                            if (backdropPlan.kind === 'replay') {
+                                clearBitmapAreaAndReplay(backdropPlan.clearMode, backdropPlan.replay && backdropPlan.replay.applyAfterClear === true);
                                 return;
                             }
-                            if (!snapshotStatus.usable
-                                && snapshotStatus.reason === 'staleRevision'
-                                && restoreWindowEntryBackground(contents, entry, windowData, { allowStaleRevision: true })) {
+                            if (backdropPlan.kind === 'snapshot'
+                                && restoreWindowEntryBackground(contents, entry, windowData, backdropPlan.restoreOptions)) {
                                 usedBackgroundSnapshot = true;
-                                usedStaleRevisionSnapshot = true;
-                                snapshotPartialClearCount = clearSnapshotOutsideArea();
-                                clearMode = snapshotPartialClearCount > 0 ? 'snapshotStaleRevisionPartialClear' : 'snapshotStaleRevision';
+                                usedStaleRevisionSnapshot = backdropPlan.freshness === 'staleRevision';
+                                usedStaleAreaSnapshot = backdropPlan.freshness === 'staleArea';
+                                snapshotPartialClearCount = clearSnapshotOutsideArea(backdropPlan);
+                                clearMode = snapshotPartialClearCount > 0
+                                    ? `${backdropPlan.clearMode}PartialClear`
+                                    : backdropPlan.clearMode;
                                 return;
                             }
-                            if (!snapshotStatus.usable
-                                && snapshotStatus.reason === 'staleArea'
-                                && restoreWindowEntryBackground(contents, entry, windowData, { allowStaleArea: true })) {
-                                usedBackgroundSnapshot = true;
-                                usedStaleAreaSnapshot = true;
-                                snapshotPartialClearCount = clearSnapshotOutsideArea();
-                                clearMode = snapshotPartialClearCount > 0 ? 'snapshotStaleAreaPartialClear' : 'snapshotStaleArea';
-                                return;
-                            }
-                            if (clearArea) {
-                                clearMode = 'clearRect';
-                                contents.clearRect(clearArea.x, clearArea.y, clearArea.w, clearArea.h);
-                            } else {
-                                clearMode = 'clear';
-                                contents.clear();
-                            }
-                            if (replayApi && replayBefore.length) {
-                                replayMixedItems(contents, targetWindow, replayBefore, replayApi, replayClipRect);
-                                replayBeforeAppliedCount = Math.max(replayBeforeAppliedCount, replayBefore.length);
-                            }
+                            const fallbackClearMode = backdropPlan.kind === 'clear'
+                                ? backdropPlan.clearMode
+                                : (clearArea ? 'clearRect' : 'clear');
+                            clearBitmapAreaAndReplay(fallbackClearMode, backdropPlan.replay && backdropPlan.replay.applyAfterClear === true);
                         };
                         withWindowRedrawClear(contents, () => {
                             if (replayApi) {
@@ -301,7 +446,7 @@
                         contentsRevisionAtRedraw: windowData.contentsRevision || 0,
                     });
                     const sourceSnapshotDiagnostics = getEntryPixelSnapshotDiagnostics(entry, contents, 'sourceSnapshot');
-                    const sourceInkDiagnostics = getSourceInkDiagnostics(entry);
+                    sourceInkDiagnostics = sourceInkDiagnostics || getSourceInkDiagnostics(entry);
                     const replayBeforeItems = summarizeReplayItemsForDiagnostics(replayBefore);
                     const replayAfterItems = summarizeReplayItemsForDiagnostics(replayAfter);
                     const diagnostics = {
@@ -328,6 +473,7 @@
                             state: replayStateDiagnostics,
                         },
                         snapshot: snapshotDiagnostics,
+                        backdrop: backdropDiagnostics,
                         sourceSnapshot: sourceSnapshotDiagnostics,
                         sourceInk: sourceInkDiagnostics,
                         replayBeforeItems,
@@ -380,8 +526,11 @@
                     };
     
                     let didDraw = false;
+                    let renderCommit = null;
                     const drawAndReplayAfter = () => {
-                        didDraw = drawTranslatedWindowText(targetWindow, contents, entry, renderedText, { route: 'asyncRedraw' }) === true;
+                        const drawResult = drawTranslatedWindowText(targetWindow, contents, entry, renderedText, { route: 'asyncRedraw' });
+                        didDraw = isRenderCommitAccepted(drawResult);
+                        renderCommit = didDraw ? drawResult : null;
                         if (didDraw && replayApi && replayAfter.length) {
                             replayMixedItems(contents, targetWindow, replayAfter, replayApi, replayClipRect);
                         }
@@ -395,17 +544,39 @@
                         redrawOutcome = 'missed';
                         return false;
                     }
+                    const commitProof = validateRenderCommit(renderCommit, targetWindow, windowData, contents, entry);
+                    if (!commitProof.accepted) {
+                        redrawOutcome = commitProof.reason || 'commitRejected';
+                        entry._trLastRedrawRejectedReason = commitProof.reason || 'render-commit-rejected';
+                        entry._trLastRedrawRejectedAt = Date.now();
+                        recordDecision(entry, 'draw.rejected', 'window redraw commit rejected', {
+                            windowType: getWindowTypeName(targetWindow, windowData),
+                            method: entry.type || '',
+                            reason: commitProof.reason || 'render-commit-rejected',
+                            renderCommit: commitProof.details,
+                        });
+                        rejectPendingRender(entry, commitProof.reason || 'render-commit-rejected', {
+                            windowType: getWindowTypeName(targetWindow, windowData),
+                            method: entry.type || '',
+                            renderCommit: commitProof.details,
+                        });
+                        dropRenderRetry(windowData, entry);
+                        return false;
+                    }
+                    redrawDetails.renderCommit = commitProof.details;
+                    diagnostics.renderCommit = commitProof.details;
+                    rememberRenderedEntryBounds(entry, translatedBounds, bitmapSurfaceTranslatedBounds);
                     if (contents && prevDrawState) applyBitmapDrawState(contents, prevDrawState);
     
                     telemetry.logDraw('redraw', renderedText, x, y, redrawDetails);
                     recordDecision(entry, 'draw.redraw', 'window redraw applied', redrawDetails);
-                    completePendingRenderCommand(entry, redrawDetails);
+                    const renderAccepted = completePendingRenderCommand(entry, redrawDetails);
     
-                    const key = generateKey(entry.type, x, y, windowData.windowType, entry.convertedText);
+                    const key = generateKey(entry.type, x, y, windowData.windowType, entry.convertedText, entry.slotKey);
                     if (!windowData.recentlyRedrawn) windowData.recentlyRedrawn = new Map();
                     windowData.recentlyRedrawn.set(key, Date.now());
                     redrawOutcome = 'drawn';
-                    return true;
+                    return renderAccepted || true;
                 } catch (error) {
                     logger.error('[WindowText] Redraw failed.', error);
                     redrawOutcome = 'error';
@@ -462,6 +633,54 @@
                     bitmapSurfaceYOffsetSource: String(input.bitmapSurfaceYOffsetSource || ''),
                     sourceInkBounds: formatDiagnosticRectForSummary(sourceInk.worldBounds),
                     sourceInkBottomEdge: sourceInk.touches && sourceInk.touches.bottom === true,
+                };
+            }
+
+    function shouldReplayAfterSnapshotPartialClear(backdropPlan) {
+                return !!(backdropPlan
+                    && backdropPlan.replay
+                    && backdropPlan.replay.applyForPartialClear === true);
+            }
+
+    function summarizeBackdropPlanForDiagnostics(plan) {
+                if (!plan) return null;
+                const replay = plan.replay || {};
+                const snapshot = plan.snapshot || {};
+                const patches = plan.patches || {};
+                return {
+                    kind: String(plan.kind || ''),
+                    source: String(plan.source || ''),
+                    clearMode: String(plan.clearMode || ''),
+                    freshness: String(plan.freshness || ''),
+                    restoreSemantics: {
+                        clear: !!(plan.restoreSemantics && plan.restoreSemantics.clear),
+                        snapshot: !!(plan.restoreSemantics && plan.restoreSemantics.snapshot),
+                        patches: !!(plan.restoreSemantics && plan.restoreSemantics.patches),
+                        replayAfterClear: !!(plan.restoreSemantics && plan.restoreSemantics.replayAfterClear),
+                    },
+                    replay: {
+                        itemCount: Number(replay.itemCount) || 0,
+                        coverageRects: Number(replay.coverageRects) || 0,
+                        coversTarget: replay.coversTarget === true,
+                        blockedBySelfCopy: replay.blockedBySelfCopy === true,
+                        applyAfterClear: replay.applyAfterClear === true,
+                        applyForPartialClear: replay.applyForPartialClear === true,
+                        freshness: String(replay.freshness || ''),
+                    },
+                    snapshot: {
+                        available: snapshot.available === true,
+                        usable: snapshot.usable === true,
+                        freshness: String(snapshot.freshness || ''),
+                        skippedReason: String(snapshot.skippedReason || ''),
+                    },
+                    patches: {
+                        available: patches.available === true,
+                        count: Number(patches.count) || 0,
+                        coverageRects: Number(patches.coverageRects) || 0,
+                        coversTarget: patches.coversTarget === true,
+                        apply: patches.apply === true,
+                        freshness: String(patches.freshness || ''),
+                    },
                 };
             }
 
@@ -561,121 +780,274 @@
             }
 
     function getSourceInkDiagnostics(entry) {
-                const background = entry && entry.backgroundSnapshot ? entry.backgroundSnapshot : null;
-                const source = entry && entry.sourceSnapshot ? entry.sourceSnapshot : null;
-                if (!background || !source) {
-                    return { available: false, reason: 'missingSnapshots' };
+                return measuredBounds.measureSnapshotInkDiagnostics(
+                    entry && entry.backgroundSnapshot,
+                    entry && entry.sourceSnapshot,
+                    { maxPixels: 32768 }
+                );
+            }
+
+    function updateSourceInkObservation(entry, diagnostics) {
+                if (!entry || !diagnostics || diagnostics.available !== true) return false;
+                if (diagnostics.changed === true) {
+                    entry._trSourceInkObserved = true;
+                    return true;
                 }
-                const width = Math.max(0, Math.floor(Number(source.w) || 0));
-                const height = Math.max(0, Math.floor(Number(source.h) || 0));
-                if (width <= 0 || height <= 0) {
-                    return { available: false, reason: 'emptyArea' };
+                return false;
+            }
+
+    function shouldSuppressRedrawForSourceInk(entry, diagnostics) {
+                if (!entry || !diagnostics || diagnostics.available !== true) return false;
+                if (diagnostics.changed !== false) return false;
+                // A completed entry may be redrawn after its original source was
+                // already proven visible. Only suppress entries that never showed
+                // native ink; those are native no-op draws, not text to translate.
+                return entry._trSourceInkObserved !== true;
+            }
+
+    function describeEntryRenderGeometry(entry) {
+                const position = entry && entry.position ? entry.position : {};
+                const params = entry && entry.originalParams ? entry.originalParams : {};
+                const invalid = [];
+                const x = normalizeRenderCoordinate(position.x);
+                const y = normalizeRenderCoordinate(position.y);
+                if (x === null) invalid.push('x');
+                if (y === null) invalid.push('y');
+                if (entry && entry.type !== 'drawTextEx') {
+                    const maxWidth = normalizeRenderCoordinate(params.maxWidth);
+                    if (maxWidth === null || maxWidth <= 0) invalid.push('maxWidth');
                 }
-                if (background.x !== source.x || background.y !== source.y
-                    || background.w !== source.w || background.h !== source.h) {
+                if (!invalid.length) {
                     return {
-                        available: false,
-                        reason: 'areaMismatch',
-                        backgroundArea: cloneDiagnosticArea(background),
-                        sourceArea: cloneDiagnosticArea(source),
+                        drawable: true,
+                        details: {
+                            x,
+                            y,
+                        },
                     };
                 }
-                const areaPixels = width * height;
-                if (!Number.isFinite(areaPixels) || areaPixels <= 0) {
-                    return { available: false, reason: 'invalidArea' };
-                }
-                if (areaPixels > 32768) {
-                    return {
-                        available: false,
-                        reason: 'tooLarge',
-                        area: cloneDiagnosticArea(source),
-                        areaPixels,
-                    };
-                }
-                const backgroundData = background.imageData && background.imageData.data;
-                const sourceData = source.imageData && source.imageData.data;
-                if (!backgroundData || !sourceData) {
-                    return {
-                        available: false,
-                        reason: 'unavailablePixelData',
-                        area: cloneDiagnosticArea(source),
-                    };
-                }
-                const expectedBytes = areaPixels * 4;
-                if (Number(backgroundData.length) < expectedBytes || Number(sourceData.length) < expectedBytes) {
-                    return {
-                        available: false,
-                        reason: 'shortPixelData',
-                        area: cloneDiagnosticArea(source),
-                        expectedBytes,
-                        backgroundBytes: Number(backgroundData.length) || 0,
-                        sourceBytes: Number(sourceData.length) || 0,
-                    };
-                }
-                let minX = width;
-                let minY = height;
-                let maxX = -1;
-                let maxY = -1;
-                let pixelCount = 0;
-                for (let index = 0; index < expectedBytes; index += 4) {
-                    if (backgroundData[index] === sourceData[index]
-                        && backgroundData[index + 1] === sourceData[index + 1]
-                        && backgroundData[index + 2] === sourceData[index + 2]
-                        && backgroundData[index + 3] === sourceData[index + 3]) {
-                        continue;
-                    }
-                    const pixelIndex = index / 4;
-                    const x = pixelIndex % width;
-                    const y = Math.floor(pixelIndex / width);
-                    minX = Math.min(minX, x);
-                    minY = Math.min(minY, y);
-                    maxX = Math.max(maxX, x);
-                    maxY = Math.max(maxY, y);
-                    pixelCount += 1;
-                }
-                if (!pixelCount) {
-                    return {
-                        available: true,
-                        changed: false,
-                        area: cloneDiagnosticArea(source),
-                        pixelCount: 0,
-                        localBounds: null,
-                        worldBounds: null,
-                        touches: { left: false, top: false, right: false, bottom: false },
-                        edgeSlack: { left: width, top: height, right: width, bottom: height },
-                    };
-                }
-                const localBounds = {
-                    x1: minX,
-                    y1: minY,
-                    x2: maxX + 1,
-                    y2: maxY + 1,
-                };
                 return {
-                    available: true,
-                    changed: true,
-                    area: cloneDiagnosticArea(source),
-                    pixelCount,
-                    localBounds: cloneDiagnosticRect(localBounds),
-                    worldBounds: cloneDiagnosticRect({
-                        x1: Number(source.x) + minX,
-                        y1: Number(source.y) + minY,
-                        x2: Number(source.x) + maxX + 1,
-                        y2: Number(source.y) + maxY + 1,
-                    }),
-                    touches: {
-                        left: minX === 0,
-                        top: minY === 0,
-                        right: maxX === width - 1,
-                        bottom: maxY === height - 1,
-                    },
-                    edgeSlack: {
-                        left: minX,
-                        top: minY,
-                        right: Math.max(0, width - (maxX + 1)),
-                        bottom: Math.max(0, height - (maxY + 1)),
+                    drawable: false,
+                    details: {
+                        invalid,
+                        x: describeRenderCoordinate(position.x),
+                        y: describeRenderCoordinate(position.y),
+                        maxWidth: describeRenderCoordinate(params.maxWidth),
                     },
                 };
+            }
+
+    function rejectTerminalRedraw(entry, reason, message, details = null) {
+                if (entry) {
+                    entry._trLastRedrawRejectedReason = reason || 'window-redraw-rejected';
+                    entry._trLastRedrawRejectedAt = Date.now();
+                }
+                recordDecision(entry, 'draw.skipped', message || reason || 'window redraw skipped', details);
+                rejectPendingRender(entry, reason || 'window-redraw-rejected', details);
+                dropRenderRetry(resolveWindowData(entry), entry);
+                return false;
+            }
+
+    function validateRenderTargetBeforeDraw(targetWindow, windowData, contents, entry) {
+                // Redraw can temporarily bind arbitrary bitmaps through
+                // withWindowContents(). Prove the bitmap is live before any
+                // clear, replay, cache blit, or translated draw mutates it.
+                const details = createRenderTargetDetails(targetWindow, windowData, contents, entry);
+                if (!targetWindow) return rejectRenderTarget('window-redraw-target-missing', details);
+                if (!windowData) return rejectRenderTarget('window-redraw-data-missing', details);
+                if (!contents) return rejectRenderTarget('window-redraw-contents-missing', details);
+                if (!isUsableBitmap(contents)) return rejectRenderTarget('window-redraw-contents-unusable', details);
+                if (targetWindow.contents !== contents) return rejectRenderTarget('window-redraw-contents-not-live', details);
+                if (entry && entry.contentsBitmap && entry.contentsBitmap !== contents) {
+                    return rejectRenderTarget('window-redraw-entry-contents-stale', details);
+                }
+                if (entry && windowData && windowData.texts && getCurrentEntry(windowData, entry) !== entry) {
+                    return rejectRenderTarget('window-entry-replaced', details);
+                }
+                return { accepted: true, reason: '', details };
+            }
+
+    function bindEntryToLiveRenderContents(targetWindow, windowData, contents, entry) {
+                if (!targetWindow || !entry || !isUsableBitmap(targetWindow.contents)) return contents;
+                const liveContents = targetWindow.contents;
+                const renderContents = liveContents || contents || null;
+                if (!renderContents || entry.contentsBitmap === renderContents) return renderContents;
+                if (!windowData || (windowData.texts && getCurrentEntry(windowData, entry) !== entry)) {
+                    return renderContents;
+                }
+
+                // A window-text entry represents a logical draw slot. The Bitmap
+                // captured during source draw is only a surface observation; RPG
+                // Maker can swap that Bitmap before the queued render drains. If
+                // this entry is still the current slot, move the entry to the live
+                // contents before target validation and keep the stale guard for
+                // genuinely replaced entries.
+                entry.contentsBitmap = renderContents;
+                entry.ownerWindow = targetWindow;
+                entry.windowData = windowData;
+                entry.contentsRevision = Number.isFinite(Number(windowData.contentsRevision))
+                    ? Number(windowData.contentsRevision)
+                    : (Number.isFinite(Number(entry.contentsRevision)) ? Number(entry.contentsRevision) : 0);
+                try { windowData.contentsBitmap = renderContents; } catch (_) {}
+                entry.surfaceId = getSurfaceId(windowData) || entry.surfaceId;
+                entry.identitySurfaceId = entry.identitySurfaceId || entry.surfaceId || '';
+                assignWindowTextDrawOrder(renderContents, entry);
+                captureCompletedSourceSnapshot(renderContents, entry);
+                return renderContents;
+            }
+
+    function validateRenderCommit(commit, targetWindow, windowData, contents, entry) {
+                // A render function only succeeds when it returns an accepted
+                // commit and the target is still the same live entry afterward.
+                const targetProof = validateRenderTargetBeforeDraw(targetWindow, windowData, contents, entry);
+                if (!targetProof.accepted) return targetProof;
+                if (!isRenderCommitAccepted(commit)) {
+                    return rejectRenderTarget('window-redraw-commit-missing', Object.assign({}, targetProof.details, {
+                        renderCommit: summarizeRenderCommit(commit),
+                    }));
+                }
+                const details = Object.assign({}, commit, {
+                    target: targetProof.details,
+                });
+                if (commit.entryGeneration !== targetProof.details.entryGeneration) {
+                    return rejectRenderTarget('window-redraw-entry-generation-changed', details);
+                }
+                if (commit.windowContentsCurrent !== true) {
+                    return rejectRenderTarget('window-redraw-commit-not-live', details);
+                }
+                if (entry && entry.contentsBitmap && commit.contentsSameAsEntry !== true) {
+                    return rejectRenderTarget('window-redraw-commit-entry-contents-mismatch', details);
+                }
+                if ((commit.mode === 'direct-drawTextEx' || commit.mode === 'process-drawTextEx') && commit.bitmapMarkedDirty !== true) {
+                    return rejectRenderTarget('window-redraw-commit-no-bitmap-mutation', details);
+                }
+                if (commit.mode === 'process-drawTextEx' && positiveInteger(commit.bitmapDrawPrimitiveCount) <= 0) {
+                    return rejectRenderTarget('window-redraw-commit-no-bitmap-draw', details);
+                }
+                return { accepted: true, reason: '', details };
+            }
+
+    function createRenderCommit(mode, targetWindow, contents, entry, route, details = {}) {
+                // The commit is serialized into diagnostics and render events;
+                // keep it primitive and avoid leaking live RPG Maker objects.
+                const targetDetails = createRenderTargetDetails(targetWindow, entry && entry.windowData, contents, entry);
+                const evidence = Object.assign({
+                    bitmapMarkedDirty: isBitmapMarkedDirty(contents),
+                }, details || {}, targetDetails);
+                return renderTransaction.createRenderCommit({
+                    status: 'accepted',
+                    mode: String(mode || ''),
+                    route: String(route || ''),
+                    adapterId: ADAPTER_ID,
+                    itemId: entry && entry.recordId || '',
+                    recordId: entry && entry.recordId || '',
+                    surfaceId: entry && entry.surfaceId || '',
+                    slotKey: entry && entry.slotKey || '',
+                    strategy: RENDER_STRATEGY,
+                    commandId: entry && entry.renderTransaction && entry.renderTransaction.commandId || '',
+                    commandGeneration: entry && entry.renderTransaction && entry.renderTransaction.commandGeneration || 0,
+                    generation: entry && entry.surfaceRevision || 0,
+                    translationReceived: entry && entry.providerText || '',
+                    translationDrawn: entry && entry.renderedText || '',
+                    drawBoundary: entry && entry.renderLifecycle && entry.renderLifecycle.sourceDraw || null,
+                    details: evidence,
+                });
+            }
+
+    function createRenderTargetDetails(targetWindow, windowData, contents, entry) {
+                const textKey = getSafeRenderTextKey(windowData, entry);
+                const currentEntry = entry && windowData && windowData.texts
+                    ? getCurrentEntry(windowData, entry)
+                    : null;
+                return {
+                    windowType: getWindowTypeName(targetWindow, windowData),
+                    method: entry && entry.type || '',
+                    textKey,
+                    surfaceId: entry && entry.surfaceId || '',
+                    identitySurfaceId: entry && entry.identitySurfaceId || '',
+                    entryGeneration: Number(entry && entry.surfaceRevision) || 0,
+                    contentsSameAsEntry: !!(entry && contents && entry.contentsBitmap === contents),
+                    windowContentsCurrent: !!(targetWindow && contents && targetWindow.contents === contents),
+                    currentEntryMatches: !!(entry && currentEntry === entry),
+                    entryContentsRevision: Number.isFinite(Number(entry && entry.contentsRevision)) ? Number(entry.contentsRevision) : null,
+                    windowContentsRevision: windowData && Number.isFinite(Number(windowData.contentsRevision)) ? Number(windowData.contentsRevision) : null,
+                    contentsWidth: Number(contents && contents.width) || 0,
+                    contentsHeight: Number(contents && contents.height) || 0,
+                    entryContentsWidth: Number(entry && entry.contentsBitmap && entry.contentsBitmap.width) || 0,
+                    entryContentsHeight: Number(entry && entry.contentsBitmap && entry.contentsBitmap.height) || 0,
+                };
+            }
+
+    function getSafeRenderTextKey(windowData, entry) {
+                try {
+                    return entry && (entry.key || getTextEntryKey(windowData, entry)) || '';
+                } catch (_) {
+                    return entry && entry.key || '';
+                }
+            }
+
+    function rejectRenderTarget(reason, details) {
+                return {
+                    accepted: false,
+                    reason: String(reason || 'window-redraw-target-rejected'),
+                    details: details || null,
+                };
+            }
+
+    function isRenderCommitAccepted(commit) {
+                return !!(commit && commit.accepted === true);
+            }
+
+    function summarizeRenderCommit(commit) {
+                if (!commit || typeof commit !== 'object') return null;
+                return {
+                    accepted: commit.accepted === true,
+                    mode: String(commit.mode || ''),
+                    route: String(commit.route || ''),
+                    bitmapMarkedDirty: commit.bitmapMarkedDirty === true,
+                    windowType: String(commit.windowType || ''),
+                    method: String(commit.method || ''),
+                    contentsSameAsEntry: commit.contentsSameAsEntry === true,
+                    windowContentsCurrent: commit.windowContentsCurrent === true,
+                    currentEntryMatches: commit.currentEntryMatches === true,
+                    entryGeneration: Number(commit.entryGeneration) || 0,
+                };
+            }
+
+    function isBitmapMarkedDirty(bitmap) {
+                return !!(bitmap && (bitmap._dirty === true || bitmap.dirty === true || bitmap._needsUpdate === true));
+            }
+
+    function positiveInteger(value) {
+                const number = Number(value);
+                return Number.isFinite(number) && number > 0 ? Math.floor(number) : 0;
+            }
+
+    function clearTerminalRedrawSuppression(entry) {
+                if (!entry) return;
+                try { delete entry._trLastRedrawRejectedReason; } catch (_) { entry._trLastRedrawRejectedReason = ''; }
+                try { delete entry._trLastRedrawRejectedAt; } catch (_) { entry._trLastRedrawRejectedAt = 0; }
+            }
+
+    function isTerminalRedrawSuppressed(entry) {
+                const reason = String(entry && entry._trLastRedrawRejectedReason || '');
+                return reason === 'invalid-render-geometry' || reason === 'source-draw-empty';
+            }
+
+    function normalizeRenderCoordinate(value) {
+                if (value === null || value === undefined) return null;
+                if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+                if (typeof value === 'string') {
+                    if (!value.trim()) return null;
+                    const numeric = Number(value);
+                    return Number.isFinite(numeric) ? numeric : null;
+                }
+                return null;
+            }
+
+    function describeRenderCoordinate(value) {
+                const numeric = normalizeRenderCoordinate(value);
+                return numeric === null ? null : numeric;
             }
 
     function formatReplayCountsForSummary(input, replayBeforeItems, replayAfterItems) {
@@ -735,11 +1107,13 @@
                 perfCount('windowText.redraw.bounds.calls');
                 perfTop('windowText.redraw.bounds.method', getWindowTextPerfMethod(entry));
                 const position = entry.position || {};
-                let bounds = entry.bounds || {
-                    x1: Number(position.x) || 0,
-                    y1: Number(position.y) || 0,
-                    x2: Number(position.x) || 0,
-                    y2: Number(position.y) || 0,
+                const positionX = normalizeRenderCoordinate(position.x);
+                const positionY = normalizeRenderCoordinate(position.y);
+                const baseBounds = entry.bounds || {
+                    x1: positionX === null ? NaN : positionX,
+                    y1: positionY === null ? NaN : positionY,
+                    x2: positionX === null ? NaN : positionX,
+                    y2: positionY === null ? NaN : positionY,
                 };
                 let bitmapSurfaceOriginalBounds = null;
                 let bitmapSurfaceTranslatedBounds = null;
@@ -749,9 +1123,7 @@
                         entry,
                         entry.visibleText || entry.convertedText || entry.rawText || ''
                     );
-                    bounds = mergeBounds(bounds, bitmapSurfaceOriginalBounds) || bounds;
                 } catch (_) {}
-                const originalBounds = cloneDiagnosticRect(bounds);
                 let translatedBounds = null;
                 let calcTextHeight = null;
                 let bitmapSurfaceYOffset = 0;
@@ -771,13 +1143,11 @@
                             ? Object.assign({}, entry, {
                                 position: {
                                     x: position.x,
-                                    y: (Number(position.y) || 0) + bitmapSurfaceYOffset,
+                                    y: (positionY === null ? 0 : positionY) + bitmapSurfaceYOffset,
                                 },
                             })
                             : entry;
                         bitmapSurfaceTranslatedBounds = estimateBitmapSurfaceTextBounds(contents, translatedEntry, translatedText);
-                        translatedBounds = mergeBounds(translatedBounds, bitmapSurfaceTranslatedBounds) || translatedBounds;
-                        bounds = mergeBounds(bounds, translatedBounds) || bounds;
                         const measuredHeight = measureDrawTextExHeightForEntry(
                             targetWindow,
                             contents,
@@ -797,63 +1167,50 @@
                         measureTranslatedBounds();
                     }
                 } catch (_) {}
-                let clearX = Math.min(bounds.x1, bounds.x2);
-                let clearY = Math.min(bounds.y1, bounds.y2);
-                let clearW = Math.abs(bounds.x2 - bounds.x1);
-                let clearH = Math.abs(bounds.y2 - bounds.y1);
-                if (Number.isFinite(calcTextHeight) && calcTextHeight > 0) {
-                    clearH = Math.max(clearH, calcTextHeight);
-                }
+                let minimumHeight = 0;
                 if (entry.type === 'drawTextEx') {
-                    clearH = Math.max(
-                        clearH,
-                        estimateMaxDrawTextExFallbackHeight(
-                            getEntryDrawTextExBaseLineHeight(targetWindow, contents, entry),
-                            translatedText,
-                            entry.convertedText,
-                            entry.rawText
-                        )
+                    minimumHeight = estimateMaxDrawTextExFallbackHeight(
+                        getEntryDrawTextExBaseLineHeight(targetWindow, contents, entry),
+                        translatedText,
+                        entry.convertedText,
+                        entry.rawText
                     );
                 }
-    
-                let clearArea = null;
-                if (Number.isFinite(clearW) && Number.isFinite(clearH)) {
-                    const outline = Math.max(
-                        0,
-                        typeof contents.outlineWidth === 'number'
-                            ? contents.outlineWidth
-                            : redrawSettings.defaultOutline
-                    );
-                    clearX = Math.floor(clearX - outline - redrawSettings.extraPadding);
-                    clearY = Math.floor(clearY - outline - redrawSettings.extraPadding);
-                    clearW = Math.ceil(clearW + outline * 2 + redrawSettings.extraPadding * 2);
-                    clearH = Math.ceil(clearH + outline * 2 + redrawSettings.extraPadding * 2);
-                    clearX = Math.max(0, clearX);
-                    clearY = Math.max(0, clearY);
-                    clearW = Math.max(0, Math.min(Number(contents.width) - clearX, clearW));
-                    clearH = Math.max(0, Math.min(Number(contents.height) - clearY, clearH));
-                    clearArea = { x: clearX, y: clearY, w: clearW, h: clearH };
-                }
-                perfElapsed('windowText.redraw.bounds.ms', boundsStart);
-                return {
-                    clearArea,
-                    originalBounds,
+                const outline = Math.max(
+                    0,
+                    typeof contents.outlineWidth === 'number'
+                        ? contents.outlineWidth
+                        : 0
+                );
+                const result = measuredBounds.createRedrawBounds({
+                    position,
+                    baseBounds,
                     translatedBounds,
-                    bitmapSurfaceOriginalBounds: cloneDiagnosticRect(bitmapSurfaceOriginalBounds),
-                    bitmapSurfaceTranslatedBounds: cloneDiagnosticRect(bitmapSurfaceTranslatedBounds),
+                    bitmapSurfaceOriginalBounds,
+                    bitmapSurfaceTranslatedBounds,
                     bitmapSurfaceYOffset,
-                    mergedBounds: cloneDiagnosticRect(bounds),
                     calcTextHeight,
-                };
+                    minimumHeight,
+                    surface: contents,
+                    outline,
+                });
+                perfElapsed('windowText.redraw.bounds.ms', boundsStart);
+                return result;
             }
     
     function drawTranslatedWindowText(targetWindow, contents, entry, translatedText, options = {}) {
-                const position = entry.position || {};
                 const params = entry.originalParams || {};
+                const geometry = describeEntryRenderGeometry(entry);
+                if (!geometry.drawable) return false;
+                const targetProof = validateRenderTargetBeforeDraw(targetWindow, entry && entry.windowData, contents, entry);
+                if (!targetProof.accepted) return false;
+                const drawX = geometry.details.x;
+                const drawY = geometry.details.y;
                 const route = perfLabel(options.route || 'redraw', 'redraw');
                 const metricPrefix = getWindowTextMetricPrefix(entry, route);
                 const drawStart = perfStart();
                 let drew = false;
+                let commit = null;
                 perfCount(`${metricPrefix}.calls`);
                 perfTop('windowText.render.route', route);
                 perfTop('windowText.render.method', getWindowTextPerfMethod(entry));
@@ -862,31 +1219,41 @@
                         withWindowContents(targetWindow, contents, () => {
                             if (!isBitmapSurfaceTextEntry(entry)
                                 && entry.type === 'drawTextEx'
-                                && typeof targetWindow.drawTextEx === 'function') {
-                                const cached = drawCachedDrawTextEx(targetWindow, contents, entry, translatedText, route);
-                                if (cached && cached.drew) {
-                                    drew = true;
-                                } else {
-                                    withWindowTranslatedDrawScope(targetWindow, () => {
-                                        withCapturedDrawTextExState(targetWindow, contents, entry, () => {
-                                            targetWindow.drawTextEx(translatedText, position.x, position.y);
-                                        });
-                                        drew = true;
+                                && typeof targetWindow.processCharacter === 'function') {
+                                const drawTextExInput = toDrawTextExInputText(translatedText);
+                                const processedText = toProcessedDrawTextExText(targetWindow, drawTextExInput, translatedText);
+                                withWindowTranslatedDrawScope(targetWindow, () => {
+                                    withCapturedDrawTextExState(targetWindow, contents, entry, () => {
+                                        const drawResult = drawProcessedDrawTextEx(targetWindow, contents, entry, processedText, drawX, drawY);
+                                        drew = !!(drawResult && drawResult.processed);
+                                        if (drew) {
+                                            commit = createRenderCommit('process-drawTextEx', targetWindow, contents, entry, route, {
+                                                drawTextExInputConverted: drawTextExInput !== String(translatedText ?? ''),
+                                                drawTextExInputHasEsc: /\x1b/.test(drawTextExInput),
+                                                processedTextHasEsc: /\x1b/.test(processedText),
+                                                bitmapTextDrawCount: drawResult.textDrawCount || 0,
+                                                bitmapBltDrawCount: drawResult.bltDrawCount || 0,
+                                                bitmapDrawPrimitiveCount: drawResult.drawPrimitiveCount || 0,
+                                                bitmapDrawnTextPreview: preview(drawResult.drawnText || ''),
+                                            });
+                                        }
                                     });
-                                }
+                                });
                             } else {
                                 withWindowTranslatedDrawScope(targetWindow, () => {
                                     if (isBitmapSurfaceTextEntry(entry) && contents && typeof contents.drawText === 'function') {
                                         drew = drawBitmapSurfaceWindowText(targetWindow, contents, entry, translatedText);
+                                        if (drew) commit = createRenderCommit('bitmap-surface-drawText', targetWindow, contents, entry, route);
                                     } else if (typeof targetWindow.drawText === 'function') {
-                                        targetWindow.drawText(translatedText, position.x, position.y, params.maxWidth, params.align);
+                                        targetWindow.drawText(translatedText, drawX, drawY, params.maxWidth, params.align);
                                         drew = true;
+                                        commit = createRenderCommit('direct-drawText', targetWindow, contents, entry, route);
                                     }
                                 });
                             }
                         });
                     });
-                    return drew;
+                    return drew ? (commit || createRenderCommit('direct-draw', targetWindow, contents, entry, route)) : false;
                 } catch (error) {
                     perfCount(`${metricPrefix}.errors`);
                     throw error;
@@ -899,6 +1266,9 @@
     function drawBitmapSurfaceWindowText(targetWindow, contents, entry, translatedText) {
                 const position = entry.position || {};
                 const params = entry.originalParams || {};
+                const positionX = normalizeRenderCoordinate(position.x);
+                const positionY = normalizeRenderCoordinate(position.y);
+                if (positionX === null || positionY === null) return false;
                 const lineHeight = Number.isFinite(Number(params.lineHeight)) && Number(params.lineHeight) > 0
                     ? Number(params.lineHeight)
                     : getLineHeight(targetWindow, contents);
@@ -909,8 +1279,8 @@
                 try {
                     contents.drawText(
                         translatedText,
-                        position.x,
-                        (Number(position.y) || 0) + yOffset,
+                        positionX,
+                        positionY + yOffset,
                         params.maxWidth,
                         lineHeight,
                         normalizeDrawTextAlignValue(params.align)
@@ -926,548 +1296,33 @@
                 }
             }
 
+    function rememberRenderedEntryBounds(entry, translatedBounds, bitmapSurfaceTranslatedBounds) {
+                if (!entry) return;
+                // `entry.bounds` tracks the source slot. Bitmap-surface redraws can
+                // move translated ink vertically to match the captured native ink,
+                // so replay needs the actual translated footprint as well.
+                const renderedBounds = mergeBounds(translatedBounds, bitmapSurfaceTranslatedBounds)
+                    || translatedBounds
+                    || bitmapSurfaceTranslatedBounds
+                    || entry.bounds;
+                entry.renderedBounds = cloneRenderedBounds(renderedBounds);
+            }
+
+    function cloneRenderedBounds(bounds) {
+                if (!isValidRect(bounds)) return null;
+                return {
+                    x1: Number(bounds.x1),
+                    y1: Number(bounds.y1),
+                    x2: Number(bounds.x2),
+                    y2: Number(bounds.y2),
+                };
+            }
+
     function isBitmapSurfaceTextEntry(entry) {
                 const origin = entry && entry.drawOrigin;
                 return !!(origin && origin.type === 'bitmapSurface');
             }
 
-    function drawCachedDrawTextEx(targetWindow, contents, entry, translatedText, route) {
-                const routeLabel = perfLabel(route || 'redraw', 'redraw');
-                const metricPrefix = getWindowTextMetricPrefix(entry, routeLabel);
-                const cacheStart = perfStart();
-                let outcome = 'unknown';
-                perfCount(`${metricPrefix}.renderCache.calls`);
-                try {
-                    const plan = createDrawTextExRenderPlan(targetWindow, contents, entry, translatedText);
-                    if (!plan) {
-                        outcome = 'skipped';
-                        perfCount(`${metricPrefix}.renderCache.skipped`);
-                        return null;
-                    }
-                    const key = createDrawTextExRenderCacheKey(targetWindow, contents, entry, translatedText, plan);
-                    let cached = drawTextExRenderCache.get(key);
-                    if (cached && cached.bitmap) {
-                        cached.lastUsed = ++drawTextExRenderCacheClock;
-                        outcome = 'hit';
-                        perfCount(`${metricPrefix}.renderCache.hit`);
-                    } else {
-                        outcome = 'miss';
-                        perfCount(`${metricPrefix}.renderCache.miss`);
-                        cached = renderDrawTextExCacheEntry(targetWindow, contents, entry, translatedText, plan, routeLabel);
-                        if (!cached) {
-                            outcome = 'renderFailed';
-                            perfCount(`${metricPrefix}.renderCache.renderFailed`);
-                            return null;
-                        }
-                        rememberDrawTextExRenderCacheEntry(key, cached);
-                    }
-                    if (!blitDrawTextExCacheEntry(contents, entry, cached, plan, routeLabel)) {
-                        outcome = 'blitFailed';
-                        perfCount(`${metricPrefix}.renderCache.blitFailed`);
-                        return null;
-                    }
-                    perfCount(`${metricPrefix}.renderCache.drawn`);
-                    return { drew: true, result: cached.result };
-                } catch (error) {
-                    outcome = 'error';
-                    perfCount(`${metricPrefix}.renderCache.errors`);
-                    return null;
-                } finally {
-                    perfTop('windowText.drawTextEx.renderCache.outcome', outcome);
-                    perfElapsed(`${metricPrefix}.renderCache.ms`, cacheStart);
-                }
-            }
-
-    function createDrawTextExRenderPlan(targetWindow, contents, entry, translatedText) {
-                if (!isDrawTextExRenderCacheEnabled()) return null;
-                if (!targetWindow || !contents || !entry || entry.type !== 'drawTextEx') return null;
-                if (isBitmapSurfaceTextEntry(entry)) return null;
-                if (typeof targetWindow.drawTextEx !== 'function') return null;
-                if (hasPositionSensitiveDrawTextExControls(translatedText)) return null;
-                if (hasUnsupportedDrawTextExRenderCacheControls(translatedText)) return null;
-                const BitmapCtor = globalScope && globalScope.Bitmap;
-                if (typeof BitmapCtor !== 'function') return null;
-                if (!canBlitDrawTextExRenderCache(contents)) return null;
-
-                const contentWidth = Math.ceil(Number(contents.width) || 0);
-                const contentHeight = Math.ceil(Number(contents.height) || 0);
-                if (contentWidth <= 0 || contentHeight <= 0) return null;
-
-                const padding = getDrawTextExRenderCachePadding(contents);
-                const drawX = padding;
-                const drawY = padding;
-                const lineHeight = getEntryDrawTextExBaseLineHeight(targetWindow, contents, entry);
-                const fallbackHeight = estimateMaxDrawTextExFallbackHeight(
-                    lineHeight,
-                    translatedText,
-                    entry.convertedText,
-                    entry.rawText
-                );
-                let estimatedHeight = fallbackHeight;
-                try {
-                    const bounds = withCapturedDrawTextExState(targetWindow, contents, entry, () => withWindowContents(targetWindow, contents, () => estimateEntryBounds(
-                        targetWindow,
-                        entry.type,
-                        translatedText,
-                        drawX,
-                        drawY,
-                        translatedText,
-                        entry.originalParams
-                    )));
-                    if (bounds && [bounds.y1, bounds.y2].every(Number.isFinite)) {
-                        estimatedHeight = Math.max(estimatedHeight, Math.ceil(Math.abs(bounds.y2 - bounds.y1)));
-                    }
-                } catch (_) {}
-                estimatedHeight = Math.max(
-                    estimatedHeight,
-                    measureDrawTextExRenderCacheHeight(targetWindow, contents, entry, translatedText, drawX, drawY, fallbackHeight),
-                    lineHeight
-                );
-
-                const width = Math.max(1, contentWidth + padding * 2);
-                const height = Math.max(1, Math.ceil(estimatedHeight + padding * 2));
-                const pixels = width * height;
-                if (!Number.isFinite(pixels) || pixels <= 0) return null;
-                if (drawTextExRenderCacheMaxPixels > 0 && pixels > drawTextExRenderCacheMaxPixels) return null;
-                if (width > 8192 || height > 8192) return null;
-
-                const position = entry.position || {};
-                const destX = (Number.isFinite(Number(position.x)) ? Number(position.x) : 0) - padding;
-                const destY = (Number.isFinite(Number(position.y)) ? Number(position.y) : 0) - padding;
-                return {
-                    width,
-                    height,
-                    pixels,
-                    padding,
-                    drawX,
-                    drawY,
-                    destX,
-                    destY,
-                    lineHeight,
-                    contentWidth,
-                    contentHeight,
-                    escapeSignature: getDrawTextExEscapeSignature(targetWindow, translatedText),
-                };
-            }
-
-    function isDrawTextExRenderCacheEnabled() {
-                if (settings && settings.drawTextExRenderCache === false) return false;
-                return drawTextExRenderCacheMaxEntries > 0 && drawTextExRenderCacheMaxPixels > 0;
-            }
-
-    function canBlitDrawTextExRenderCache(contents) {
-                if (!contents) return false;
-                if (typeof contents.blt === 'function') return true;
-                const context = getBitmapCanvasContext(contents);
-                return !!(context && typeof context.drawImage === 'function');
-            }
-
-    function getDrawTextExRenderCachePadding(contents) {
-                const outline = Math.max(
-                    0,
-                    typeof contents.outlineWidth === 'number'
-                        ? contents.outlineWidth
-                        : redrawSettings.defaultOutline
-                );
-                return Math.ceil(outline + redrawSettings.extraPadding + 2);
-            }
-
-    function measureDrawTextExRenderCacheHeight(targetWindow, contents, entry, text, x, y, fallbackHeight) {
-                return Math.max(
-                    Math.max(1, Math.ceil(Number(fallbackHeight) || 0)),
-                    measureDrawTextExHeightForEntry(targetWindow, contents, entry, text, x, y, fallbackHeight)
-                );
-            }
-
-    function createDrawTextExRenderCacheKey(targetWindow, contents, entry, translatedText, plan) {
-                const drawState = entry && entry.drawState
-                    ? entry.drawState
-                    : (contents ? captureBitmapDrawState(contents) : null);
-                return stableCacheString([
-                    DRAWTEXTEX_RENDER_CACHE_VERSION,
-                    String(translatedText || ''),
-                    plan.escapeSignature,
-                    getDrawTextExRendererSignature(targetWindow, entry),
-                    drawState || null,
-                    {
-                        width: plan.width,
-                        height: plan.height,
-                        padding: plan.padding,
-                        lineHeight: plan.lineHeight,
-                        contentWidth: plan.contentWidth,
-                        contentHeight: plan.contentHeight,
-                        iconWidth: getWindowIconWidth(),
-                        textScaleOthers,
-                    },
-                ]);
-            }
-
-    function getDrawTextExRendererSignature(targetWindow, entry) {
-                return {
-                    windowType: getWindowTypeName(targetWindow, entry && entry.windowData ? entry.windowData : null),
-                    ctor: getWindowCtorName(targetWindow),
-                    drawTextEx: getFunctionCacheId(targetWindow && targetWindow.drawTextEx && targetWindow.drawTextEx.__trOriginal
-                        ? targetWindow.drawTextEx.__trOriginal
-                        : (targetWindow ? targetWindow.drawTextEx : null)),
-                    convertEscapeCharacters: getFunctionCacheId(targetWindow ? targetWindow.convertEscapeCharacters : null),
-                    processEscapeCharacter: getFunctionCacheId(targetWindow ? targetWindow.processEscapeCharacter : null),
-                    drawIcon: getFunctionCacheId(targetWindow ? targetWindow.drawIcon : null),
-                };
-            }
-
-    function getFunctionCacheId(fn) {
-                if (typeof fn !== 'function') return '';
-                if (!drawTextExRenderFunctionIds) return String(fn).slice(0, 160);
-                let id = drawTextExRenderFunctionIds.get(fn);
-                if (!id) {
-                    id = `fn:${++drawTextExRenderFunctionId}`;
-                    drawTextExRenderFunctionIds.set(fn, id);
-                }
-                return id;
-            }
-
-    function getDrawTextExEscapeSignature(targetWindow, text) {
-                const value = String(text || '');
-                try {
-                    if (targetWindow && typeof targetWindow.convertEscapeCharacters === 'function') {
-                        return String(targetWindow.convertEscapeCharacters(value));
-                    }
-                } catch (_) {}
-                return value;
-            }
-
-    function hasPositionSensitiveDrawTextExControls(text) {
-                return /(?:\x1b|\\)(?:PX|PY|POS|XY|X|Y)\s*(?:\[|<)/i.test(String(text || ''));
-            }
-
-    function hasUnsupportedDrawTextExRenderCacheControls(text) {
-                const value = String(text || '');
-                const safeCodes = {
-                    C: true,
-                    I: true,
-                    FS: true,
-                    V: true,
-                    N: true,
-                    P: true,
-                    G: true,
-                    OC: true,
-                    OW: true,
-                };
-                const safeSingles = {
-                    '{': true,
-                    '}': true,
-                    '.': true,
-                    '|': true,
-                    '!': true,
-                    '>': true,
-                    '<': true,
-                    '^': true,
-                    '$': true,
-                };
-                const pattern = /(?:\x1b|\\)([A-Za-z]+|[{}.$|!><^])(?:\[[^\]]*\]|<[^>]*>)?/g;
-                let match = null;
-                while ((match = pattern.exec(value))) {
-                    const code = String(match[1] || '').toUpperCase();
-                    if (!code) continue;
-                    if (safeCodes[code] || safeSingles[code]) continue;
-                    return true;
-                }
-                return false;
-            }
-
-    function renderDrawTextExCacheEntry(targetWindow, contents, entry, translatedText, plan, route) {
-                const bitmap = createDrawTextExRenderCacheBitmap(plan.width, plan.height);
-                if (!bitmap) return null;
-                const drawState = entry && entry.drawState
-                    ? entry.drawState
-                    : (contents ? captureBitmapDrawState(contents) : null);
-                try {
-                    clearDrawTextExRenderCacheBitmap(bitmap, plan.width, plan.height);
-                    if (drawState) applyBitmapDrawState(bitmap, drawState);
-                    const result = withWindowContents(targetWindow, bitmap, () => {
-                        return withWindowTranslatedDrawScope(targetWindow, () => {
-                            return withBitmapNativeDrawOwner(
-                                bitmap,
-                                getWindowNativeDrawOwner(entry, `${route}.renderCache`),
-                                () => withCapturedDrawTextExState(targetWindow, bitmap, entry, () => withWindowDrawTextExReplayScope(bitmap, () => targetWindow.drawTextEx(translatedText, plan.drawX, plan.drawY)))
-                            );
-                        });
-                    });
-                    return {
-                        bitmap,
-                        result,
-                        width: plan.width,
-                        height: plan.height,
-                        pixels: plan.pixels,
-                        lastUsed: ++drawTextExRenderCacheClock,
-                    };
-                } catch (_) {
-                    destroyDrawTextExRenderCacheBitmap(bitmap);
-                    return null;
-                }
-            }
-
-    function createDrawTextExRenderCacheBitmap(width, height) {
-                const BitmapCtor = globalScope && globalScope.Bitmap;
-                if (typeof BitmapCtor !== 'function') return null;
-                try {
-                    const bitmap = new BitmapCtor(width, height);
-                    if (bitmap && typeof bitmap.resize === 'function'
-                        && (Math.ceil(Number(bitmap.width) || 0) !== width
-                            || Math.ceil(Number(bitmap.height) || 0) !== height)) {
-                        try { bitmap.resize(width, height); } catch (_) {}
-                    }
-                    return bitmap || null;
-                } catch (_) {
-                    return null;
-                }
-            }
-
-    function clearDrawTextExRenderCacheBitmap(bitmap, width, height) {
-                if (!bitmap) return;
-                try {
-                    if (typeof bitmap.clear === 'function') {
-                        bitmap.clear();
-                        return;
-                    }
-                } catch (_) {}
-                try {
-                    if (typeof bitmap.clearRect === 'function') {
-                        bitmap.clearRect(0, 0, width, height);
-                        return;
-                    }
-                } catch (_) {}
-                try {
-                    const context = getBitmapCanvasContext(bitmap);
-                    if (context && typeof context.clearRect === 'function') context.clearRect(0, 0, width, height);
-                } catch (_) {}
-            }
-
-    function rememberDrawTextExRenderCacheEntry(key, entry) {
-                if (!key || !entry) return;
-                if (drawTextExRenderCacheMaxEntries <= 0 || drawTextExRenderCacheMaxPixels <= 0) return;
-                drawTextExRenderCache.set(key, entry);
-                drawTextExRenderCachePixels += Math.max(0, Number(entry.pixels) || 0);
-                evictDrawTextExRenderCache();
-            }
-
-    function evictDrawTextExRenderCache() {
-                while (drawTextExRenderCache.size > drawTextExRenderCacheMaxEntries
-                    || drawTextExRenderCachePixels > drawTextExRenderCacheMaxPixels) {
-                    let oldestKey = null;
-                    let oldestEntry = null;
-                    drawTextExRenderCache.forEach((entry, key) => {
-                        if (!oldestEntry || Number(entry.lastUsed || 0) < Number(oldestEntry.lastUsed || 0)) {
-                            oldestEntry = entry;
-                            oldestKey = key;
-                        }
-                    });
-                    if (!oldestKey) return;
-                    drawTextExRenderCache.delete(oldestKey);
-                    drawTextExRenderCachePixels = Math.max(
-                        0,
-                        drawTextExRenderCachePixels - Math.max(0, Number(oldestEntry && oldestEntry.pixels) || 0)
-                    );
-                    destroyDrawTextExRenderCacheBitmap(oldestEntry && oldestEntry.bitmap);
-                }
-            }
-
-    function destroyDrawTextExRenderCacheBitmap(bitmap) {
-                if (!bitmap || typeof bitmap.destroy !== 'function') return;
-                try { bitmap.destroy(); } catch (_) {}
-            }
-
-    function blitDrawTextExCacheEntry(contents, entry, cached, plan, route) {
-                if (!contents || !cached || !cached.bitmap || !plan) return false;
-                const owner = getWindowNativeDrawOwner(entry, `${route}.renderCacheBlit`);
-                return withBitmapNativeDrawOwner(contents, owner, () => {
-                    contents._trPreferWindowPipeline = true;
-                    contents._trWindowPipelineDepth = (contents._trWindowPipelineDepth || 0) + 1;
-                    contents._trAggregationDepth = (contents._trAggregationDepth || 0) + 1;
-                    contents._trBitmapSkipDepth = (contents._trBitmapSkipDepth || 0) + 1;
-                    try {
-                        if (typeof contents.blt === 'function') {
-                            contents.blt(
-                                cached.bitmap,
-                                0,
-                                0,
-                                plan.width,
-                                plan.height,
-                                plan.destX,
-                                plan.destY,
-                                plan.width,
-                                plan.height
-                            );
-                            return true;
-                        }
-                        const source = getBitmapCanvasSource(cached.bitmap);
-                        const context = getBitmapCanvasContext(contents);
-                        if (source && context && typeof context.drawImage === 'function') {
-                            context.drawImage(
-                                source,
-                                0,
-                                0,
-                                plan.width,
-                                plan.height,
-                                plan.destX,
-                                plan.destY,
-                                plan.width,
-                                plan.height
-                            );
-                            markBitmapDirty(contents);
-                            return true;
-                        }
-                    } catch (_) {
-                        return false;
-                    } finally {
-                        contents._trBitmapSkipDepth = Math.max(0, (contents._trBitmapSkipDepth || 1) - 1);
-                        contents._trWindowPipelineDepth = Math.max(0, (contents._trWindowPipelineDepth || 1) - 1);
-                        contents._trAggregationDepth = Math.max(0, (contents._trAggregationDepth || 1) - 1);
-                        if (contents._trAggregationDepth === 0
-                            && typeof contents._trFlushAggregatedLines === 'function') {
-                            try { contents._trFlushAggregatedLines(); } catch (_) {}
-                        }
-                    }
-                    return false;
-                });
-            }
-
-    function getBitmapCanvasSource(bitmap) {
-                if (!bitmap) return null;
-                if (bitmap.canvas) return bitmap.canvas;
-                if (bitmap._canvas) return bitmap._canvas;
-                if (bitmap._image) return bitmap._image;
-                try {
-                    const texture = bitmap._baseTexture || bitmap.baseTexture;
-                    const resource = texture && texture.resource;
-                    if (resource && resource.source) return resource.source;
-                } catch (_) {}
-                return null;
-            }
-
-    function markBitmapDirty(bitmap) {
-                if (!bitmap) return;
-                try {
-                    if (typeof bitmap._setDirty === 'function') {
-                        bitmap._setDirty();
-                        return;
-                    }
-                } catch (_) {}
-                try {
-                    if (bitmap.baseTexture && typeof bitmap.baseTexture.update === 'function') {
-                        bitmap.baseTexture.update();
-                    }
-                } catch (_) {}
-            }
-
-    function resolveNonNegativeInteger(value, fallback) {
-                const numeric = Number(value);
-                if (Number.isFinite(numeric) && numeric >= 0) return Math.floor(numeric);
-                return fallback;
-            }
-
-    function stableCacheString(value) {
-                return stableCacheStringValue(value, 0);
-            }
-
-    function stableCacheStringValue(value, depth) {
-                if (value === null || value === undefined) return 'null';
-                const type = typeof value;
-                if (type === 'string') return quoteCacheString(value);
-                if (type === 'number' || type === 'boolean') return String(value);
-                if (type === 'function') return quoteCacheString(getFunctionCacheId(value));
-                if (depth > 6) return quoteCacheString('[depth]');
-                if (Array.isArray(value)) {
-                    return `[${value.map((item) => stableCacheStringValue(item, depth + 1)).join(',')}]`;
-                }
-                if (type === 'object') {
-                    const keys = Object.keys(value).sort();
-                    const parts = [];
-                    keys.forEach((key) => {
-                        const item = value[key];
-                        if (item === undefined || typeof item === 'function') return;
-                        parts.push(`${quoteCacheString(key)}:${stableCacheStringValue(item, depth + 1)}`);
-                    });
-                    return `{${parts.join(',')}}`;
-                }
-                return quoteCacheString(String(value));
-            }
-
-    function quoteCacheString(value) {
-                return `"${String(value)
-                    .replace(/\\/g, '\\\\')
-                    .replace(/"/g, '\\"')
-                    .replace(/\r/g, '\\r')
-                    .replace(/\n/g, '\\n')}"`;
-            }
-    
-    function invokeCompletedEntry(entry, originalText, invokeOriginal, eventName) {
-                const translated = sanitizeDrawTextOutput(entry.renderedText, entry.type);
-                const route = 'completedSubstitution';
-                const metricPrefix = getWindowTextMetricPrefix(entry, route);
-                perfCount(`${metricPrefix}.calls`);
-                perfTop('windowText.completedSubstitution.method', getWindowTextPerfMethod(entry));
-                perfTop('windowText.completedSubstitution.event', eventName || 'unknown');
-                if (typeof translated !== 'string' || translated.trim() === String(originalText || '').trim()) {
-                    perfCount(`${metricPrefix}.skippedSame`);
-                    recordDecision(entry, 'draw.skipped', 'cached redraw matched original', {
-                        method: eventName,
-                        windowType: entry.windowData && entry.windowData.windowType ? entry.windowData.windowType : '',
-                    });
-                    return invokeOriginal();
-                }
-                const completedStart = perfStart();
-                telemetry.logDraw('redraw', translated, entry.position.x, entry.position.y, {
-                    windowType: entry.windowData && entry.windowData.windowType ? entry.windowData.windowType : '',
-                    method: eventName,
-                });
-                let drew = false;
-                try {
-                    const windowData = resolveWindowData(entry);
-                    const targetWindow = resolveTargetWindow(entry, windowData);
-                    const contents = getRedrawContents(targetWindow, entry);
-                    const result = invokeOriginal(undefined, {
-                        nativeDrawOwner: getWindowNativeDrawOwner(entry, `${route}.source`),
-                    });
-                    captureCompletedSourceSnapshot(contents, entry);
-                    if (targetWindow && windowData && contents) {
-                        drew = drawTranslatedEntry(targetWindow, windowData, contents, entry) === true;
-                    }
-                    if (drew) {
-                        recordDecision(entry, 'draw.existing', 'existing translated text redrawn', {
-                            windowType: entry.windowData && entry.windowData.windowType ? entry.windowData.windowType : '',
-                            method: eventName,
-                            translationDrawn: translated,
-                        });
-                    } else {
-                        recordDecision(entry, 'draw.deferred', 'existing source text left until redraw is possible', {
-                            windowType: entry.windowData && entry.windowData.windowType ? entry.windowData.windowType : '',
-                            method: eventName,
-                            translationReceived: translated,
-                        });
-                        if (targetWindow && windowData) {
-                            queuePendingRedraw(targetWindow, windowData, entry, entry.key || getTextEntryKey(windowData, entry));
-                        }
-                    }
-                    return result;
-                } finally {
-                    perfElapsed(`${metricPrefix}.ms`, completedStart);
-                    perfCount(`${metricPrefix}.${drew ? 'drawn' : 'missed'}`);
-                }
-            }
-
-    function captureCompletedSourceSnapshot(contents, entry) {
-                const capture = context && typeof context.captureWindowEntrySource === 'function'
-                    ? context.captureWindowEntrySource
-                    : null;
-                if (!capture || !contents || !entry) return false;
-                try {
-                    return capture(contents, entry) === true;
-                } catch (_) {
-                    return false;
-                }
-            }
-    
     function invokeOriginalDrawText(windowInstance, originalDrawText, value, x, y, maxWidth, align, options = {}) {
                 const contents = windowInstance && windowInstance.contents ? windowInstance.contents : null;
                 const draw = () => {
@@ -1494,15 +1349,21 @@
                 const contents = windowInstance && windowInstance.contents ? windowInstance.contents : null;
                 const draw = () => {
                     return withBitmapNativeDrawOwner(contents, options.nativeDrawOwner || (options.scaleText ? 'windowDrawTextEx' : ''), () => {
-                        if (contents) contents._trBitmapSkipDepth = (contents._trBitmapSkipDepth || 0) + 1;
-                        try {
+                        return withBitmapSkipGuard(contents, () => {
                             return withWindowDrawTextExReplayScope(contents, () => originalDrawTextEx.call(windowInstance, value, x, y));
-                        } finally {
-                            if (contents) contents._trBitmapSkipDepth = Math.max(0, (contents._trBitmapSkipDepth || 1) - 1);
-                        }
+                        });
                     });
                 };
                 return options && options.scaleText ? withWindowTranslatedDrawScope(windowInstance, draw) : draw();
+            }
+
+    function withBitmapSkipGuard(bitmap, callback) {
+                if (!bitmap) return typeof callback === 'function' ? callback() : undefined;
+                const bitmapDraws = replayService && replayService.bitmapDraws;
+                if (!bitmapDraws || typeof bitmapDraws.withBitmapSkipGuard !== 'function') {
+                    throw new Error('[WindowText] bitmap skip guard service is required.');
+                }
+                return bitmapDraws.withBitmapSkipGuard(bitmap, callback);
             }
 
     function getWindowNativeDrawOwner(entry, route = '') {
@@ -1529,34 +1390,6 @@
                     } else {
                         bitmap._trBitmapNativeDrawOwner = previous;
                     }
-                }
-            }
-
-    function withCapturedDrawTextExState(targetWindow, contents, entry, callback) {
-                if (typeof callback !== 'function') return undefined;
-                if (!targetWindow || !contents || !entry || entry.type !== 'drawTextEx' || !entry.drawState) {
-                    return callback();
-                }
-                const originalReset = typeof targetWindow.resetFontSettings === 'function'
-                    ? targetWindow.resetFontSettings
-                    : null;
-                const reapply = () => {
-                    try { applyBitmapDrawState(contents, entry.drawState); } catch (_) {}
-                };
-                if (!originalReset) {
-                    reapply();
-                    return callback();
-                }
-                targetWindow.resetFontSettings = function() {
-                    const result = originalReset.apply(this, arguments);
-                    reapply();
-                    return result;
-                };
-                try {
-                    reapply();
-                    return callback();
-                } finally {
-                    targetWindow.resetFontSettings = originalReset;
                 }
             }
 

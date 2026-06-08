@@ -15,9 +15,9 @@
         throw new Error('[LiveTranslator] runtime module require is unavailable before runtime/text-orchestrator/record-utils.js.');
     }
 
-    const constants = requireRuntimeModule('runtime.textOrchestratorConstants');
+    const textLifecycle = requireRuntimeModule('runtime.textLifecycle');
+    const renderTransaction = requireRuntimeModule('runtime.renderTransaction');
     const base = requireRuntimeModule('runtime.textOrchestratorBaseUtils');
-    const { ACTIVE_STATUSES, STATUS_ALIASES } = constants;
     const { clampPriority, finiteNumber, firstString, normalizeBounds, optionalBoolean, pickSerializableObject } = base;
 
     /**
@@ -33,6 +33,14 @@
         const hook = firstString(source.hook, source.source, source.methodName);
         const sourceAdapter = firstString(source.sourceAdapter);
         const normalizedSource = firstString(source.normalizedSource, source.translationSource);
+        const drawBoundary = normalizeDrawBoundary(source, {
+            id,
+            sourceAdapter,
+            surfaceId: source.surfaceId,
+            identitySurfaceId: source.identitySurfaceId || source.logicalSurfaceId,
+            slotKey: source.slotKey || source.key,
+            generation: source.generation,
+        });
         return {
             id,
             surfaceId: firstString(source.surfaceId),
@@ -55,11 +63,25 @@
             priority: finiteNumber(source.priority),
             generation: finiteNumber(source.generation),
             renderStrategy: firstString(source.renderStrategy),
+            drawBoundary,
             visible: optionalBoolean(source.visible !== undefined ? source.visible : source.onScreen),
             screenState: firstString(source.screenState),
             backgrounded: optionalBoolean(source.backgrounded),
             metadata: pickSerializableObject(source.metadata || {}),
         };
+    }
+
+    function normalizeDrawBoundary(source, defaults = {}) {
+        if (!source || typeof source.drawBoundary !== 'object' || !source.drawBoundary) return null;
+        return renderTransaction.createSourceDrawBoundary(Object.assign({
+            adapterId: firstString(defaults.sourceAdapter),
+            itemId: firstString(defaults.id),
+            recordId: firstString(defaults.id),
+            surfaceId: firstString(defaults.surfaceId),
+            identitySurfaceId: firstString(defaults.identitySurfaceId),
+            slotKey: firstString(defaults.slotKey),
+            generation: finiteNumber(defaults.generation),
+        }, source.drawBoundary));
     }
 
     /**
@@ -98,21 +120,14 @@
      * Normalize status aliases into the orchestrator lifecycle vocabulary.
      */
     function normalizeStatus(status, fallback = 'detected') {
-        const value = String(status || fallback || 'detected').trim();
-        return STATUS_ALIASES[value] || value || fallback;
+        return textLifecycle.normalizeStatus(status, fallback);
     }
 
     /**
      * Map translation-service event names to item lifecycle statuses.
      */
     function statusFromTranslationEvent(event) {
-        if (event === 'request') return 'pending';
-        if (event === 'cache_miss') return 'translating';
-        if (event === 'cache_hit' || event === 'precache_hit' || event === 'override' || event === 'completed') return 'completed';
-        if (event === 'skip') return 'skipped';
-        if (event === 'aborted') return 'stale';
-        if (event === 'error') return 'failed';
-        return 'detected';
+        return textLifecycle.statusFromTranslationEvent(event, 'detected');
     }
 
     /**
@@ -188,6 +203,8 @@
             priority: item.priority,
             generation: item.generation || 0,
             renderStrategy: item.renderStrategy || '',
+            drawBoundary: cloneDrawBoundary(item.drawBoundary),
+            renderCycle: cloneRenderCycle(item.renderCycle, includeDetails),
             visible: item.visible !== false,
             screenState: item.screenState || '',
             backgrounded: item.backgrounded === true,
@@ -200,6 +217,30 @@
             deactivatedAt: item.deactivatedAt || null,
             history: includeDetails ? history.map(cloneDiagnosticEvent) : [],
         };
+    }
+
+    function cloneDrawBoundary(boundary) {
+        if (!boundary || typeof boundary !== 'object') return null;
+        return pickSerializableObject(boundary);
+    }
+
+    function cloneRenderCycle(cycle, includeDetails) {
+        if (!cycle || typeof cycle !== 'object') return null;
+        const cloned = pickSerializableObject(cycle);
+        if (!includeDetails) {
+            delete cloned.details;
+            if (cloned.drawBoundary && typeof cloned.drawBoundary === 'object') {
+                delete cloned.drawBoundary.details;
+            }
+            if (cloned.renderCommit && typeof cloned.renderCommit === 'object') {
+                delete cloned.renderCommit.details;
+            }
+            if (cloned.renderCommand && typeof cloned.renderCommand === 'object') {
+                delete cloned.renderCommand.metadata;
+                delete cloned.renderCommand.bounds;
+            }
+        }
+        return cloned;
     }
 
     function cloneItemMetadata(metadata, includeDetails) {

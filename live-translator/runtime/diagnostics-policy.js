@@ -4,6 +4,7 @@
 // - none: GUI is closed, so producers must not capture or publish diagnostics.
 // - performance: GUI is open and needs lightweight surface data only.
 // - full: GUI is open and detail/copy views may request histories and trails.
+// Snapshot runners may opt into the same surface without opening the GUI.
 (() => {
     'use strict';
 
@@ -44,10 +45,19 @@
     }
 
     function isGuiSurfaceActive(options = {}) {
+        if (options.forceDiagnosticsSurface === true) return true;
         const scope = resolveScope(options);
         const guiState = normalizeObject(scope && scope.LiveTranslatorGuiState);
+        // Snapshot/profile runners can disable the GUI while still needing the
+        // same diagnostic surface for settling and static artifact export.
+        if (guiState && guiState.translatorOpen !== true && isClosedGuiDiagnosticsEnabled(options)) return true;
         if (!guiState) return options.defaultWhenGuiUnknown === false ? false : true;
         return guiState.translatorOpen === true;
+    }
+
+    function isClosedGuiDiagnosticsEnabled(options = {}) {
+        const diagnostics = normalizeObject(resolveSettings(options).diagnostics);
+        return !!(diagnostics && diagnostics.captureWhenGuiClosed === true);
     }
 
     function normalizeLevel(value) {
@@ -169,6 +179,7 @@
         LEVEL_FULL,
         getSnapshotPolicy,
         isGuiSurfaceActive,
+        isClosedGuiDiagnosticsEnabled,
         isSurfaceEnabled,
         isDetailSettingEnabled: isDetailViewEnabled,
         isDetailViewEnabled,

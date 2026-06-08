@@ -12,9 +12,12 @@
     }
 
     function createController(scope = {}) {
-        const { globalScope, diag, adapterContract, contentsOwners } = scope;
-        const callScope = (name) => (...args) => scope[name](...args);
-        const { discoverAndHookMessageWindowCtors, installProcessCharacterFallback, installProcessCompleteMessage, installGameInterpreterExecutionContextHook, installGameInterpreterChildOriginHook, installGameMessageAddOriginHook, installGameInterpreterMessageOriginHook, installGamePlayerTransferForesightHook, installGameMessageClearHook, installOrchestratorSubscription, getWindowId, updateItem, recordDecision, recordRenderAccepted, recordRenderDeferred, recordRenderRejected, backgroundItem, retireItem, warn } = Object.fromEntries(['discoverAndHookMessageWindowCtors', 'installProcessCharacterFallback', 'installProcessCompleteMessage', 'installGameInterpreterExecutionContextHook', 'installGameInterpreterChildOriginHook', 'installGameMessageAddOriginHook', 'installGameInterpreterMessageOriginHook', 'installGamePlayerTransferForesightHook', 'installGameMessageClearHook', 'installOrchestratorSubscription', 'getWindowId', 'updateItem', 'recordDecision', 'recordRenderAccepted', 'recordRenderDeferred', 'recordRenderRejected', 'backgroundItem', 'retireItem', 'warn'].map((name) => [name, callScope(name)]));
+        const { globalScope, diag, adapterContract, surfaceOwnership } = scope;
+        const { installGameInterpreterExecutionContextHook, installGameInterpreterChildOriginHook, installGameMessageAddOriginHook, installGameInterpreterMessageOriginHook, installGamePlayerTransferForesightHook } = scope.controllerFacades.foresightHooks;
+        const { installGameMessageClearHook } = scope.controllerFacades.clear;
+        const { installOrchestratorSubscription, getWindowId, updateItem, recordDecision, recordRenderAccepted, recordRenderDeferred, recordRenderRejected, backgroundItem, retireItem } = scope.controllerFacades.records;
+        const { warn } = scope.controllerFacades.render;
+        const { discoverAndHookMessageWindowCtors, installProcessCharacterFallback, installProcessCompleteMessage, getMessageStartCoordinates } = scope.controllerFacades.session;
 
         /**
          * Install all Window_Message and Game_Message wrappers.
@@ -128,8 +131,8 @@
                 if (windowInstance.contents) {
                     windowInstance.contents._trHasDedicatedTextHook = true;
                     windowInstance.contents._trMessageContents = true;
-                    if (contentsOwners && typeof contentsOwners.set === 'function') {
-                        contentsOwners.set(windowInstance.contents, windowInstance);
+                    if (surfaceOwnership && typeof surfaceOwnership.rememberContentsOwner === 'function') {
+                        surfaceOwnership.rememberContentsOwner(windowInstance.contents, windowInstance);
                     }
                     claimMessageContentsSurface(windowInstance);
                 }
@@ -199,8 +202,9 @@
 
             let startX = hasNumber(overrides.x) ? overrides.x : undefined;
             let startY = hasNumber(overrides.y) ? overrides.y : undefined;
-            if (!hasNumber(startX) && hasNumber(windowInstance._trMsgStartX)) startX = windowInstance._trMsgStartX;
-            if (!hasNumber(startY) && hasNumber(windowInstance._trMsgStartY)) startY = windowInstance._trMsgStartY;
+            const messageStart = getMessageStartCoordinates(windowInstance);
+            if (!hasNumber(startX) && hasNumber(messageStart.x)) startX = messageStart.x;
+            if (!hasNumber(startY) && hasNumber(messageStart.y)) startY = messageStart.y;
 
             try {
                 const state = windowInstance._textState;

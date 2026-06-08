@@ -108,6 +108,7 @@
                     enabled: false,
                     appendRecord: async () => {},
                     loadAll: async () => [],
+                    flush: async () => {},
                     ensureLaunchPrune: async () => {},
                     getMaxMegabytes: () => Number(diskCacheSettings.maxMegabytes) || 0,
                 };
@@ -158,11 +159,17 @@
                 return `${diskCache.enabled ? 'enabled' : 'disabled'}${diskCache.enabled ? ` (${retention})` : ''}`;
             }
 
+            async function flushDiskCache() {
+                if (!diskCache.enabled || typeof diskCache.flush !== 'function') return;
+                await diskCache.flush();
+            }
+
             return {
                 diskCache,
                 diskCacheSettings,
                 pathContext,
                 hydrateCache,
+                flushDiskCache,
                 describeDiskCache,
                 translationCache,
                 translationService,

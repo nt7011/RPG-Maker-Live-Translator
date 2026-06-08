@@ -60,6 +60,55 @@
         let selectionCache = null;
         let selectionExpiresAt = 0;
         let selectionPromise = null;
+        const apiStatus = {
+            apiResponding: false,
+            modelCatalogAt: 0,
+            modelCatalogError: '',
+            modelCount: 0,
+            loadedLlmInstanceCount: 0,
+            modelSelectionReady: false,
+            modelSelectionError: '',
+            statusUpdatedAt: 0,
+        };
+
+        function formatProviderError(error) {
+            return error && error.message ? String(error.message) : String(error || '');
+        }
+
+        function rememberModelCatalogSuccess(models) {
+            const list = Array.isArray(models) ? models : [];
+            const loadedLlmInstances = typeof protocol.getLoadedLlmInstances === 'function'
+                ? protocol.getLoadedLlmInstances(list)
+                : [];
+            apiStatus.apiResponding = true;
+            apiStatus.modelCatalogAt = Date.now();
+            apiStatus.modelCatalogError = '';
+            apiStatus.modelCount = list.length;
+            apiStatus.loadedLlmInstanceCount = loadedLlmInstances.length;
+            apiStatus.statusUpdatedAt = apiStatus.modelCatalogAt;
+        }
+
+        function rememberModelCatalogError(error) {
+            apiStatus.apiResponding = false;
+            apiStatus.modelCatalogError = formatProviderError(error);
+            apiStatus.modelSelectionReady = false;
+            apiStatus.modelSelectionError = '';
+            apiStatus.modelCount = 0;
+            apiStatus.loadedLlmInstanceCount = 0;
+            apiStatus.statusUpdatedAt = Date.now();
+        }
+
+        function rememberModelSelectionSuccess() {
+            apiStatus.modelSelectionReady = true;
+            apiStatus.modelSelectionError = '';
+            apiStatus.statusUpdatedAt = Date.now();
+        }
+
+        function rememberModelSelectionError(error) {
+            apiStatus.modelSelectionReady = false;
+            apiStatus.modelSelectionError = formatProviderError(error);
+            apiStatus.statusUpdatedAt = Date.now();
+        }
 
         async function requestLocalModelCatalog(requestOptions = {}) {
             const linked = createLinkedAbort({
@@ -78,9 +127,11 @@
                 if (!data || !Array.isArray(data.models)) {
                     throw new Error('Local LLM models response missing required "models" array.');
                 }
+                rememberModelCatalogSuccess(data.models);
                 return data.models;
             } catch (error) {
                 const converted = coerceFetchError(error, linked, 'Local LLM model list request failed');
+                rememberModelCatalogError(converted);
                 throw converted;
             } finally {
                 linked.cleanup();
@@ -98,9 +149,17 @@
 
             selectionPromise = requestLocalModelCatalog(requestOptions)
                 .then((models) => {
-                    const selection = selectLocalChatModel(models, cfg);
+                    let selection = null;
+                    try {
+                        selection = selectLocalChatModel(models, cfg);
+                    } catch (error) {
+                        invalidateModelSelection();
+                        rememberModelSelectionError(error);
+                        throw error;
+                    }
                     selectionCache = selection;
                     selectionExpiresAt = Date.now() + cfg.model_catalog_ttl_ms;
+                    rememberModelSelectionSuccess();
                     logger.debug(`[Local LLM] Selected ${selection.requestedModel}; parallel capacity ${selection.capacity}.`);
                     return selection;
                 })
@@ -113,6 +172,34 @@
         function invalidateModelSelection() {
             selectionCache = null;
             selectionExpiresAt = 0;
+        }
+
+        function getLocalProviderStatus() {
+            const selection = selectionCache && typeof selectionCache === 'object'
+                ? selectionCache
+                : null;
+            return {
+                kind: 'local',
+                apiResponding: apiStatus.apiResponding === true,
+                modelCatalogAt: apiStatus.modelCatalogAt,
+                modelCatalogError: apiStatus.modelCatalogError,
+                modelCount: apiStatus.modelCount,
+                loadedLlmInstanceCount: apiStatus.loadedLlmInstanceCount,
+                modelSelectionReady: apiStatus.modelSelectionReady === true,
+                modelSelectionError: apiStatus.modelSelectionError,
+                statusUpdatedAt: apiStatus.statusUpdatedAt,
+                modelKey: selection ? selection.modelKey || '' : '',
+                modelInstanceId: selection ? selection.expectedInstanceId || selection.requestedModel || '' : '',
+                modelAuthor: selection ? selection.modelAuthor || '' : '',
+                modelName: selection ? selection.modelName || '' : '',
+                quantization: selection ? selection.quantization || '' : '',
+                selectedVariant: selection ? selection.selectedVariant || '' : '',
+                capacity: selection ? positiveInteger(selection.capacity, 0) : 0,
+                capacityVerified: !!(selection && selection.capacityVerified === true),
+                selectionCached: !!selection,
+                selectionExpiresAt: selection ? selectionExpiresAt : 0,
+                selectionRefreshing: !!selectionPromise,
+            };
         }
 
         async function requestLocalChat(body, requestOptions = {}) {
@@ -282,6 +369,7 @@
                 return translateOneLocal(text, request);
             },
             invalidateModelSelection,
+            getStatus: getLocalProviderStatus,
             requestLocalModelCatalog,
             resolveLocalChatModelSelection,
         };

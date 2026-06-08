@@ -121,7 +121,7 @@ function getTextRecordTranslationRailInfo(item) {
         : fallback.priority;
     const stream = job ? job.stream === true : fallback.stream === true;
     const railState = getTextRecordTranslationRailState(item, job);
-    const policy = getTextRecordPolicyDiagnostics(item);
+    const policy = getTextRecordRuntimePolicyDiagnostics(item);
     return {
         state: railState,
         label: getTranslationRailLabel(railState, priority, stream),
@@ -271,7 +271,7 @@ function getTranslationRailTitle(railState, priority, stream, job, policy = null
 }
 
 function formatPolicyRailTitle(policy) {
-    const source = getTextRecordPolicyDiagnostics({ policy });
+    const source = getTextRecordRuntimePolicyDiagnostics({ policy });
     const priority = source.priority || {};
     const lifecycle = source.lifecycle || {};
     const parts = [];
@@ -293,13 +293,14 @@ function formatTranslationRailState(railState) {
     return 'not requested';
 }
 
-function createDiagnosticJobPill(job, mode, detailKey) {
+function createDiagnosticJobPill(job, mode, detailKey, policySnapshot = refreshGuiPolicySnapshot()) {
     const button = document.createElement('button');
-    const detailEnabled = isDiagnosticsDetailViewEnabled();
+    const jobPolicy = getGuiDiagnosticJobPolicy(policySnapshot);
+    const detailEnabled = jobPolicy.detailView;
     button.type = 'button';
     button.className = `diagnostic-job-pill diagnostic-job-${normalizeDiagnosticStatusClass(job.status || mode)}`;
-    if (detailEnabled && state.diagnosticDetailKey === detailKey) button.className += ' diagnostic-job-active';
-    button.setAttribute('aria-expanded', detailEnabled && state.diagnosticDetailKey === detailKey ? 'true' : 'false');
+    if (detailEnabled && jobPolicy.selectedDetailKey === detailKey) button.className += ' diagnostic-job-active';
+    button.setAttribute('aria-expanded', detailEnabled && jobPolicy.selectedDetailKey === detailKey ? 'true' : 'false');
     if (detailEnabled) {
         button.addEventListener('click', () => toggleDiagnosticJobDetail(detailKey));
     } else {
@@ -307,10 +308,7 @@ function createDiagnosticJobPill(job, mode, detailKey) {
         button.title = 'Detail view disabled in settings.json';
     }
 
-    const text = document.createElement('span');
-    text.className = 'diagnostic-job-text';
-    text.textContent = job.textPreview || '-';
-    button.appendChild(text);
+    button.appendChild(createTextElement('span', 'diagnostic-job-text', job.textPreview || '-'));
 
     button.appendChild(createDiagnosticPillMeta(`P${formatNumber(job.effectivePriority || 0)}`));
     button.appendChild(createDiagnosticPillMeta(job.status || mode));
@@ -320,10 +318,7 @@ function createDiagnosticJobPill(job, mode, detailKey) {
 }
 
 function createDiagnosticPillMeta(value) {
-    const meta = document.createElement('span');
-    meta.className = 'diagnostic-job-meta';
-    meta.textContent = String(value || '-');
-    return meta;
+    return createTextElement('span', 'diagnostic-job-meta', String(value || '-'));
 }
 
 function createDiagnosticJobExpanded(job, mode, detailKey) {
@@ -333,14 +328,14 @@ function createDiagnosticJobExpanded(job, mode, detailKey) {
 
     const header = document.createElement('div');
     header.className = 'diagnostic-job-expanded-header';
-    const title = document.createElement('span');
-    title.className = 'diagnostic-job-expanded-title';
-    title.textContent = `${job.id || '-'} | ${job.hook || '-'} | ${job.status || mode}`;
-    header.appendChild(title);
+    header.appendChild(createTextElement(
+        'span',
+        'diagnostic-job-expanded-title',
+        `${job.id || '-'} | ${job.hook || '-'} | ${job.status || mode}`
+    ));
     expanded.appendChild(header);
 
-    const grid = document.createElement('div');
-    grid.className = 'text-meta-grid';
+    const grid = createMetadataGrid();
     appendMeta(grid, 'Priority', formatPriority(job));
     appendMeta(grid, 'Status', job.status || mode);
     appendMeta(grid, 'Hook', job.hook || '-');
@@ -360,52 +355,30 @@ function createDiagnosticJobExpanded(job, mode, detailKey) {
 }
 
 function createDiagnosticHistory(history) {
-    const wrap = document.createElement('div');
-    wrap.className = 'history-list';
-    const title = document.createElement('div');
-    title.className = 'history-title';
-    title.textContent = 'History';
-    wrap.appendChild(title);
+    const wrap = createHistoryContainer('History');
 
     const list = Array.isArray(history) ? history : [];
     if (!list.length) {
-        const empty = document.createElement('div');
-        empty.className = 'history-empty';
-        empty.textContent = 'No scheduler history recorded.';
-        wrap.appendChild(empty);
+        wrap.appendChild(createHistoryEmpty('No scheduler history recorded.'));
         return wrap;
     }
 
     list.forEach((event) => {
-        const row = document.createElement('div');
-        row.className = 'history-row';
-
-        const time = document.createElement('span');
-        time.className = 'history-time';
-        time.textContent = event.at ? formatTime(event.at) : '-';
-        row.appendChild(time);
-
-        const body = document.createElement('div');
-        body.className = 'history-body';
-        const label = document.createElement('strong');
-        label.textContent = event.type || 'event';
-        body.appendChild(label);
         const detailsText = formatDiagnosticEventDetails(event);
-        if (detailsText && detailsText !== '-') {
-            const details = document.createElement('code');
-            details.textContent = detailsText;
-            body.appendChild(details);
-        }
-        row.appendChild(body);
-        wrap.appendChild(row);
+        wrap.appendChild(createHistoryRow({
+            timeText: event.at ? formatTime(event.at) : '-',
+            labelText: event.type || 'event',
+            detailsText: detailsText && detailsText !== '-' ? detailsText : '',
+        }));
     });
     return wrap;
 }
 
 function toggleDiagnosticJobDetail(detailKey) {
-    if (!detailKey || !isDiagnosticsDetailViewEnabled()) return;
+    const policySnapshot = refreshGuiPolicySnapshot();
+    if (!detailKey || !getGuiDiagnosticJobPolicy(policySnapshot).detailView) return;
     state.diagnosticDetailKey = state.diagnosticDetailKey === detailKey ? '' : detailKey;
-    renderDiagnosticsPanel();
+    renderDiagnosticsPanel(refreshGuiPolicySnapshot());
 }
 
 function getDiagnosticJobDetailKey(mode, job) {

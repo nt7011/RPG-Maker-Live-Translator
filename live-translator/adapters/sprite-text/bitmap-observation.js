@@ -12,22 +12,25 @@
     }
 
     function createController(scope = {}) {
-        const callScope = (name) => (...args) => scope[name](...args);
+        const renderTransaction = scope.renderTransaction;
         const {
             activateBitmapTextInterest,
-            computeFontSignature,
             deactivateBitmapTextInterest,
             ensureBitmapState,
-            finiteNumber,
             getBitmapState,
-            hasHookInChain,
-            install,
-            invalidateBitmapOverlayCache,
-            isAdapterContractFailure,
-            isBitmapOwned,
             isOverlayBitmap,
             isWindowOwnedBitmap,
-            markBitmapOwnersDirty,
+            refreshBitmapTextInterest,
+            shouldObserveBitmapMutation,
+        } = scope.controllerFacades.state;
+        const { hasHookInChain } = scope.controllerFacades.frame;
+        const { install } = scope.controllerFacades.install;
+        const { invalidateBitmapOverlayCache } = scope.controllerFacades.overlayBitmap;
+        const { isBitmapOwned, markBitmapOwnersDirty, retireBitmapOwners } = scope.controllerFacades.bitmapOwnership;
+        const {
+            computeFontSignature,
+            finiteNumber,
+            isAdapterContractFailure,
             measureTextWidth,
             normalizeCanvasTextAlign,
             positiveNumber,
@@ -35,41 +38,10 @@
             rectanglesOverlap,
             rectFromDimensions,
             rectHasArea,
-            refreshBitmapTextInterest,
-            retireBitmapOwners,
             sanitizeVisibleText,
-            shouldObserveBitmapMutation,
             stringify,
             warn,
-        } = Object.fromEntries([
-            'activateBitmapTextInterest',
-            'computeFontSignature',
-            'deactivateBitmapTextInterest',
-            'ensureBitmapState',
-            'finiteNumber',
-            'getBitmapState',
-            'hasHookInChain',
-            'install',
-            'invalidateBitmapOverlayCache',
-            'isAdapterContractFailure',
-            'isBitmapOwned',
-            'isOverlayBitmap',
-            'isWindowOwnedBitmap',
-            'markBitmapOwnersDirty',
-            'measureTextWidth',
-            'normalizeCanvasTextAlign',
-            'positiveNumber',
-            'pruneArray',
-            'rectanglesOverlap',
-            'rectFromDimensions',
-            'rectHasArea',
-            'refreshBitmapTextInterest',
-            'retireBitmapOwners',
-            'sanitizeVisibleText',
-            'shouldObserveBitmapMutation',
-            'stringify',
-            'warn',
-        ].map((name) => [name, callScope(name)]));
+        } = scope.controllerFacades.utils;
 
         /**
          * Record a Bitmap.drawText observation offered by bitmap-text-adapter.
@@ -111,7 +83,7 @@
          */
         function getBitmapDrawRecordStatus(bitmap, payload) {
             if (!bitmap || isOverlayBitmap(bitmap)) return 'ignored';
-            if (bitmap._trBitmapReplayDepth > 0 || bitmap._trBitmapSkipDepth > 0 || bitmap._trSpriteTextReplayDepth > 0) return 'ignored';
+            if (scope.bitmapServices.getRenderGuardReason(bitmap)) return 'ignored';
             if (isWindowOwnedBitmap(bitmap)) return 'ignored';
             if (payload && payload.owner) return 'ignored';
             return isBitmapOwned(bitmap) ? 'claimed' : 'deferred';
@@ -155,11 +127,17 @@
                 width: visibleWidth,
                 bounds: rectFromDimensions(boundsX, y, visibleWidth, Math.max(1, lineHeight)),
                 drawState,
+                drawBoundary: cloneDrawBoundary(payload && payload.drawBoundary),
                 backgroundPatch: cloneBackgroundPatch(payload && payload.backgroundPatch),
                 fontSignature: computeFontSignature(drawState, bitmap),
                 drawOrder: state.order,
                 revision: state.revision,
             };
+        }
+
+        function cloneDrawBoundary(boundary) {
+            if (!boundary || typeof boundary !== 'object') return null;
+            return renderTransaction.createSourceDrawBoundary(boundary);
         }
 
         function resolveAlignedTextBoundsX(x, maxWidth, visibleWidth, align) {

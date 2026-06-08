@@ -80,12 +80,15 @@
 
         function createFallbackSnapshotPolicy(optionsArg = {}) {
             const guiState = globalScope.LiveTranslatorGuiState;
-            const guiActive = !guiState || typeof guiState !== 'object'
-                ? true
-                : guiState.translatorOpen === true;
             const diagnostics = settings.diagnostics && typeof settings.diagnostics === 'object'
                 ? settings.diagnostics
                 : null;
+            const guiActive = (optionsArg.forceDiagnosticsSurface === true
+                || !guiState
+                || typeof guiState !== 'object')
+                ? true
+                : guiState.translatorOpen === true
+                    || !!(diagnostics && diagnostics.captureWhenGuiClosed === true);
             const level = resolveFallbackLevel(diagnostics, optionsArg, guiActive);
             const surface = guiActive && level !== 'none';
             const detailView = surface && level === 'full';
@@ -106,7 +109,9 @@
         }
 
         function resolveFallbackLevel(diagnostics, optionsArg = {}, guiActive = true) {
-            if (!guiActive || optionsArg.surface === false || optionsArg.enabled === false) return 'none';
+            if ((!guiActive && optionsArg.forceDiagnosticsSurface !== true)
+                || optionsArg.surface === false
+                || optionsArg.enabled === false) return 'none';
             const requested = normalizeFallbackLevel(optionsArg.mode || optionsArg.level || optionsArg.diagnosticsMode)
                 || normalizeFallbackLevel(diagnostics && (diagnostics.mode || diagnostics.level));
             let level = requested
@@ -166,6 +171,38 @@
         function formatError(error) {
             if (!error) return '';
             return error.message ? String(error.message) : String(error);
+        }
+
+        function getProviderStatus() {
+            if (!provider || typeof provider.getStatus !== 'function') return {};
+            try {
+                const status = provider.getStatus();
+                return status && typeof status === 'object' ? sanitize(status, 2) : {};
+            } catch (error) {
+                return { error: formatError(error) };
+            }
+        }
+
+        function readStatusString(status, key) {
+            const value = status && Object.prototype.hasOwnProperty.call(status, key)
+                ? status[key]
+                : '';
+            return typeof value === 'string' && value.trim() ? value.trim() : '';
+        }
+
+        function readStatusInteger(status, key) {
+            const value = status && Object.prototype.hasOwnProperty.call(status, key)
+                ? Number(status[key])
+                : 0;
+            return Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0;
+        }
+
+        function isProviderCapacityVerified(state, status) {
+            if (state.providerCapacityVerified !== true) return false;
+            if (status && Object.prototype.hasOwnProperty.call(status, 'capacityVerified')) {
+                return status.capacityVerified === true;
+            }
+            return true;
         }
 
         function record(type, details = {}) {
@@ -466,13 +503,29 @@
             const activeCount = Number(state.activeCount) || 0;
             const completedSize = Number(state.completedSize) || 0;
             const reservedLanes = Array.isArray(state.reservedPriorityLanes) ? state.reservedPriorityLanes : [];
+            const providerStatus = getProviderStatus();
 
             return {
                 updatedAt: Date.now(),
                 provider: {
                     kind: provider && provider.kind ? String(provider.kind) : 'unknown',
                     cacheOnly: isCacheOnlyProvider,
+                    apiResponding: providerStatus.apiResponding === true,
+                    modelCatalogAt: readStatusInteger(providerStatus, 'modelCatalogAt'),
+                    modelCatalogError: readStatusString(providerStatus, 'modelCatalogError'),
+                    modelCount: readStatusInteger(providerStatus, 'modelCount'),
+                    loadedLlmInstanceCount: readStatusInteger(providerStatus, 'loadedLlmInstanceCount'),
+                    modelSelectionReady: providerStatus.modelSelectionReady === true,
+                    modelSelectionError: readStatusString(providerStatus, 'modelSelectionError'),
+                    statusUpdatedAt: readStatusInteger(providerStatus, 'statusUpdatedAt'),
+                    modelKey: readStatusString(providerStatus, 'modelKey'),
+                    modelInstanceId: readStatusString(providerStatus, 'modelInstanceId'),
+                    modelAuthor: readStatusString(providerStatus, 'modelAuthor'),
+                    modelName: readStatusString(providerStatus, 'modelName'),
+                    quantization: readStatusString(providerStatus, 'quantization'),
+                    selectedVariant: readStatusString(providerStatus, 'selectedVariant'),
                     capacity: providerCapacity,
+                    capacityVerified: isProviderCapacityVerified(state, providerStatus),
                     running: activeCount,
                     available: Math.max(0, providerCapacity - activeCount),
                     refreshingCapacity: state.capacityRefreshing === true,

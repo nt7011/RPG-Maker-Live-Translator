@@ -12,44 +12,20 @@
     }
 
     function createController(scope = {}) {
-        const callScope = (name) => (...args) => scope[name](...args);
+        const { getSpriteObservationStatus, hasRenderedTranslation } = scope.controllerFacades.entries;
+        const { getParentRunMap, isActiveParentRunSlot, removeParentRun } = scope.controllerFacades.parentRunLifecycle;
+        const { renderParentRunOverlay } = scope.controllerFacades.parentRunOverlay;
+        const { createOrUpdateParentRun, observeRunWhenVisibleOrActive, requestRunTranslation } = scope.controllerFacades.parentRunRecords;
+        const { updateRunVisibility } = scope.controllerFacades.visibility;
         const {
             bucketCount,
-            createOrUpdateParentRun,
             finiteNumber,
-            getParentRunMap,
-            getSpriteObservationStatus,
             glyphBounds,
-            hasRenderedTranslation,
-            isActiveParentRunSlot,
-            observeRunWhenVisibleOrActive,
             rectCenterY,
             rectFromDimensions,
-            removeParentRun,
-            renderParentRunOverlay,
-            requestRunTranslation,
             textUnitCount,
-            updateRunVisibility,
             verticalOverlapAmount,
-        } = Object.fromEntries([
-            'bucketCount',
-            'createOrUpdateParentRun',
-            'finiteNumber',
-            'getParentRunMap',
-            'getSpriteObservationStatus',
-            'glyphBounds',
-            'hasRenderedTranslation',
-            'isActiveParentRunSlot',
-            'observeRunWhenVisibleOrActive',
-            'rectCenterY',
-            'rectFromDimensions',
-            'removeParentRun',
-            'renderParentRunOverlay',
-            'requestRunTranslation',
-            'textUnitCount',
-            'updateRunVisibility',
-            'verticalOverlapAmount',
-        ].map((name) => [name, callScope(name)]));
+        } = scope.controllerFacades.utils;
 
         /**
          * Create a parent-run candidate from a single-glyph sprite entry.

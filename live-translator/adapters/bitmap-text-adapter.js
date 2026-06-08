@@ -19,7 +19,11 @@
         throw new Error('[LiveTranslator] runtime module require is unavailable before adapters/bitmap-text-adapter.js.');
     }
 
+    const measuredBounds = requireRuntimeModule('runtime.measuredBounds');
+    const operationDiagnostics = requireRuntimeModule('runtime.operationDiagnostics');
+    const renderTransaction = requireRuntimeModule('runtime.renderTransaction');
     const controllers = {
+        controllerFacades: requireRuntimeModule('adapters.bitmapText.controllerFacades'),
         install: requireRuntimeModule('adapters.bitmapTextInstall'),
         aggregation: requireRuntimeModule('adapters.bitmapTextAggregation'),
         records: requireRuntimeModule('adapters.bitmapTextRecords'),
@@ -61,16 +65,9 @@
             diag: typeof context.diag === 'function' ? context.diag : () => {},
             diagHot: typeof context.dbg === 'function' ? context.dbg : (typeof context.diag === 'function' ? context.diag : () => {}),
             preview: typeof context.preview === 'function' ? context.preview : (text) => String(text ?? ''),
+            textCodec: requireTextCodec(context.textCodec, ADAPTER_LABEL),
             stripControls: typeof context.stripControls === 'function' ? context.stripControls : (text) => String(text ?? ''),
-            encodeText: typeof context.encodeText === 'function'
-                ? context.encodeText
-                : (text) => ({
-                    originalText: String(text ?? ''),
-                    visibleText: String(text ?? '').trim(),
-                    translationText: String(text ?? ''),
-                    normalizedText: String(text ?? '').trim(),
-                    tokens: [],
-                }),
+            createTextSource: requireTextSourceHelper(context.createTextSource, ADAPTER_LABEL),
             restoreText: typeof context.restoreText === 'function' ? context.restoreText : (translated) => translated,
             captureBitmapDrawState: typeof context.captureBitmapDrawState === 'function'
                 ? context.captureBitmapDrawState
@@ -82,13 +79,26 @@
             adapterContract: context.adapterContract || null,
             drawCaptureTrace: context.drawCaptureTrace || null,
             contentsOwners: context.contentsOwners || null,
+            surfaceOwnership: context.surfaceOwnership || null,
             windowRegistry: context.windowRegistry || null,
             windowLifecycle: context.windowLifecycle || null,
             getWindowTextHelpers: typeof context.getWindowTextHelpers === 'function'
                 ? context.getWindowTextHelpers
                 : null,
-            settings: context.settings && typeof context.settings === 'object' ? context.settings : {},
-            bitmapServices: normalizeBitmapServices(context.bitmapServices),
+            bitmapServices: normalizeBitmapServices(context.bitmapServices, {
+                perf,
+                logger: context.logger || console,
+            }),
+            reportAdapterError: operationDiagnostics.createOperationErrorReporter({
+                component: 'BitmapText',
+                operationLabel: 'Adapter operation',
+                metricBase: 'bitmapText.error',
+                domain: 'bitmap',
+                perf,
+                logger: context.logger || console,
+            }),
+            measuredBounds,
+            renderTransaction,
             PER_CHAR_MARK: typeof context.PER_CHAR_MARK === 'string' ? context.PER_CHAR_MARK : '',
             perCharPattern: null,
             perf,
@@ -99,10 +109,11 @@
             maxNativeTextInkRects: 160,
             nextBitmapId: 0,
             nextEntryId: 0,
-            fallbackFlushTimer: null,
+            nextNormalCharacterRunId: 0,
             frameFlushInstalled: false,
             smallTextDepth: 0,
             normalCharacterDepth: 0,
+            controllerFacades: null,
             ADAPTER_ID, ADAPTER_LABEL, SURFACE_TYPE, RENDER_STRATEGY, BITMAP_PRIORITY,
             DRAW_WRAPPER_TOKEN, MUTATION_WRAPPER_TOKEN, FRAME_FLUSH_TOKEN, SMALL_TEXT_TOKEN,
             NORMAL_CHAR_TOKEN, MAX_FRAGMENTS, MAX_REPLAY_OPS, GAP_MIN, GAP_RATIO,
@@ -141,7 +152,7 @@
             exposeAdapterApi: 'install',
             installBitmapDrawWrappers: 'install',
             installBitmapDrawWrapper: 'install',
-            scheduleBitmapDrawWrapperRetry: 'install',
+            installDeferredBitmapDrawWrapper: 'install',
             handleBitmapDrawText: 'install',
             shouldBypassBitmapDraw: 'install',
             describeBitmapDrawBypassReason: 'install',
@@ -210,6 +221,7 @@
             installSmallTextMarker: 'frameMarkers',
             installNormalCharacterMarker: 'frameMarkers',
             isSmallTextDrawActive: 'frameMarkers',
+            isNormalCharacterDrawActive: 'frameMarkers',
             isSmallTextScratchBitmap: 'frameMarkers',
             ensureBitmapState: 'replay',
             getBitmapState: 'replay',
@@ -237,10 +249,8 @@
             bitmapTraceDetails: 'textUtils',
             cloneTraceRect: 'textUtils',
             roundTraceNumber: 'textUtils',
-            getBitmapFallbackMode: 'textUtils',
-            isBitmapFallbackCaptureEnabled: 'textUtils',
-            isBitmapFallbackRedrawEnabled: 'textUtils',
             readBitmapOwner: 'textUtils',
+            resolveBitmapWindowSurface: 'textUtils',
             hasDedicatedOwnerHook: 'textUtils',
             windowEntryBelongsToBitmap: 'textUtils',
             deriveWindowEntryRect: 'textUtils',
@@ -279,10 +289,26 @@
             if (typeof method !== 'function') throw new Error('[BitmapText] Missing controller method: ' + methodName);
             return method(...args);
         }
+        scope.controllerFacades = controllers.controllerFacades.create({ callController });
         Object.keys(methodControllers).forEach((methodName) => {
             scope[methodName] = (...args) => callController(methodName, ...args);
         });
         return { install: scope.install };
+    }
+
+    function requireTextSourceHelper(value, label) {
+        if (typeof value === 'function') return value;
+        throw new Error(`[${label}] createTextSource helper is required.`);
+    }
+
+    function requireTextCodec(value, label) {
+        if (value
+            && typeof value.createPlainTextSource === 'function'
+            && typeof value.sanitizeVisibleText === 'function'
+            && typeof value.sanitizeDrawTextOutput === 'function') {
+            return value;
+        }
+        throw new Error(`[${label}] textCodec service is required.`);
     }
 
     function normalizePerfOptions(options) {
@@ -292,97 +318,36 @@
     }
 
     function createBitmapTextRegion(scope, bitmap, text, x, y, maxWidth, lineHeight, align) {
-        if (!bitmap) return null;
         const visibleText = typeof scope.sanitizeVisibleText === 'function'
             ? scope.sanitizeVisibleText(text)
             : String(text ?? '').trim();
-        if (!visibleText) return null;
-        const sourceWidth = Math.max(0, Math.ceil(Number(bitmap.width) || 0));
-        const sourceHeight = Math.max(0, Math.ceil(Number(bitmap.height) || 0));
-        if (!sourceWidth || !sourceHeight) return null;
-
-        const measuredWidth = measureNativeBitmapTextWidth(bitmap, text);
-        const drawWidth = resolveNativeBitmapTextWidth(measuredWidth, maxWidth);
-        if (!drawWidth) return null;
-
-        const outlineWidth = Number(bitmap && bitmap.outlineWidth);
-        const outline = Number.isFinite(outlineWidth)
-            ? Math.max(0, outlineWidth + 2)
-            : 2;
-        const fontSize = positiveNativeNumber(bitmap && bitmap.fontSize, 24);
-        const textX = resolveAlignedNativeTextX(x, maxWidth, drawWidth, align);
-        const textY = finiteNativeNumber(y, 0);
-        const height = positiveNativeNumber(lineHeight, fontSize, 24);
-        const horizontalPadding = Math.max(outline, Math.ceil(fontSize * 0.25));
-        // Bitmap.drawText positions glyphs around a computed baseline, not inside
-        // the requested y..y+lineHeight box. Short line heights can put native ink
-        // well above y-outline, so the backdrop/source patch must cover the font
-        // ink envelope rather than only the API rectangle.
-        const baseline = textY + height / 2 + fontSize * 0.35;
-        const inkTop = Math.min(textY, baseline - fontSize * 1.4);
-        const inkBottom = Math.max(textY + height, baseline + fontSize * 0.45);
-        const x1 = Math.max(0, Math.floor(textX - horizontalPadding));
-        const y1 = Math.max(0, Math.floor(inkTop - outline));
-        const x2 = Math.min(sourceWidth, Math.ceil(textX + drawWidth + horizontalPadding));
-        const y2 = Math.min(sourceHeight, Math.ceil(inkBottom + outline));
-        if (x2 <= x1 || y2 <= y1) return null;
-        return { x1, y1, x2, y2 };
+        return measuredBounds.createBitmapTextInkRegion({ bitmap, text, visibleText, x, y, maxWidth, lineHeight, align });
     }
 
     function createBitmapTextBackdropRegion(scope, bitmap, text, x, y, maxWidth, lineHeight) {
-        if (!bitmap) return null;
         const visibleText = typeof scope.sanitizeVisibleText === 'function'
             ? scope.sanitizeVisibleText(text)
             : String(text ?? '').trim();
-        if (!visibleText) return null;
-        const sourceWidth = Math.max(0, Math.ceil(Number(bitmap.width) || 0));
-        const sourceHeight = Math.max(0, Math.ceil(Number(bitmap.height) || 0));
-        if (!sourceWidth || !sourceHeight) return null;
-
-        const measuredWidth = measureNativeBitmapTextWidth(bitmap, text);
-        const drawWidth = resolveNativeBitmapBackdropWidth(measuredWidth, maxWidth);
-        if (!drawWidth) return null;
-
-        const outlineWidth = Number(bitmap && bitmap.outlineWidth);
-        const outline = Number.isFinite(outlineWidth)
-            ? Math.max(1, outlineWidth + 1)
-            : 2;
-        const fontSize = positiveNativeNumber(bitmap && bitmap.fontSize, lineHeight, 24);
-        const height = positiveNativeNumber(lineHeight, fontSize, 24);
-        const topPad = Math.min(outline, Math.ceil(fontSize * 0.08));
-        const bottomPad = Math.max(outline, Math.ceil(fontSize * 0.25));
-        const x1 = Math.max(0, Math.floor(finiteNativeNumber(x, 0) - outline));
-        const y1 = Math.max(0, Math.floor(finiteNativeNumber(y, 0) - topPad));
-        const width = Math.ceil(drawWidth + outline * 2);
-        const heightWithPadding = Math.ceil(height + topPad + bottomPad);
-        const clippedWidth = Math.min(sourceWidth, width, Math.max(0, sourceWidth - x1));
-        const clippedHeight = Math.min(sourceHeight, heightWithPadding, Math.max(0, sourceHeight - y1));
-        if (clippedWidth <= 0 || clippedHeight <= 0) return null;
-        return {
-            x1,
-            y1,
-            x2: x1 + clippedWidth,
-            y2: y1 + clippedHeight,
-        };
+        return measuredBounds.createBitmapTextBackdropRegion({ bitmap, text, visibleText, x, y, maxWidth, lineHeight });
     }
 
     function isBitmapTextBackdropTrusted(scope, bitmap, region) {
-        if (!bitmap || !region || !isNativeRect(region)) return false;
+        if (!bitmap || !region || !measuredBounds.isRectWithArea(region)) return false;
         let ink = null;
         try { ink = scope.nativeTextInkByBitmap.get(bitmap) || null; } catch (_) { ink = null; }
         if (!Array.isArray(ink) || !ink.length) return true;
-        return !ink.some((rect) => nativeRectsOverlap(rect, region));
+        return !ink.some((rect) => measuredBounds.rectsOverlap(rect, region));
     }
 
     function recordBitmapNativeTextInk(scope, bitmap, region) {
-        if (!bitmap || !region || !isNativeRect(region)) return false;
+        if (!bitmap || !region || !measuredBounds.isRectWithArea(region)) return false;
         let ink = null;
         try { ink = scope.nativeTextInkByBitmap.get(bitmap) || null; } catch (_) { ink = null; }
         if (!Array.isArray(ink)) {
             ink = [];
             try { scope.nativeTextInkByBitmap.set(bitmap, ink); } catch (_) { return false; }
         }
-        ink.push(cloneNativeRect(region));
+        ink.push(measuredBounds.cloneRect(region));
         const limit = Math.max(16, Number(scope.maxNativeTextInkRects) || 160);
         if (ink.length > limit) ink.splice(0, ink.length - limit);
         return true;
@@ -405,12 +370,12 @@
             return true;
         }
         if (!shouldClearCoveredNativeTextInk(bitmap, methodName)) return false;
-        const rect = mutation && mutation.rect && isNativeRect(mutation.rect) ? mutation.rect : null;
+        const rect = mutation && mutation.rect && measuredBounds.isRectWithArea(mutation.rect) ? mutation.rect : null;
         if (!rect) return false;
         let ink = null;
         try { ink = scope.nativeTextInkByBitmap.get(bitmap) || null; } catch (_) { ink = null; }
         if (!Array.isArray(ink) || !ink.length) return false;
-        const next = ink.filter((item) => !nativeRectContains(rect, item));
+        const next = ink.filter((item) => !measuredBounds.rectContains(rect, item));
         if (next.length === ink.length) return false;
         if (next.length) {
             try { scope.nativeTextInkByBitmap.set(bitmap, next); } catch (_) {}
@@ -439,130 +404,87 @@
         return !Number.isFinite(opacity) || opacity >= 255;
     }
 
-    function measureNativeBitmapTextWidth(bitmap, text) {
-        try {
-            const measured = bitmap && typeof bitmap.measureTextWidth === 'function'
-                ? Number(bitmap.measureTextWidth(String(text ?? '')))
-                : 0;
-            if (Number.isFinite(measured) && measured > 0) return Math.ceil(measured);
-        } catch (_) {}
-        const fontSize = positiveNativeNumber(bitmap && bitmap.fontSize, 24);
-        return Math.max(1, Math.ceil(String(text ?? '').length * Math.max(6, fontSize * 0.6)));
-    }
-
-    function resolveNativeBitmapTextWidth(measuredWidth, maxWidth) {
-        const measured = Number(measuredWidth);
-        const limit = Number(maxWidth);
-        if (!Number.isFinite(measured) || measured <= 0) return 0;
-        if (Number.isFinite(limit) && limit > 0) return Math.max(1, Math.min(Math.ceil(limit), Math.ceil(measured)));
-        return Math.max(1, Math.ceil(measured));
-    }
-
-    function resolveNativeBitmapBackdropWidth(measuredWidth, maxWidth) {
-        const measured = Number(measuredWidth);
-        const limit = Number(maxWidth);
-        if (!Number.isFinite(measured) || measured <= 0) return 0;
-        if (Number.isFinite(limit) && limit > 0) return Math.max(1, Math.max(Math.ceil(limit), Math.ceil(measured)));
-        return Math.max(1, Math.ceil(measured));
-    }
-
-    function resolveAlignedNativeTextX(x, maxWidth, drawWidth, align) {
-        const originX = finiteNativeNumber(x, 0);
-        const boxWidth = positiveNativeNumber(maxWidth, drawWidth, 1);
-        const textWidth = positiveNativeNumber(drawWidth, 1);
-        if (align === 'right' || align === 'end') return originX + Math.max(0, boxWidth - textWidth);
-        if (align === 'center') return originX + Math.max(0, (boxWidth - textWidth) / 2);
-        return originX;
-    }
-
-    function finiteNativeNumber(value, fallback = 0) {
-        const numeric = Number(value);
-        return Number.isFinite(numeric) ? numeric : fallback;
-    }
-
-    function positiveNativeNumber(...values) {
-        for (const value of values) {
-            const numeric = Number(value);
-            if (Number.isFinite(numeric) && numeric > 0) return numeric;
-        }
-        return 0;
-    }
-
-    function isNativeRect(rect) {
-        return !!(rect
-            && Number.isFinite(Number(rect.x1))
-            && Number.isFinite(Number(rect.y1))
-            && Number.isFinite(Number(rect.x2))
-            && Number.isFinite(Number(rect.y2))
-            && Number(rect.x2) > Number(rect.x1)
-            && Number(rect.y2) > Number(rect.y1));
-    }
-
-    function cloneNativeRect(rect) {
-        return {
-            x1: Number(rect.x1),
-            y1: Number(rect.y1),
-            x2: Number(rect.x2),
-            y2: Number(rect.y2),
-        };
-    }
-
-    function nativeRectsOverlap(left, right) {
-        return isNativeRect(left)
-            && isNativeRect(right)
-            && left.x1 < right.x2
-            && left.x2 > right.x1
-            && left.y1 < right.y2
-            && left.y2 > right.y1;
-    }
-
-    function nativeRectContains(outer, inner) {
-        return isNativeRect(outer)
-            && isNativeRect(inner)
-            && outer.x1 <= inner.x1
-            && outer.y1 <= inner.y1
-            && outer.x2 >= inner.x2
-            && outer.y2 >= inner.y2;
-    }
-
-    function normalizeBitmapServices(services) {
+    function normalizeBitmapServices(services, diagnostics = {}) {
         const api = services && typeof services === 'object' ? services : {};
+        const onError = operationDiagnostics.createOperationErrorReporter({
+            component: 'BitmapText',
+            operationLabel: 'Bitmap service',
+            metricBase: 'bitmapServices.error',
+            perf: diagnostics.perf,
+            logger: diagnostics.logger,
+        });
         return {
             registerReplayProvider(provider) {
                 if (typeof api.registerReplayProvider !== 'function') return () => {};
-                try { return api.registerReplayProvider(provider) || (() => {}); } catch (_) { return () => {}; }
+                try { return api.registerReplayProvider(provider) || (() => {}); } catch (error) { onError('registerReplayProvider', error); return () => {}; }
             },
             registerFallbackFlush(callback) {
                 if (typeof api.registerFallbackFlush !== 'function') return () => {};
-                try { return api.registerFallbackFlush(callback) || (() => {}); } catch (_) { return () => {}; }
+                try { return api.registerFallbackFlush(callback) || (() => {}); } catch (error) { onError('registerFallbackFlush', error); return () => {}; }
             },
             registerMutationPublisher() {
                 if (typeof api.registerMutationPublisher !== 'function') return () => {};
-                try { return api.registerMutationPublisher() || (() => {}); } catch (_) { return () => {}; }
+                try { return api.registerMutationPublisher() || (() => {}); } catch (error) { onError('registerMutationPublisher', error); return () => {}; }
             },
             hasMutationInterest(bitmap) {
                 if (typeof api.hasMutationInterest !== 'function') return false;
-                try { return api.hasMutationInterest(bitmap) === true; } catch (_) { return false; }
+                try { return api.hasMutationInterest(bitmap) === true; } catch (error) { onError('hasMutationInterest', error); return false; }
+            },
+            getRenderGuardState(bitmap) {
+                if (typeof api.getRenderGuardState !== 'function') throw new Error('[BitmapText] bitmapServices.getRenderGuardState is required.');
+                return api.getRenderGuardState(bitmap);
+            },
+            getRenderGuardReason(bitmap) {
+                if (typeof api.getRenderGuardReason !== 'function') throw new Error('[BitmapText] bitmapServices.getRenderGuardReason is required.');
+                return api.getRenderGuardReason(bitmap);
+            },
+            withBitmapReplayGuard(bitmap, callback, source) {
+                if (typeof api.withBitmapReplayGuard !== 'function') throw new Error('[BitmapText] bitmapServices.withBitmapReplayGuard is required.');
+                return api.withBitmapReplayGuard(bitmap, callback, source);
+            },
+            withBitmapSkipGuard(bitmap, callback) {
+                if (typeof api.withBitmapSkipGuard !== 'function') throw new Error('[BitmapText] bitmapServices.withBitmapSkipGuard is required.');
+                return api.withBitmapSkipGuard(bitmap, callback);
+            },
+            withSpriteTextReplayGuard(bitmap, callback) {
+                if (typeof api.withSpriteTextReplayGuard !== 'function') throw new Error('[BitmapText] bitmapServices.withSpriteTextReplayGuard is required.');
+                return api.withSpriteTextReplayGuard(bitmap, callback);
+            },
+            withBitmapSkipAndSpriteReplayGuard(bitmap, callback) {
+                if (typeof api.withBitmapSkipAndSpriteReplayGuard !== 'function') throw new Error('[BitmapText] bitmapServices.withBitmapSkipAndSpriteReplayGuard is required.');
+                return api.withBitmapSkipAndSpriteReplayGuard(bitmap, callback);
+            },
+            withActiveRedrawEntry(bitmap, entry, callback) {
+                if (typeof api.withActiveRedrawEntry !== 'function') throw new Error('[BitmapText] bitmapServices.withActiveRedrawEntry is required.');
+                return api.withActiveRedrawEntry(bitmap, entry, callback);
+            },
+            getActiveRedrawEntry(bitmap) {
+                if (typeof api.getActiveRedrawEntry !== 'function') throw new Error('[BitmapText] bitmapServices.getActiveRedrawEntry is required.');
+                return api.getActiveRedrawEntry(bitmap);
+            },
+            scheduleDeferredFlush(options) {
+                if (typeof api.scheduleDeferredFlush !== 'function') throw new Error('[BitmapText] bitmapServices.scheduleDeferredFlush is required.');
+                return api.scheduleDeferredFlush(options);
             },
             publishMutation(bitmap, methodName, args) {
                 if (typeof api.publishMutation !== 'function') return;
-                try { api.publishMutation(bitmap, methodName, args); } catch (_) {}
+                try { api.publishMutation(bitmap, methodName, args); } catch (error) { onError('publishMutation', error); }
             },
             recordDraw(bitmap, input) {
                 if (typeof api.recordDraw !== 'function') return null;
-                try { return api.recordDraw(bitmap, input); } catch (_) { return null; }
+                try { return api.recordDraw(bitmap, input); } catch (error) { onError('recordDraw', error); return null; }
             },
             subscribeDrawBatches(options) {
                 if (typeof api.subscribeDrawBatches !== 'function') return () => {};
-                try { return api.subscribeDrawBatches(options) || (() => {}); } catch (_) { return () => {}; }
+                try { return api.subscribeDrawBatches(options) || (() => {}); } catch (error) { onError('subscribeDrawBatches', error); return () => {}; }
             },
             flushDrawBatches(reason, bitmap) {
                 if (typeof api.flushDrawBatches !== 'function') return 0;
-                try { return api.flushDrawBatches(reason, bitmap) || 0; } catch (_) { return 0; }
+                try { return api.flushDrawBatches(reason, bitmap) || 0; } catch (error) { onError('flushDrawBatches', error); return 0; }
             },
             hasPendingDrawBatches(bitmap) {
                 if (typeof api.hasPendingDrawBatches !== 'function') return false;
-                try { return api.hasPendingDrawBatches(bitmap) === true; } catch (_) { return false; }
+                try { return api.hasPendingDrawBatches(bitmap) === true; } catch (error) { onError('hasPendingDrawBatches', error); return false; }
             },
         };
     }
@@ -592,7 +514,8 @@
             && typeof adapterContract.hasRequiredMethods === 'function'
             && adapterContract.hasRequiredMethods([
                 'observeRecord', 'requestItemTranslation', 'cancelItemTranslation', 'retireItem',
-                'updateItem', 'recordSurfaceDraw', 'finalizeTextClaim', 'releaseTextClaim', 'subscribeRecords',
+                'updateItem', 'recordSurfaceDraw', 'finalizeTextClaim', 'releaseTextClaim',
+                'describeTextEligibility', 'subscribeRecords',
             ]));
     }
 

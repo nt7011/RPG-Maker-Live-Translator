@@ -4,8 +4,8 @@
 
 var refs = {};
 var INACTIVE_TEXT_DISPLAY_LIMIT = 100;
-var VERSION_CHECK_URL = 'https://nt7011.github.io/info/translator-version.json';
-var UPDATE_PAGE_URL = 'https://nt7011.github.io/';
+var VERSION_CHECK_URL = 'https://rmlt.pages.dev/info/available-versions.json';
+var UPDATE_PAGE_URL = 'https://rmlt.pages.dev/';
 var VERSION_CHECK_INTERVAL_MS = 2 * 60 * 60 * 1000;
 var VERSION_CHECK_TIMEOUT_MS = 8000;
 var VERSION_CHECK_MAX_BYTES = 16 * 1024;
@@ -24,11 +24,14 @@ var state = {
     gameRoot: '',
     translationCacheFile: '',
     installedVersion: '',
+    installedVersionDisplay: '',
+    installedVersionDisplaySource: '',
     latestVersion: '',
     checkUpdates: true,
     settings: null,
     settingsSource: '',
     settingsError: '',
+    settingsFoldKey: '',
     updateCheckStatus: 'loading',
     updateCheckMessage: 'Checking installation',
     updateCheckError: '',
@@ -36,12 +39,19 @@ var state = {
     activeTexts: [],
     detachedTexts: [],
     archivedTexts: [],
+    runtimeContext: null,
+    configuredPolicy: null,
+    runtimeState: null,
+    viewState: null,
+    effectivePolicy: null,
     activeTextRecordDetailKey: '',
     renderedTextRecordDetailKey: '',
     diagnosticDetailKey: '',
-    panelHealth: {
-        runtimeContext: null,
-        hookInstallation: null,
+    panelDefaultKeys: {},
+    renderedPanelKeys: {
+        status: '',
+        hooks: '',
+        textRecords: '',
     },
     hookResults: [],
     hookSummary: null,
@@ -49,10 +59,12 @@ var state = {
     diagnostics: null,
     drawCaptureTrace: null,
     foresight: null,
-    foresightVisible: true,
     foresightMessagesOnly: true,
     logLines: [],
+    themeMode: 'solarized',
     provider: '-',
+    translatorProvider: '',
+    translatorConfigError: '',
     cacheEntries: '-',
 };
 

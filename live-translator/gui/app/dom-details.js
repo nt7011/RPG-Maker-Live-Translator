@@ -2,25 +2,53 @@
 // These functions share state from gui/app/state.js and are loaded before app.js boots.
 'use strict';
 
-function setPanelAutoCollapsed(panelId, stateKey, healthy) {
+function applyFoldedPanelDefault(panelId, stateKey, open, defaultKey) {
     const panel = refs[panelId];
-    if (!panel) return;
-    const nextHealth = Boolean(healthy);
-    if (state.panelHealth[stateKey] === nextHealth) return;
-    state.panelHealth[stateKey] = nextHealth;
-    panel.open = !nextHealth;
+    if (!panel || typeof panel.open === 'undefined') return;
+    if (!state.panelDefaultKeys || typeof state.panelDefaultKeys !== 'object') {
+        state.panelDefaultKeys = {};
+    }
+    const key = String(defaultKey === undefined ? open : defaultKey);
+    if (state.panelDefaultKeys[stateKey] === key) return;
+    state.panelDefaultKeys[stateKey] = key;
+    panel.open = open === true;
+}
+
+function resetFoldedPanelDefaults() {
+    state.panelDefaultKeys = {};
+}
+
+function syncFoldedPanelDefaults(policySnapshot = getGuiPolicySnapshot()) {
+    const effectivePolicy = getGuiEffectivePolicy(policySnapshot);
+    applyFoldedPanelDefault(
+        'draw-capture-panel',
+        'drawCaptureTrace',
+        true,
+        `draw:${effectivePolicy.drawCaptureTrace.panelVisible ? 'visible' : 'hidden'}`
+    );
+    applyFoldedPanelDefault(
+        'foresight-panel',
+        'foresight',
+        true,
+        `foresight:${effectivePolicy.foresight.configuredEnabled ? 'configured' : 'disabled'}:${effectivePolicy.foresight.controlsEnabled ? 'controls' : 'no-controls'}`
+    );
+    applyFoldedPanelDefault('active-text-panel', 'activeText', true, 'active:default');
+    applyFoldedPanelDefault('detached-text-panel', 'detachedText', true, 'detached:default');
+    applyFoldedPanelDefault('archived-text-panel', 'archivedText', true, 'archived:default');
+    applyFoldedPanelDefault(
+        'diagnostics-panel',
+        'diagnostics',
+        effectivePolicy.diagnostics.detailView,
+        `diagnostics:${effectivePolicy.diagnostics.mode}`
+    );
 }
 
 function createLine(value, kind) {
-    const line = document.createElement('span');
-    line.className = `text-line ${kind}`;
-    line.textContent = String(value || '-');
-    return line;
+    return createTextElement('span', `text-line ${kind}`, String(value || '-'));
 }
 
 function createTextMetaGrid(item) {
-    const grid = document.createElement('div');
-    grid.className = 'text-meta-grid';
+    const grid = createMetadataGrid();
     appendMeta(grid, 'First seen', item.firstSeenAt ? formatTime(item.firstSeenAt) : '-');
     appendMeta(grid, 'Seen', item.seenAt ? formatTime(item.seenAt) : '-');
     appendMeta(grid, 'Updated', item.updatedAt ? formatTime(item.updatedAt) : '-');
@@ -29,7 +57,7 @@ function createTextMetaGrid(item) {
     if (item.deactivatedAt) appendMeta(grid, 'Deactivated', formatTime(item.deactivatedAt));
     appendMeta(grid, 'Lifecycle', item.lifecycleState || item.displayLifecycle || '-');
     appendMeta(grid, 'Priority', Number.isFinite(Number(item.priority)) ? formatNumber(item.priority) : '-');
-    const policy = getTextRecordPolicyDiagnostics(item);
+    const policy = getTextRecordRuntimePolicyDiagnostics(item);
     if (policy.lifecycle) appendMeta(grid, 'Last Lifecycle Policy', formatPolicySection(policy.lifecycle));
     if (policy.priority) appendMeta(grid, 'Last Priority Policy', formatPolicySection(policy.priority));
     if (policy.request) appendMeta(grid, 'Last Request Policy', formatPolicySection(policy.request));
@@ -54,61 +82,26 @@ function createTextMetaGrid(item) {
 }
 
 function appendMeta(container, label, value) {
-    const item = document.createElement('div');
-    item.className = 'text-meta-item';
-    const labelEl = document.createElement('span');
-    labelEl.textContent = label;
-    const valueEl = document.createElement('strong');
-    valueEl.textContent = String(value === undefined || value === null || value === '' ? '-' : value);
-    item.appendChild(labelEl);
-    item.appendChild(valueEl);
-    container.appendChild(item);
+    appendMetadataItem(container, label, value);
 }
 
 function createHistoryList(item) {
-    const wrap = document.createElement('div');
-    wrap.className = 'history-list';
-    const title = document.createElement('div');
-    title.className = 'history-title';
-    title.textContent = 'History';
-    wrap.appendChild(title);
+    const wrap = createHistoryContainer('History');
 
     const history = getTextRecordHistory(item);
     if (!history.length) {
-        const empty = document.createElement('div');
-        empty.className = 'history-empty';
-        empty.textContent = 'No history recorded.';
-        wrap.appendChild(empty);
+        wrap.appendChild(createHistoryEmpty('No history recorded.'));
         return wrap;
     }
 
     history.forEach((entry) => {
-        const row = document.createElement('div');
-        row.className = 'history-row';
-
-        const time = document.createElement('span');
-        time.className = 'history-time';
-        time.textContent = entry.at ? formatTime(entry.at) : '-';
-        row.appendChild(time);
-
-        const body = document.createElement('div');
-        body.className = 'history-body';
-        const label = document.createElement('strong');
-        label.textContent = entry.type || 'event';
-        body.appendChild(label);
-        if (entry.message) {
-            const message = document.createElement('span');
-            message.textContent = entry.message;
-            body.appendChild(message);
-        }
         const detailsText = formatDetails(entry.details);
-        if (detailsText) {
-            const detailsEl = document.createElement('code');
-            detailsEl.textContent = detailsText;
-            body.appendChild(detailsEl);
-        }
-        row.appendChild(body);
-        wrap.appendChild(row);
+        wrap.appendChild(createHistoryRow({
+            timeText: entry.at ? formatTime(entry.at) : '-',
+            labelText: entry.type || 'event',
+            messageText: entry.message || '',
+            detailsText,
+        }));
     });
     return wrap;
 }
@@ -196,16 +189,11 @@ function formatCoordinate(value) {
 }
 
 function createCell(value) {
-    const cell = document.createElement('td');
-    cell.textContent = String(value);
-    return cell;
+    return createTextElement('td', '', value);
 }
 
 function createStatusCell(value) {
     const cell = document.createElement('td');
-    const pill = document.createElement('span');
-    pill.className = `status ${toneForHookStatus(value)}`;
-    pill.textContent = String(value);
-    cell.appendChild(pill);
+    cell.appendChild(createStatusPill(value, toneForHookStatus(value)));
     return cell;
 }

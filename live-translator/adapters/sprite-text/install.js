@@ -12,46 +12,18 @@
     }
 
     function createController(scope = {}) {
-        const callScope = (name) => (...args) => scope[name](...args);
+        const { installBitmapMutationObserver, recordBitmapDrawText, recordBitmapMutation } = scope.controllerFacades.bitmapObservation;
+        const { installSpriteBitmapObserver, isBitmapOwned, markSpriteDirty } = scope.controllerFacades.bitmapOwnership;
         const {
             adoptCurrentSceneSprites,
-            applyRenderCommand,
             ensureFrameHooks,
             flushFrame,
-            getRenderGeneration,
             hasFrameHooksActive,
-            handleRenderRejected,
-            installBitmapMutationObserver,
             installChildObservers,
             installFrameHooks,
-            installSpriteBitmapObserver,
-            isBitmapOwned,
-            isRenderTargetCurrent,
-            markRecordTerminal,
-            markSpriteDirty,
-            recordBitmapDrawText,
-            recordBitmapMutation,
             scheduleFallbackFrameFlush,
-        } = Object.fromEntries([
-            'adoptCurrentSceneSprites',
-            'applyRenderCommand',
-            'ensureFrameHooks',
-            'flushFrame',
-            'getRenderGeneration',
-            'hasFrameHooksActive',
-            'handleRenderRejected',
-            'installBitmapMutationObserver',
-            'installChildObservers',
-            'installFrameHooks',
-            'installSpriteBitmapObserver',
-            'isBitmapOwned',
-            'isRenderTargetCurrent',
-            'markRecordTerminal',
-            'markSpriteDirty',
-            'recordBitmapDrawText',
-            'recordBitmapMutation',
-            'scheduleFallbackFrameFlush',
-        ].map((name) => [name, callScope(name)]));
+        } = scope.controllerFacades.frame;
+        const { applyRenderCommand, getRenderGeneration, handleRenderRejected, isRenderTargetCurrent, markRecordTerminal } = scope.controllerFacades.entries;
 
         /**
          * Install Sprite and frame observers and publish the adapter API.
@@ -170,6 +142,7 @@
                             lineHeight: unit.lineHeight,
                             align: unit.align,
                             drawState: unit.drawState,
+                            drawBoundary: unit.drawBoundary,
                             backgroundPatch: unit.backgroundPatch,
                             measuredWidth: 0,
                             sourceAdapter: 'bitmap',

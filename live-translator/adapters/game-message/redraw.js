@@ -13,8 +13,12 @@
 
     function createController(scope = {}) {
         const { MESSAGE_RENDER_STRATEGY } = scope;
-        const callScope = (name) => (...args) => scope[name](...args);
-        const { markDedicatedMessageWindow, drawMessageFaceIfNeeded, resolveMessageStartCoordinates, createTextScaleScope, disposeTextScaleScope, ensureTextScaleScope, wrapMessageText, isSessionCurrent, getWindowType, recordDecision, recordRenderAccepted, recordRenderRejected, resolveMessageRecord, markMessageRendered, getMessageScreenState, warn } = Object.fromEntries(['markDedicatedMessageWindow', 'drawMessageFaceIfNeeded', 'resolveMessageStartCoordinates', 'createTextScaleScope', 'disposeTextScaleScope', 'ensureTextScaleScope', 'wrapMessageText', 'isSessionCurrent', 'getWindowType', 'recordDecision', 'recordRenderAccepted', 'recordRenderRejected', 'resolveMessageRecord', 'markMessageRendered', 'getMessageScreenState', 'warn'].map((name) => [name, callScope(name)]));
+        const NATIVE_RENDER_STALL_CODE = 'native-message-render-stalled';
+        const { markDedicatedMessageWindow, drawMessageFaceIfNeeded, resolveMessageStartCoordinates } = scope.controllerFacades.install;
+        const { createTextScaleScope, disposeTextScaleScope, ensureTextScaleScope, wrapMessageText } = scope.controllerFacades.wrapping;
+        const { getWindowType, recordDecision, recordRenderAccepted, recordRenderRejected, resolveMessageRecord } = scope.controllerFacades.records;
+        const { markMessageRendered, getMessageScreenState, warn } = scope.controllerFacades.render;
+        const { isSessionCurrent, getMessageRenderSession, getPendingMessageRedrawSession, setPendingMessageRedrawSession, clearPendingMessageRedrawSession, setMessageStartCoordinates } = scope.controllerFacades.session;
 
         /**
          * Check whether native processCharacter rendering is available for redraw.
@@ -52,19 +56,72 @@
             const wrappedText = wrapMessageText(windowInstance, text);
             const coords = resolveMessageStartCoordinates(windowInstance, overrides);
             if (typeof windowInstance.createTextState === 'function') {
-                const textState = windowInstance.createTextState(wrappedText, 0, coords.y, 0);
-                const startX = Number.isFinite(coords.x)
-                    ? coords.x
-                    : (typeof windowInstance.newLineX === 'function' ? windowInstance.newLineX(textState) : 0);
-                textState.x = startX;
-                textState.startX = startX;
-                if (Number.isFinite(coords.y)) {
-                    textState.y = coords.y;
-                    if (typeof textState.startY === 'number') textState.startY = coords.y;
-                }
-                return textState;
+                const nativeState = createNativeWindowTextState(windowInstance, wrappedText, coords, {
+                    preconverted: overrides.preconverted === true,
+                });
+                if (nativeState) return normalizeNativeTextStateStart(windowInstance, nativeState, coords);
+                if (overrides.preconverted !== true) return { index: 0, text: wrappedText };
             }
-            return { index: 0, text: wrappedText };
+            return overrides.preconverted === true
+                ? createPreconvertedTextState(windowInstance, wrappedText, coords)
+                : { index: 0, text: wrappedText };
+        }
+
+        function createNativeWindowTextState(windowInstance, text, coords = {}, options = {}) {
+            if (!windowInstance || typeof windowInstance.createTextState !== 'function') return null;
+            const preconverted = options.preconverted === true;
+            let restorePreconvertedConverter = null;
+            try {
+                restorePreconvertedConverter = preconverted
+                    ? installPreconvertedEscapeConverter(windowInstance)
+                    : null;
+                const textState = windowInstance.createTextState(String(text || ''), 0, coords.y, 0);
+                return textState && typeof textState === 'object' ? textState : null;
+            } catch (error) {
+                if (!preconverted) throw error;
+                warn('[GameMessage] Native preconverted text state creation failed; using generic text state.', error);
+                return null;
+            } finally {
+                if (restorePreconvertedConverter) restorePreconvertedConverter();
+            }
+        }
+
+        function normalizeNativeTextStateStart(windowInstance, textState, coords = {}) {
+            if (!textState || typeof textState !== 'object') return null;
+            const startX = Number.isFinite(coords.x)
+                ? coords.x
+                : (typeof windowInstance.newLineX === 'function' ? windowInstance.newLineX(textState) : 0);
+            textState.x = startX;
+            textState.startX = startX;
+            textState.left = startX;
+            if (Number.isFinite(coords.y)) {
+                textState.y = coords.y;
+                textState.startY = coords.y;
+            }
+            return textState;
+        }
+
+        /**
+         * Build a native-shaped text state without running convertEscapeCharacters.
+         */
+        function createPreconvertedTextState(windowInstance, text, coords = {}) {
+            const x = Number.isFinite(Number(coords.x)) ? Number(coords.x) : 0;
+            const y = Number.isFinite(Number(coords.y)) ? Number(coords.y) : 0;
+            const height = typeof windowInstance.lineHeight === 'function'
+                ? windowInstance.lineHeight()
+                : 0;
+            return {
+                text: String(text || ''),
+                index: 0,
+                x,
+                y,
+                startX: x,
+                startY: y,
+                left: x,
+                height,
+                buffer: '',
+                drawing: true,
+            };
         }
 
         /**
@@ -112,19 +169,36 @@
             windowInstance._showFast = true;
             windowInstance._trBypassProcessCharacter = (windowInstance._trBypassProcessCharacter || 0) + 1;
             try {
+                let consumedText = false;
                 while (windowInstance._textState && !windowInstance.isEndOfText(textState)) {
                     if (typeof windowInstance.needsNewPage === 'function' && windowInstance.needsNewPage(textState)) {
                         windowInstance.newPage(textState);
                         windowInstance._showFast = true;
                         drawMessageFaceIfReady(windowInstance);
+                        if (isNativeMessageWaiting(windowInstance)) {
+                            if (!previewMode && !consumedText) restoreNativeReplayTiming(windowInstance, originalPause, originalWait);
+                            return consumedText;
+                        }
                     }
+                    const previousTextState = windowInstance._textState;
+                    const previousIndex = readTextStateIndex(textState);
                     windowInstance.processCharacter(textState);
-                    if (windowInstance.pause || windowInstance._waitCount > 0) break;
+                    const progressed = hasNativeRenderProgress(windowInstance, textState, previousTextState, previousIndex);
+                    const isWaiting = isNativeMessageWaiting(windowInstance);
+                    if (progressed) consumedText = true;
+                    if (!progressed && !isWaiting) {
+                        throw createNativeRenderStallError(textState, previousIndex);
+                    }
+                    if (isWaiting) {
+                        if (!consumedText) {
+                            if (!previewMode) restoreNativeReplayTiming(windowInstance, originalPause, originalWait);
+                            return false;
+                        }
+                        break;
+                    }
                 }
                 if (typeof windowInstance.flushTextState === 'function') windowInstance.flushTextState(textState);
-                const isWaiting = typeof windowInstance.isWaiting === 'function'
-                    ? windowInstance.isWaiting()
-                    : (windowInstance.pause || windowInstance._waitCount > 0);
+                const isWaiting = isNativeMessageWaiting(windowInstance);
                 if (!previewMode
                     && windowInstance._textState
                     && windowInstance.isEndOfText(textState)
@@ -144,6 +218,44 @@
             return true;
         }
 
+        function restoreNativeReplayTiming(windowInstance, pause, waitCount) {
+            if (!windowInstance) return;
+            windowInstance.pause = pause;
+            windowInstance._waitCount = waitCount;
+        }
+
+        function readTextStateIndex(textState) {
+            const index = Number(textState && textState.index);
+            return Number.isFinite(index) ? index : null;
+        }
+
+        function hasNativeRenderProgress(windowInstance, textState, previousTextState, previousIndex) {
+            if (!windowInstance || windowInstance._textState !== previousTextState) return true;
+            const currentIndex = readTextStateIndex(textState);
+            return previousIndex !== null && currentIndex !== null && currentIndex > previousIndex;
+        }
+
+        function isNativeMessageWaiting(windowInstance) {
+            if (!windowInstance) return false;
+            try {
+                if (typeof windowInstance.isWaiting === 'function') return !!windowInstance.isWaiting();
+            } catch (_) {}
+            return !!(windowInstance.pause || Number(windowInstance._waitCount) > 0);
+        }
+
+        function createNativeRenderStallError(textState, previousIndex) {
+            const error = new Error('Native message renderer did not consume text or report a wait.');
+            error.code = NATIVE_RENDER_STALL_CODE;
+            error.previousIndex = previousIndex;
+            error.currentIndex = readTextStateIndex(textState);
+            error.textLength = String(textState && textState.text ? textState.text : '').length;
+            return error;
+        }
+
+        function isNativeRenderStallError(error) {
+            return !!(error && error.code === NATIVE_RENDER_STALL_CODE);
+        }
+
         /**
          * Redraw through drawTextEx when native message replay is unavailable.
          */
@@ -160,12 +272,16 @@
             const coords = resolveMessageStartCoordinates(windowInstance, overrides);
             const scaleScope = createTextScaleScope(windowInstance, scope.textScalePercent);
             windowInstance._trBypassProcessCharacter = (windowInstance._trBypassProcessCharacter || 0) + 1;
+            const restorePreconvertedConverter = overrides.preconverted === true
+                ? installPreconvertedEscapeConverter(windowInstance)
+                : null;
             try {
                 windowInstance.drawTextEx(text, coords.x, coords.y);
                 if (windowInstance._textState) windowInstance._textState.index = windowInstance._textState.text.length;
                 windowInstance._showFast = true;
                 windowInstance._lineShowFast = true;
             } finally {
+                if (restorePreconvertedConverter) restorePreconvertedConverter();
                 if (scaleScope) scaleScope.restore();
                 if (previewMode) restoreNativePreviewState(windowInstance, previewState);
                 windowInstance._trBypassProcessCharacter = Math.max(0, (windowInstance._trBypassProcessCharacter || 1) - 1);
@@ -196,16 +312,26 @@
                 if (typeof windowInstance.updateBackground === 'function') windowInstance.updateBackground();
                 if (typeof windowInstance.open === 'function') windowInstance.open();
                 drawMessageFaceIfReady(windowInstance);
-                windowInstance._trMsgStartX = typeof textState.startX === 'number'
+                const startX = typeof textState.startX === 'number'
                     ? textState.startX
                     : (typeof textState.left === 'number' ? textState.left : resolveMessageStartCoordinates(windowInstance, overrides).x);
-                windowInstance._trMsgStartY = typeof textState.startY === 'number'
+                const startY = typeof textState.startY === 'number'
                     ? textState.startY
                     : (typeof textState.y === 'number' ? textState.y : 0);
-                windowInstance._trWrappedMessageText = String(textState.text || text || '');
+                setMessageStartCoordinates(windowInstance, {
+                    x: startX,
+                    y: startY,
+                }, {
+                    sessionId: overrides.sessionId,
+                    wrappedText: String(textState.text || text || ''),
+                });
                 return flushNativeText(windowInstance, Object.assign({}, overrides, { previewState }));
             } catch (error) {
                 disposeTextScaleScope(windowInstance);
+                if (isNativeRenderStallError(error)) {
+                    warn('[GameMessage] Native render stalled; rejecting message redraw.', error);
+                    return false;
+                }
                 warn('[GameMessage] Native render failed; falling back to drawTextEx redraw.', error);
                 return redrawFallback(windowInstance, text, Object.assign({}, overrides, { previewState }));
             }
@@ -220,24 +346,27 @@
             const deferUntilUpdate = overrides.deferUntilUpdate === true;
             const shouldDefer = deferUntilUpdate || shouldDeferMessageRedraw(windowInstance);
             if (shouldDefer || !isMessageWindowReadyForRedraw(windowInstance)) {
-                const recordId = windowInstance._trMessageRecordId || '';
+                const renderSession = getMessageRenderSession(windowInstance);
+                const recordId = renderSession.recordId || '';
                 const screenState = getMessageScreenState(windowInstance);
-                windowInstance._trPendingRedraw = {
+                const pending = setPendingMessageRedrawSession(windowInstance, {
                     text,
                     sessionId,
                     x: coords.x,
                     y: coords.y,
+                    preconverted: overrides.preconverted === true,
+                    degradedPreview: overrides.degradedPreview === true,
                     recordId,
                     record: resolveMessageRecord(recordId),
                     screenState,
                     renderEvent: overrides.renderEvent || null,
                     renderDecision: overrides.renderDecision || null,
                     streamingPreview: overrides.streamingPreview === true,
-                };
+                });
                 // The orchestrator has produced a render command, but the native
                 // Window_Message surface is not ready. Keep this as a draw
                 // decision, not item.rendered, until pixels are actually applied.
-                recordDecision(windowInstance._trPendingRedraw.record || recordId, 'draw.deferred', shouldDefer
+                recordDecision(pending.record || recordId, 'draw.deferred', shouldDefer
                     ? (deferUntilUpdate
                         ? 'message redraw queued for the next window update'
                         : 'message redraw deferred until native setup settles')
@@ -251,7 +380,29 @@
                 });
                 return false;
             }
-            return redrawGameMessageText(windowInstance, text, overrides);
+            return redrawGameMessageText(windowInstance, text, Object.assign({}, overrides, { sessionId }));
+        }
+
+        /**
+         * drawTextEx usually converts escapes internally. Preconverted redraws
+         * have already passed through the isolated chamber, so conversion is
+         * identity-scoped only for this draw call.
+         */
+        function installPreconvertedEscapeConverter(windowInstance) {
+            if (!windowInstance) return null;
+            const hadOwn = Object.prototype.hasOwnProperty.call(windowInstance, 'convertEscapeCharacters');
+            const original = windowInstance.convertEscapeCharacters;
+            windowInstance.convertEscapeCharacters = function(value) {
+                return String(value || '');
+            };
+            return function restorePreconvertedEscapeConverter() {
+                try {
+                    if (hadOwn) windowInstance.convertEscapeCharacters = original;
+                    else delete windowInstance.convertEscapeCharacters;
+                } catch (_) {
+                    try { windowInstance.convertEscapeCharacters = original; } catch (_) {}
+                }
+            };
         }
 
         /**
@@ -270,7 +421,7 @@
          * Apply a deferred message redraw once the window has finished opening.
          */
         function applyPendingMessageRedraw(windowInstance) {
-            const pending = windowInstance && windowInstance._trPendingRedraw;
+            const pending = getPendingMessageRedrawSession(windowInstance);
             if (!pending) return false;
             if (!isMessageWindowReadyForRedraw(windowInstance)) return false;
             if (pending.sessionId && !isSessionCurrent(windowInstance, pending.sessionId)) {
@@ -279,14 +430,14 @@
                     screenState: getMessageScreenState(windowInstance),
                     windowType: getWindowType(windowInstance),
                 });
-                windowInstance._trPendingRedraw = null;
+                clearPendingMessageRedrawSession(windowInstance, pending);
                 return false;
             }
 
             const applied = redrawGameMessageText(windowInstance, pending.text, pending);
             if (!applied) return false;
-            windowInstance._trPendingRedraw = null;
-            const recordId = pending.recordId || windowInstance._trMessageRecordId;
+            clearPendingMessageRedrawSession(windowInstance, pending);
+            const recordId = pending.recordId || getMessageRenderSession(windowInstance).recordId;
             const record = pending.record || resolveMessageRecord(recordId);
             // This event marks the point where a previously queued draw reached
             // the surface. If the pending redraw came from a render command,
@@ -330,7 +481,7 @@
         }
 
         function rejectPendingMessageRender(windowInstance, reason, details = {}) {
-            const pending = windowInstance && windowInstance._trPendingRedraw;
+            const pending = getPendingMessageRedrawSession(windowInstance);
             if (!pending || !pending.renderDecision) return false;
             const decision = Object.assign({}, pending.renderDecision, {
                 reason: reason || 'message-redraw-rejected',
@@ -341,16 +492,17 @@
         }
 
         function clearPendingMessageRedraw(windowInstance, reason, details = {}) {
-            if (!windowInstance || !windowInstance._trPendingRedraw) return false;
+            const pending = getPendingMessageRedrawSession(windowInstance);
+            if (!windowInstance || !pending) return false;
             rejectPendingMessageRender(windowInstance, reason || 'message-redraw-cleared', details);
-            windowInstance._trPendingRedraw = null;
-            return true;
+            return clearPendingMessageRedrawSession(windowInstance, pending).changed === true;
         }
 
         return {
             canUseNativeRender,
             drawMessageFaceIfReady,
             createNativeTextState,
+            createPreconvertedTextState,
             flushNativeText,
             redrawFallback,
             redrawGameMessageText,
@@ -362,6 +514,8 @@
             acceptPendingMessageRender,
             rejectPendingMessageRender,
             clearPendingMessageRedraw,
+            installPreconvertedEscapeConverter,
+            isNativeRenderStallError,
         };
     }
 

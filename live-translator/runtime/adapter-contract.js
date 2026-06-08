@@ -29,6 +29,10 @@
     const config = requireModule('runtime.adapterContractConfig');
     const recordStateModule = requireModule('runtime.adapterRecordState');
     const subscriptionModule = requireModule('runtime.adapterSubscriptions');
+    const renderTransaction = requireModule('runtime.renderTransaction');
+    if (!renderTransaction || typeof renderTransaction.createRenderCommit !== 'function') {
+        throw new Error('[LiveTranslator] runtime.renderTransaction is unavailable before runtime/adapter-contract.js.');
+    }
     const {
         defaultEligibility,
         describeCallbackError,
@@ -37,6 +41,7 @@
         isRecordObject,
         nonEmptyString,
         normalizeAdapterRenderDecision,
+        numberOrZero,
         safeIdPart,
         deniedOwnership,
     } = utils;
@@ -178,63 +183,69 @@
         }
 
         function requestItemTranslation(target, requestOptions = {}) {
-            if (!canTouchRecord(target) || !hasMethod('requestItemTranslation')) return false;
+            if (!canTouchRecord(target)) return createLifecycleResult('missing-capability', target, 'request', 'record-capability-required');
+            if (!hasMethod('requestItemTranslation')) return createLifecycleResult('unavailable', target, 'request', 'requestItemTranslation unavailable');
             const id = getCapabilityRecordId(target);
-            if (!id) return false;
+            if (!id) return createLifecycleResult('missing-record-id', target, 'request', 'record-id-required');
             const requestResult = callGateway('requestItemTranslation', () => {
                 return gateway.requestItemTranslation(id, Object.assign({
                     hook: defaultHook,
                 }, requestOptions || {}));
             });
-            if (!requestResult) return false;
-            if (!isRecordTerminal(target)) {
+            const result = normalizeLifecycleResult(requestResult, target, 'request', 'translation-request');
+            if (result.handled === true && !isRecordTerminal(target)) {
                 markRecordStatus(target, id, 'pending', { requestActive: true });
             }
-            return true;
+            return result;
         }
 
         function cancelItemTranslation(target, reason = '', options = {}) {
-            if (!canTouchRecord(target) || !hasMethod('cancelItemTranslation')) return false;
+            if (!canTouchRecord(target)) return createLifecycleResult('missing-capability', target, 'cancel', 'record-capability-required');
+            if (!hasMethod('cancelItemTranslation')) return createLifecycleResult('unavailable', target, 'cancel', 'cancelItemTranslation unavailable');
             const id = getCapabilityRecordId(target);
-            if (!id) return false;
+            if (!id) return createLifecycleResult('missing-record-id', target, 'cancel', 'record-id-required');
             const canceled = callGateway('cancelItemTranslation', () => {
                 return gateway.cancelItemTranslation(id, reason, options && typeof options === 'object' ? options : {});
             });
-            return canceled === true;
+            return normalizeLifecycleResult(canceled, target, 'cancel', reason || 'translation canceled');
         }
 
         function setItemTranslationPriority(target, priority, reason = '') {
-            if (!canTouchRecord(target) || !hasMethod('setItemTranslationPriority')) return false;
+            if (!canTouchRecord(target)) return createLifecycleResult('missing-capability', target, 'priority', 'record-capability-required');
+            if (!hasMethod('setItemTranslationPriority')) return createLifecycleResult('unavailable', target, 'priority', 'setItemTranslationPriority unavailable');
             const id = getCapabilityRecordId(target);
-            if (!id) return false;
+            if (!id) return createLifecycleResult('missing-record-id', target, 'priority', 'record-id-required');
             const changed = callGateway('setItemTranslationPriority', () => {
                 return gateway.setItemTranslationPriority(id, priority, reason);
             });
-            return changed === true;
+            return normalizeLifecycleResult(changed, target, 'priority', reason || 'priority changed');
         }
 
         function setItemVisibility(target, visible, details = null) {
-            if (!canTouchRecord(target) || !hasMethod('setItemVisibility')) return null;
+            if (!canTouchRecord(target)) return createLifecycleResult('missing-capability', target, 'visibility', 'record-capability-required');
+            if (!hasMethod('setItemVisibility')) return createLifecycleResult('unavailable', target, 'visibility', 'setItemVisibility unavailable');
             const id = getCapabilityRecordId(target);
-            if (!id) return null;
-            return callGateway('setItemVisibility', () => {
+            if (!id) return createLifecycleResult('missing-record-id', target, 'visibility', 'record-id-required');
+            return normalizeLifecycleResult(callGateway('setItemVisibility', () => {
                 return gateway.setItemVisibility(id, visible === true, details || {});
-            });
+            }), target, 'visibility', visible === true ? 'item visible' : 'item hidden');
         }
 
         function backgroundItem(target, details = {}) {
-            if (!canTouchRecord(target) || !hasMethod('backgroundItem')) return null;
+            if (!canTouchRecord(target)) return createLifecycleResult('missing-capability', target, 'background', 'record-capability-required');
+            if (!hasMethod('backgroundItem')) return createLifecycleResult('unavailable', target, 'background', 'backgroundItem unavailable');
             const id = getCapabilityRecordId(target);
-            if (!id) return null;
-            return callGateway('backgroundItem', () => {
+            if (!id) return createLifecycleResult('missing-record-id', target, 'background', 'record-id-required');
+            return normalizeLifecycleResult(callGateway('backgroundItem', () => {
                 return gateway.backgroundItem(id, details || {});
-            });
+            }), target, 'background', details && details.reason ? details.reason : 'item backgrounded');
         }
 
         function retireItem(target, status = 'disappeared', eventOptions = {}) {
-            if (!canTouchRecord(target) || !hasMethod('retireItem')) return null;
+            if (!canTouchRecord(target)) return createLifecycleResult('missing-capability', target, 'retire', 'record-capability-required');
+            if (!hasMethod('retireItem')) return createLifecycleResult('unavailable', target, 'retire', 'retireItem unavailable');
             const id = getCapabilityRecordId(target);
-            if (!id) return null;
+            if (!id) return createLifecycleResult('missing-record-id', target, 'retire', 'record-id-required');
             const normalizedOptions = normalizeEventOptions(eventOptions);
             const recordDetached = normalizedOptions.recordDetached === true;
             const orchestratorOptions = Object.assign({}, normalizedOptions);
@@ -242,8 +253,9 @@
             const retired = callGateway('retireItem', () => {
                 return gateway.retireItem(id, status || 'disappeared', orchestratorOptions);
             });
-            markRetired(target, id, status, recordDetached);
-            return retired;
+            const result = normalizeLifecycleResult(retired, target, 'retire', status || 'disappeared');
+            if (result.handled === true) markRetired(target, id, status, recordDetached);
+            return result;
         }
 
         function recordDecision(target, type, message = '', details = null) {
@@ -271,9 +283,69 @@
             if (!canTouchRecord(target) || !hasMethod(methodName)) return null;
             const id = getCapabilityRecordId(target);
             if (!id) return null;
+            const normalizedDecision = normalizeDirectRenderDecision(id, status, decision);
             return callGateway(methodName, () => {
-                return gateway[methodName](id, normalizeAdapterRenderDecision(status, decision));
+                return gateway[methodName](id, normalizedDecision);
             });
+        }
+
+        function normalizeDirectRenderDecision(id, status, decision = {}) {
+            const normalized = normalizeAdapterRenderDecision(status, decision);
+            normalized.renderCommit = createDirectRenderCommit(id, normalized);
+            return normalized;
+        }
+
+        function createDirectRenderCommit(id, decision = {}) {
+            const decisionDetails = decision.details && typeof decision.details === 'object'
+                ? decision.details
+                : {};
+            const detailsCommit = decisionDetails.renderCommit && typeof decisionDetails.renderCommit === 'object'
+                ? decisionDetails.renderCommit
+                : null;
+            const existingCommit = decision.renderCommit && typeof decision.renderCommit === 'object'
+                ? decision.renderCommit
+                : detailsCommit;
+            const existingDetails = existingCommit
+                && existingCommit.details
+                && typeof existingCommit.details === 'object'
+                ? existingCommit.details
+                : {};
+            const details = Object.assign({}, existingDetails, decisionDetails);
+            if (details.renderCommit && typeof details.renderCommit === 'object') {
+                delete details.renderCommit;
+            }
+            const commitSource = existingCommit || {};
+            return renderTransaction.createRenderCommit(Object.assign({}, commitSource, {
+                status: decision.status,
+                phase: resolveRenderDecisionPhase(decision.status),
+                reason: nonEmptyString(decision.reason, decision.status),
+                route: nonEmptyString(commitSource.route, 'adapter-contract'),
+                adapterId: nonEmptyString(commitSource.adapterId, adapterId),
+                itemId: nonEmptyString(commitSource.itemId, id),
+                recordId: nonEmptyString(commitSource.recordId, id),
+                surfaceId: nonEmptyString(decision.surfaceId, details.surfaceId, commitSource.surfaceId),
+                slotKey: nonEmptyString(decision.slotKey, details.slotKey, commitSource.slotKey),
+                strategy: nonEmptyString(decision.strategy, commitSource.strategy),
+                commandId: nonEmptyString(decision.commandId, commitSource.commandId),
+                commandGeneration: numberOrZero(decision.commandGeneration) || numberOrZero(commitSource.commandGeneration),
+                generation: numberOrZero(decision.generation) || numberOrZero(decision.commandGeneration) || numberOrZero(commitSource.generation),
+                translationReceived: nonEmptyString(details.translationReceived, decision.translationReceived, commitSource.translationReceived),
+                translationDrawn: nonEmptyString(details.translationDrawn, decision.translationDrawn, commitSource.translationDrawn),
+                drawBoundary: decision.drawBoundary
+                    || details.drawBoundary
+                    || commitSource.drawBoundary
+                    || null,
+                details,
+            }));
+        }
+
+        function resolveRenderDecisionPhase(status) {
+            const phases = renderTransaction.PHASES || {};
+            const normalized = String(status || '').toLowerCase();
+            if (normalized === 'accepted') return phases.RENDER_COMMITTED || 'render-committed';
+            if (normalized === 'deferred') return phases.RENDER_DEFERRED || 'render-deferred';
+            if (normalized === 'noop') return phases.RENDER_NOOP || 'render-noop';
+            return phases.RENDER_REJECTED || 'render-rejected';
         }
 
         function describeTextEligibility(payload = {}) {
@@ -293,10 +365,12 @@
         }
 
         function releaseSurface(token, reason = '') {
-            if (!token || !hasMethod('releaseSurface')) return false;
-            return callGateway('releaseSurface', () => {
-                return gateway.releaseSurface(token, reason || 'surface released') === true;
-            }) === true;
+            const releaseReason = reason || 'surface released';
+            if (!token) return createOwnershipReleaseResult('missing-token', 'surface', releaseReason, token);
+            if (!hasMethod('releaseSurface')) return createOwnershipReleaseResult('unavailable', 'surface', releaseReason, token);
+            return normalizeOwnershipReleaseResult(callGateway('releaseSurface', () => {
+                return gateway.releaseSurface(token, releaseReason);
+            }), 'surface', releaseReason, token);
         }
 
         function claimText(payload = {}) {
@@ -314,10 +388,12 @@
         }
 
         function releaseTextClaim(token, reason = '') {
-            if (!token || !hasMethod('releaseTextClaim')) return false;
-            return callGateway('releaseTextClaim', () => {
-                return gateway.releaseTextClaim(token, reason || 'text claim released') === true;
-            }) === true;
+            const releaseReason = reason || 'text claim released';
+            if (!token) return createOwnershipReleaseResult('missing-token', 'text', releaseReason, token);
+            if (!hasMethod('releaseTextClaim')) return createOwnershipReleaseResult('unavailable', 'text', releaseReason, token);
+            return normalizeOwnershipReleaseResult(callGateway('releaseTextClaim', () => {
+                return gateway.releaseTextClaim(token, releaseReason);
+            }), 'text', releaseReason, token);
         }
 
         function recordSurfaceDraw(payload = {}) {
@@ -393,6 +469,85 @@
             // serialized into snapshots and the orchestrator needs object
             // identity to arbitrate surface ownership.
             return next;
+        }
+
+        function normalizeLifecycleResult(result, target, operation, reason) {
+            if (!result || typeof result !== 'object') {
+                return createLifecycleResult('failed', target, operation, reason);
+            }
+            const recordId = nonEmptyString(result.recordId, result.id, getCapabilityRecordId(target));
+            const status = nonEmptyString(result.status, result.handled === true ? 'handled' : 'failed');
+            const normalized = Object.assign({}, result, {
+                status,
+                handled: result.handled === true,
+                changed: result.changed === true,
+                terminal: result.terminal === true,
+                recordId,
+                id: nonEmptyString(result.id, recordId),
+                adapterId: nonEmptyString(result.adapterId, adapterId),
+                operation: nonEmptyString(result.operation, operation),
+                reason: nonEmptyString(result.reason, reason, status),
+            });
+            delete normalized.translationHandle;
+            return Object.freeze(normalized);
+        }
+
+        function createLifecycleResult(status, target, operation, reason) {
+            const recordId = nonEmptyString(getCapabilityRecordId(target));
+            return Object.freeze({
+                status,
+                handled: false,
+                changed: false,
+                terminal: true,
+                recordId,
+                id: recordId,
+                adapterId,
+                operation: nonEmptyString(operation),
+                reason: nonEmptyString(reason, status),
+            });
+        }
+
+        function normalizeOwnershipReleaseResult(result, expectedKind, reason, token) {
+            if (!result || typeof result !== 'object') {
+                return createOwnershipReleaseResult('failed', expectedKind, reason, token);
+            }
+            const status = nonEmptyString(result.status, result.released === true ? 'released' : 'failed');
+            const released = status === 'released' || result.released === true;
+            return Object.freeze(Object.assign({}, result, {
+                status,
+                released,
+                changed: result.changed === true || released,
+                handled: result.handled === true || released,
+                token: result.token || result.ownershipToken || token || null,
+                ownershipToken: result.ownershipToken || result.token || token || null,
+                claimId: nonEmptyString(result.claimId),
+                kind: nonEmptyString(result.kind, expectedKind),
+                adapterId: nonEmptyString(result.adapterId, adapterId),
+                surfaceId: nonEmptyString(result.surfaceId),
+                surfaceType: nonEmptyString(result.surfaceType),
+                mode: nonEmptyString(result.mode),
+                reason: nonEmptyString(result.reason, reason, status),
+                terminal: result.terminal !== false,
+            }));
+        }
+
+        function createOwnershipReleaseResult(status, expectedKind, reason, token) {
+            return Object.freeze({
+                status,
+                released: false,
+                changed: false,
+                handled: false,
+                terminal: true,
+                token: token || null,
+                ownershipToken: token || null,
+                claimId: '',
+                kind: nonEmptyString(expectedKind),
+                adapterId,
+                surfaceId: '',
+                surfaceType: '',
+                mode: '',
+                reason: nonEmptyString(reason, status),
+            });
         }
 
         function normalizeObserveEventOptions(eventOptions, observeOptions = {}) {
@@ -497,8 +652,6 @@
             return current && current[part] ? current[part] : null;
         }, modules);
     }
-
-    try { globalScope.LiveTranslatorCreateAdapterContract = createAdapterContract; } catch (_) {}
 
     defineRuntimeModule('runtime.adapterContract', {
         createAdapterContract,

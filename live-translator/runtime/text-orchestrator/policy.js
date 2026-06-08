@@ -13,20 +13,9 @@
 
     function createController(scope = {}) {
         const { clampPriority, firstString, mergeDetails } = scope;
-        const callScope = (name) => (...args) => scope[name](...args);
-        const {
-            cancelItemTranslation,
-            getItemById,
-            hasLiveTranslationRequest,
-            schedulePublish,
-            setItemTranslationPriority,
-        } = Object.fromEntries([
-            'cancelItemTranslation',
-            'getItemById',
-            'hasLiveTranslationRequest',
-            'schedulePublish',
-            'setItemTranslationPriority',
-        ].map((name) => [name, callScope(name)]));
+        const { cancelItemTranslation, setItemTranslationPriority } = scope.controllerFacades.translationState;
+        const { getItemById, hasLiveTranslationRequest } = scope.controllerFacades.items;
+        const { schedulePublish } = scope.controllerFacades.diagnostics;
         const GARBAGE_PRIORITY = 100;
 
         function normalizeLifecycleIntent(status = '', options = {}) {
@@ -108,15 +97,15 @@
             });
             let changed = false;
             if (policy.cancelTranslation === true) {
-                changed = cancelItemTranslation(item.id, policy.cancelReason, policy.cancelOptions) === true || changed;
+                changed = lifecycleResultChanged(cancelItemTranslation(item.id, policy.cancelReason, policy.cancelOptions)) || changed;
             }
             if (policy.priority !== null && policy.priority !== undefined) {
-                changed = applyPriorityPolicy(item.id, {
+                changed = lifecycleResultChanged(applyPriorityPolicy(item.id, {
                     priority: policy.priority,
                     reason: policy.priorityReason,
                     action: policy.priorityAction,
                     source: policy.intent,
-                }) === true || changed;
+                })) || changed;
             }
             return changed;
         }
@@ -193,6 +182,10 @@
                 ),
                 source: 'observation',
             });
+        }
+
+        function lifecycleResultChanged(result) {
+            return result === true || !!(result && result.changed === true);
         }
 
         function resolveRequestPolicy(item, requestOptions = {}, context = {}) {

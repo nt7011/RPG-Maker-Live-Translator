@@ -261,8 +261,8 @@
     }
 
     function createCodedRaw(value) {
-        const encoded = textCodec.encodeText(String(value ?? ''));
-        return String(encoded && encoded.translationText ? encoded.translationText : '').trim();
+        const source = textCodec.createTextSource(String(value ?? ''));
+        return String(source && source.translationSource ? source.translationSource : '').trim();
     }
 
     function countPlaceholders(value) {

@@ -12,44 +12,22 @@
     }
 
     function createController(scope = {}) {
-        const callScope = (name) => (...args) => scope[name](...args);
+        const { refreshGlyphCandidateLayout } = scope.controllerFacades.glyphCandidates;
+        const { addSourceRenderSkipGuard, refreshSourceRenderSuppression, removeSourceRenderSkipGuard } = scope.controllerFacades.overlaySprite;
+        const { attachParentRunOverlay, copyRunReferenceVisualState, parentHasLiveRunOverlay, releaseParentRunOverlayCarrier } = scope.controllerFacades.parentRunOverlay;
         const {
-            addSourceRenderSkipGuard,
             areAncestorsOpen,
-            attachParentRunOverlay,
-            bucket,
-            copyRunReferenceVisualState,
-            finiteNumber,
             isDisplayObjectOpen,
             isSpriteSourceRenderableInOpenParent,
-            isValidRect,
-            parentHasLiveRunOverlay,
             readFrameKey,
-            rectCenterY,
-            refreshGlyphCandidateLayout,
-            refreshSourceRenderSuppression,
-            releaseParentRunOverlayCarrier,
-            removeSourceRenderSkipGuard,
             updateRunVisibility,
-        } = Object.fromEntries([
-            'addSourceRenderSkipGuard',
-            'areAncestorsOpen',
-            'attachParentRunOverlay',
-            'bucket',
-            'copyRunReferenceVisualState',
-            'finiteNumber',
-            'isDisplayObjectOpen',
-            'isSpriteSourceRenderableInOpenParent',
-            'isValidRect',
-            'parentHasLiveRunOverlay',
-            'readFrameKey',
-            'rectCenterY',
-            'refreshGlyphCandidateLayout',
-            'refreshSourceRenderSuppression',
-            'releaseParentRunOverlayCarrier',
-            'removeSourceRenderSkipGuard',
-            'updateRunVisibility',
-        ].map((name) => [name, callScope(name)]));
+        } = scope.controllerFacades.visibility;
+        const {
+            bucket,
+            finiteNumber,
+            isValidRect,
+            rectCenterY,
+        } = scope.controllerFacades.utils;
 
         /**
          * Hide all glyph source Sprites for a translated run.

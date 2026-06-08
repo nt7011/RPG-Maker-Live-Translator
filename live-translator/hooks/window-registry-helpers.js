@@ -13,12 +13,31 @@
     if (typeof defineRuntimeModule !== 'function') {
         throw new Error('[LiveTranslator] runtime module registry is unavailable before hooks/window-registry-helpers.js.');
     }
+    const requireRuntimeModule = globalScope.LiveTranslatorRequire;
+    if (typeof requireRuntimeModule !== 'function') {
+        throw new Error('[LiveTranslator] runtime module require is unavailable before hooks/window-registry-helpers.js.');
+    }
+    const displayStateModule = requireRuntimeModule('runtime.displayState');
+    const lifecycleReasons = requireRuntimeModule('runtime.lifecycleReasons').reasons;
+    const entryLifecycle = requireRuntimeModule('runtime.entryLifecycle');
+    if (!entryLifecycle || typeof entryLifecycle.markStale !== 'function') {
+        throw new Error('[LiveTranslator] runtime.entryLifecycle is unavailable before hooks/window-registry-helpers.js.');
+    }
 
     function createWindowRegistryHelpers(context = {}) {
-        const { windowRegistry, registeredWindows, contentsOwners, windowLifecycle = null, adapterContract = null } = context;
-        if (!windowRegistry || !registeredWindows || !contentsOwners) {
+        const {
+            windowRegistry,
+            registeredWindows,
+            surfaceOwnership = null,
+            windowLifecycle = null,
+            adapterContract = null,
+            windowLifecyclePrototypeHooks = null,
+            getWindowTextHelpers = null,
+        } = context;
+        if (!windowRegistry || !registeredWindows || !surfaceOwnership) {
             throw new Error('[WindowHelpers] Missing window registry references.');
         }
+        const displayState = displayStateModule.createDisplayStateService(globalScope);
         const isEntryActive = (entry) => {
             if (!entry || !entry.recordId) return false;
             if (windowLifecycle && typeof windowLifecycle.isEntryActive === 'function') {
@@ -43,35 +62,83 @@
             if (!isEntryActive(entry)) return;
             try {
                 if (windowLifecycle && typeof windowLifecycle.retireEntry === 'function') {
-                    windowLifecycle.retireEntry(entry, reason || 'window-stale', details, options);
+                    windowLifecycle.retireEntry(entry, reason || lifecycleReasons.WINDOW_STALE, details, options);
                 }
             } catch (_) {}
         };
+        const resolveWindowTextHelpers = () => {
+            if (typeof getWindowTextHelpers !== 'function') return null;
+            try {
+                return getWindowTextHelpers() || null;
+            } catch (_) {
+                return null;
+            }
+        };
+        const rejectWindowPendingRender = (entry, reason, details = null) => {
+            const helpers = resolveWindowTextHelpers();
+            if (!helpers || typeof helpers.rejectPendingRender !== 'function') return false;
+            try {
+                const result = helpers.rejectPendingRender(entry, reason, details);
+                return !!(result && result.handled === true);
+            } catch (_) {
+                return false;
+            }
+        };
+        const forgetWindowEntryRecord = (entry, reason, details = null) => {
+            const helpers = resolveWindowTextHelpers();
+            if (!helpers || typeof helpers.forgetEntryRecord !== 'function') return false;
+            try {
+                return helpers.forgetEntryRecord(entry, reason, details) === true;
+            } catch (_) {
+                return false;
+            }
+        };
+
+        function installWindowLifecyclePrototypeHooks(window) {
+            if (!window || !windowLifecyclePrototypeHooks) return;
+            const installer = typeof windowLifecyclePrototypeHooks.install === 'function'
+                ? windowLifecyclePrototypeHooks.install
+                : null;
+            if (!installer) return;
+            try {
+                installer(window);
+            } catch (_) {}
+        }
 
         function markWindowEntriesStale(windowData, reason) {
             if (!windowData) return;
+            const windowType = windowData.windowType || '';
             try {
                 if (windowData.texts && typeof windowData.texts.forEach === 'function') {
-                    windowData.texts.forEach((entry) => {
+                    windowData.texts.forEach((entry, key) => {
                         if (!entry) return;
-                        entry._trStale = true;
-                        entry.canceledReason = reason;
-                        entry.canceledAt = Date.now();
+                        const details = {
+                            key: String(key || ''),
+                            windowType,
+                            wasCompleted: isEntryCompleted(entry),
+                        };
+                        entryLifecycle.markStale(entry, reason || lifecycleReasons.WINDOW_STALE, {
+                            surfaceVisible: false,
+                            screenState: 'hidden',
+                        });
+                        rejectWindowPendingRender(entry, reason, details);
                         if (isEntryActive(entry)) {
-                            retireWindowEntry(entry, reason || 'window-stale', {
-                                windowType: windowData.windowType || '',
-                                wasCompleted: isEntryCompleted(entry),
-                            }, {
+                            retireWindowEntry(entry, reason || lifecycleReasons.WINDOW_STALE, details, {
                                 cancelTranslation: false,
                             });
                         }
+                        forgetWindowEntryRecord(entry, reason || lifecycleReasons.WINDOW_STALE, details);
+                        entryLifecycle.setSurfaceVisible(entry, false, {
+                            reason: reason || lifecycleReasons.WINDOW_STALE,
+                            screenState: 'hidden',
+                        });
                     });
                     windowData.texts.clear();
                 }
             } catch (_) {}
             try {
-                if (windowData.pendingRedraws && typeof windowData.pendingRedraws.clear === 'function') {
-                    windowData.pendingRedraws.clear();
+                if (windowData.renderQueue && typeof windowData.renderQueue.clear === 'function') {
+                    windowData.renderQueue.clear();
                 }
             } catch (_) {}
             try {
@@ -109,7 +176,7 @@
             const token = windowData.contentsSurfaceClaim || null;
             if (token && adapterContract && typeof adapterContract.releaseSurface === 'function') {
                 try {
-                    adapterContract.releaseSurface(token, reason || 'window-unregistered');
+                    adapterContract.releaseSurface(token, reason || lifecycleReasons.WINDOW_UNREGISTERED);
                 } catch (_) {}
             }
             windowData.contentsSurfaceClaim = null;
@@ -117,13 +184,8 @@
         }
 
         function forgetContentsOwner(contents, ownerWindow = null) {
-            if (!contents || !contentsOwners || typeof contentsOwners.delete !== 'function') return;
-            try {
-                if (ownerWindow && typeof contentsOwners.get === 'function' && contentsOwners.get(contents) !== ownerWindow) {
-                    return;
-                }
-            } catch (_) {}
-            try { contentsOwners.delete(contents); } catch (_) {}
+            if (!contents) return;
+            surfaceOwnership.forgetContentsOwner(contents, ownerWindow);
         }
 
         function forgetWindowContentsOwners(window, windowData) {
@@ -133,7 +195,7 @@
             contents.forEach((candidate) => forgetContentsOwner(candidate, window || null));
         }
 
-        function unregisterWindow(window, reason = 'window-unregistered') {
+        function unregisterWindow(window, reason = lifecycleReasons.WINDOW_UNREGISTERED) {
             if (!window) return null;
             let windowData = null;
             try { windowData = windowRegistry.get(window); } catch (_) {}
@@ -156,19 +218,7 @@
         }
 
         function isWindowDisplayAttached(window) {
-            if (!window || window._destroyed || window.destroyed) return false;
-            let child = window;
-            let parent = window.parent || null;
-            let depth = 0;
-            while (parent && depth < 128) {
-                if (parent._destroyed || parent.destroyed) return false;
-                const children = Array.isArray(parent.children) ? parent.children : null;
-                if (children && children.indexOf(child) < 0) return false;
-                child = parent;
-                parent = parent.parent || null;
-                depth += 1;
-            }
-            return !!child && child !== window;
+            return displayState.isDisplayObjectAttached(window);
         }
 
         function updateWindowAttachmentState(window, windowData) {
@@ -186,6 +236,13 @@
             return !isWindowDisplayAttached(window);
         }
 
+        function getRegisteredWindowDetachReason(window) {
+            const chainState = displayState.describeDisplayChain(window);
+            return chainState.state === 'inactive-scene'
+                ? lifecycleReasons.NOT_CURRENT_SCENE
+                : lifecycleReasons.WINDOW_DETACHED;
+        }
+
         function pruneDetachedRegisteredWindows(currentWindow = null) {
             if (!registeredWindows || typeof registeredWindows.forEach !== 'function') return;
             const detached = [];
@@ -194,30 +251,30 @@
                     if (!candidate || candidate === currentWindow) return;
                     const candidateData = windowRegistry.get(candidate);
                     if (!candidateData) {
-                        detached.push(candidate);
+                        detached.push({ window: candidate, reason: lifecycleReasons.WINDOW_DETACHED });
                         return;
                     }
                     updateWindowAttachmentState(candidate, candidateData);
                     if (isDetachedRegisteredWindow(candidate, candidateData)) {
-                        detached.push(candidate);
+                        detached.push({ window: candidate, reason: getRegisteredWindowDetachReason(candidate) });
                     }
                 });
             } catch (_) {}
-            detached.forEach((window) => unregisterWindow(window, 'window-detached'));
+            detached.forEach(({ window, reason }) => unregisterWindow(window, reason));
         }
 
         function bindContentsOwner(window, windowData) {
             try {
                 if (!window || !window.contents) return;
                 if (windowData && windowData.contentsBitmap && windowData.contentsBitmap !== window.contents) {
-                    markWindowEntriesStale(windowData, 'contents-replaced');
-                    releaseWindowContentsSurface(windowData, 'contents-replaced');
+                    markWindowEntriesStale(windowData, lifecycleReasons.CONTENTS_REPLACED);
+                    releaseWindowContentsSurface(windowData, lifecycleReasons.CONTENTS_REPLACED);
                     forgetContentsOwner(windowData.contentsBitmap, window);
                 }
                 if (windowData) {
                     windowData.contentsBitmap = window.contents;
                 }
-                contentsOwners.set(window.contents, window);
+                surfaceOwnership.rememberContentsOwner(window.contents, window);
                 claimWindowContentsSurface(window, windowData);
                 if (!window.contents._trWindowPipelineDepth) {
                     window.contents._trWindowPipelineDepth = 0;
@@ -243,6 +300,7 @@
         }
 
         function addWindowToRegistry(window, windowData) {
+            installWindowLifecyclePrototypeHooks(window);
             pruneDetachedRegisteredWindows(window);
             windowData.windowType = window.constructor.name;
             windowData.windowId = window._uniqueId || (window._uniqueId = Math.random().toString(36).substring(2, 11));
@@ -259,14 +317,15 @@
         }
 
         function ensureWindowRegistered(window) {
+            installWindowLifecyclePrototypeHooks(window);
             pruneDetachedRegisteredWindows(window);
             let windowData = windowRegistry.get(window);
             if (!windowData) {
                 window._uniqueId = window._uniqueId || Math.random().toString(36).substring(2, 11);
-                windowData = { texts: new Map(), isOpen: true, pendingRedraws: new Map(), recentlyRedrawn: new Map() };
+                windowData = { texts: new Map(), isOpen: true, renderQueue: new Map(), recentlyRedrawn: new Map() };
                 addWindowToRegistry(window, windowData);
-            } else if (!windowData.pendingRedraws) {
-                windowData.pendingRedraws = new Map();
+            } else if (!windowData.renderQueue) {
+                windowData.renderQueue = new Map();
                 if (!windowData.recentlyRedrawn) windowData.recentlyRedrawn = new Map();
             }
             updateWindowAttachmentState(window, windowData);

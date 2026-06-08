@@ -5,14 +5,16 @@
     const globalScope = typeof window !== 'undefined'
         ? window
         : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const parts = globalScope.LiveTranslatorForesightTreeViewerParts || {};
-    globalScope.LiveTranslatorForesightTreeViewerParts = parts;
+    const registry = globalScope.LiveTranslatorForesightTreeViewerRegistry;
+    if (!registry || typeof registry.registerPart !== 'function' || typeof registry.requirePart !== 'function') {
+        throw new Error('[ForesightTreeViewer] parts registry must load before model helpers.');
+    }
 
     // Snapshot-to-tree model builder. Rendering modules consume only this normalized model.
     const DEFAULT_MAX_ACTIONS = 150;
     const BRANCH_ACTIONS = new Set(['branch', 'choice', 'conditional', 'barrier']);
-    const { cloneList, cloneValue, cssToken, finiteNumber, nonEmptyString, normalizeAction, normalizeClass, normalizeComparableText, normalizeControlFlowTarget, positiveInteger } = parts.utils;
-    const condenseHelpers = parts.modelCondense.createCondenseHelpers({ isMessageAction, createBranchMergeGroups });
+    const { cloneList, cloneValue, cssToken, finiteNumber, nonEmptyString, normalizeAction, normalizeClass, normalizeComparableText, normalizeControlFlowTarget, positiveInteger } = registry.requirePart('utils');
+    const condenseHelpers = registry.requirePart('modelCondense').createCondenseHelpers({ isMessageAction, createBranchMergeGroups });
     const { condenseNodesForMessages } = condenseHelpers;
     
     function createModel(snapshot, options = {}) {
@@ -21,6 +23,7 @@
             const scans = source && Array.isArray(source.recent) ? source.recent : [];
             const scan = findLatestScan(scans);
             const textRecords = Array.isArray(options.textRecords) ? options.textRecords : [];
+            const currentMessageRecord = normalizeCurrentMessageRecord(options.currentMessageRecord);
             const usedRecords = new Set();
             const rawActions = scan && Array.isArray(scan.commandActions) ? scan.commandActions : [];
             const actions = rawActions.slice(0, maxActions);
@@ -33,6 +36,7 @@
                 branchPath: [],
                 maxActions,
                 textRecords,
+                currentMessageRecord,
                 usedRecords,
                 branchGroups,
                 pathStops,
@@ -47,6 +51,7 @@
                 hasSnapshot: Boolean(source),
                 snapshotUpdatedAt: source && source.updatedAt ? source.updatedAt : null,
                 scan,
+                currentMessageRecord,
                 scanCount: scans.length,
                 summary: source && source.summary && typeof source.summary === 'object'
                     ? Object.assign({}, source.summary)
@@ -73,7 +78,7 @@
                 const branchTotal = (Array.isArray(node && node.branches) ? node.branches : []).reduce((branchCount, branch) => (
                     branchCount + countActionNodes(branch && branch.nodes)
                 ), 0);
-                if (node && (node.condensed === true || node.messageOnlyBranch === true)) return total + branchTotal;
+                if (node && (node.condensed === true || node.messageOnlyJunction === true)) return total + branchTotal;
                 return total + 1 + branchTotal;
             }, 0);
         }
@@ -144,7 +149,9 @@
             const source = action && typeof action === 'object' ? action : {};
             const classification = normalizeClass(source.classification);
             const actionName = normalizeAction(source.action || source.scanBehavior);
-            const record = findMessageRecordForAction(source, context.textRecords, context.usedRecords);
+            const rawMessageText = getActionMessageText(source);
+            const record = findMessageRecordForAction(source, context.textRecords, context.usedRecords, context.currentMessageRecord, rawMessageText)
+                || createSyntheticMessageRecord(source, context, rawMessageText);
             if (record && record.id) context.usedRecords.add(String(record.id));
             const actionBranchPath = normalizeBranchPath(source.branchPath, context.branchPath);
             const ownerKey = createActionOwnerKey(source);
@@ -232,6 +239,7 @@
                         branchPath,
                         maxActions: context.maxActions,
                         textRecords: context.textRecords,
+                        currentMessageRecord: context.currentMessageRecord,
                         usedRecords: context.usedRecords,
                         branchGroups: context.branchGroups,
                         pathStops: context.pathStops,
@@ -336,11 +344,13 @@
             return true;
         }
     
-    function findMessageRecordForAction(action, records, usedRecords) {
+    function findMessageRecordForAction(action, records, usedRecords, currentMessageRecord, rawMessageText) {
             if (!isMessageAction(action) || !Array.isArray(records) || !records.length) return null;
             const actionIndex = finiteNumber(action.index);
             const recordId = nonEmptyString(action.recordId) || nonEmptyString(action.translationRecordId);
-            const candidates = records.filter((record) => record && (!record.id || !usedRecords.has(String(record.id))));
+            const candidates = records.filter((record) => record
+                && (!record.id || !usedRecords.has(String(record.id)))
+                && !isSameMessageRecord(record, currentMessageRecord));
     
             if (recordId) {
                 const byId = candidates.find((record) => String(record.id || '') === recordId);
@@ -352,9 +362,61 @@
                 if (byIndex) return byIndex;
             }
     
-            const messageText = normalizeComparableText(getConsumedMessageText(action));
+            const messageText = normalizeComparableText(rawMessageText === undefined ? getConsumedMessageText(action) : rawMessageText);
             if (!messageText) return null;
             return candidates.find((record) => getRecordComparableTexts(record).some((text) => text === messageText)) || null;
+        }
+
+    function createSyntheticMessageRecord(action, context, rawMessageText) {
+            if (!isMessageAction(action)) return null;
+            const messageText = normalizeComparableText(rawMessageText);
+            if (!messageText || isCurrentMessageAction(action, context && context.currentMessageRecord)) return null;
+            const source = action && typeof action === 'object' ? action : {};
+            const actionIndex = finiteNumber(source.index);
+            const listContext = getActionListContext(source);
+            const listId = nonEmptyString(listContext.listId);
+            const branchPath = normalizeBranchPath(source.branchPath, context && context.branchPath).join('.');
+            const id = [
+                'foresight-message',
+                listId || 'list',
+                actionIndex === null ? `ordinal-${context && context.ordinal || 0}` : `index-${actionIndex}`,
+                branchPath || 'root',
+            ].map((part) => cssToken(part)).join(':');
+            return {
+                id,
+                hook: 'message',
+                hookKey: 'message',
+                status: 'detected',
+                rawText: messageText,
+                original: messageText,
+                visibleText: messageText,
+                translation: '',
+                translationReceived: '',
+                metadata: {
+                    foresight: true,
+                    syntheticForesightRecord: true,
+                    messageStartIndex: actionIndex,
+                    branchPath: normalizeBranchPath(source.branchPath, context && context.branchPath),
+                },
+            };
+        }
+
+    function normalizeCurrentMessageRecord(record) {
+            return record && typeof record === 'object' ? record : null;
+        }
+
+    function isSameMessageRecord(record, currentMessageRecord) {
+            if (!record || !currentMessageRecord) return false;
+            const recordId = nonEmptyString(record.id);
+            const currentId = nonEmptyString(currentMessageRecord.id);
+            return !!recordId && recordId === currentId;
+        }
+
+    function isCurrentMessageAction(action, currentMessageRecord) {
+            if (!action || !currentMessageRecord) return false;
+            const actionIndex = finiteNumber(action.index);
+            const currentStartIndex = getRecordMessageStartIndex(currentMessageRecord);
+            return actionIndex !== null && currentStartIndex !== null && actionIndex === currentStartIndex;
         }
     
     function isMessageAction(action) {
@@ -395,6 +457,16 @@
             });
             return lines.join('\n');
         }
+
+    function getActionMessageText(action) {
+            const consumedText = getConsumedMessageText(action);
+            if (normalizeComparableText(consumedText)) return consumedText;
+            const source = action && typeof action === 'object' ? action : {};
+            return nonEmptyString(source.messageText)
+                || nonEmptyString(source.rawText)
+                || nonEmptyString(source.text)
+                || nonEmptyString(source.summary);
+        }
     
     function getActionPathSegment(action, index) {
             const source = action && typeof action === 'object' ? action : {};
@@ -423,6 +495,6 @@
             ].join('|');
         }
     
-    parts.model = Object.freeze({ createModel });
+    registry.registerPart('model', Object.freeze({ createModel }));
 
 })();

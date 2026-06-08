@@ -12,9 +12,13 @@
     }
 
     function createController(scope = {}) {
-        const { firstString, firstNonEmptyString, clampPriority, normalizeId, mergeDetails, cloneItem, decorateTranslationHandle, resolveHandleSourceHint, isAbortErrorLike, activeItems, detachedItems } = scope;
-        const callScope = (name) => (...args) => scope[name](...args);
-        const { updateItem, retireItem, queueRenderCommand, clearItemTranslationRequest, getItemById, moveToActive, moveToArchive, recordEvent, rememberSourceTranslation, forgetSourceTranslation, classifyNoopTranslation, isSkippedItem, resolveBackgroundPriorityPolicy, applyPriorityPolicy } = Object.fromEntries(['updateItem', 'retireItem', 'queueRenderCommand', 'clearItemTranslationRequest', 'getItemById', 'moveToActive', 'moveToArchive', 'recordEvent', 'rememberSourceTranslation', 'forgetSourceTranslation', 'classifyNoopTranslation', 'isSkippedItem', 'resolveBackgroundPriorityPolicy', 'applyPriorityPolicy'].map((name) => [name, callScope(name)]));
+        const { firstString, firstNonEmptyString, clampPriority, normalizeId, mergeDetails, cloneItem, createLifecycleResult, decorateTranslationHandle, resolveHandleSourceHint, isAbortErrorLike, textLifecycle, activeItems, detachedItems } = scope;
+        const { resolveBackgroundPriorityPolicy, applyPriorityPolicy } = scope.controllerFacades.policy;
+        const { updateItem, retireItem } = scope.controllerFacades.lifecycle;
+        const { queueRenderCommand } = scope.controllerFacades.render;
+        const { clearItemTranslationRequest, markItemRenderCycleTranslationKnown, getItemById, moveToActive, moveToDetachedItem, moveToArchive } = scope.controllerFacades.items;
+        const { recordEvent } = scope.controllerFacades.events;
+        const { rememberSourceTranslation, forgetSourceTranslation, classifyNoopTranslation, isSkippedItem } = scope.controllerFacades.sourceCache;
 
         /**
          * Cancel the active translation subscriber for an item.
@@ -24,13 +28,58 @@
          * the same normalized source text.
          */
         function cancelItemTranslation(id, reason = 'translation canceled', options = {}) {
-            const item = activeItems.get(String(id || '')) || detachedItems.get(String(id || ''));
+            const key = normalizeId(id);
+            const item = activeItems.get(key) || detachedItems.get(key);
             const handle = item && item.translationHandle ? item.translationHandle : null;
-            if (!handle || typeof handle.cancel !== 'function') return false;
+            if (!key) {
+                return createLifecycleResult('missing-id', {
+                    handled: false,
+                    changed: false,
+                    terminal: true,
+                    reason: 'missing-id',
+                });
+            }
+            if (!item) {
+                return createLifecycleResult('missing-record', {
+                    handled: false,
+                    changed: false,
+                    terminal: true,
+                    recordId: key,
+                    id: key,
+                    reason: 'missing-record',
+                });
+            }
+            if (!handle || typeof handle.cancel !== 'function') {
+                return createLifecycleResult('missing-handle', {
+                    handled: true,
+                    changed: false,
+                    recordId: key,
+                    id: key,
+                    reason: 'missing-translation-handle',
+                    item: cloneItem(item),
+                });
+            }
             try {
-                return handle.cancel(reason, options && typeof options === 'object' ? options : {}) === true;
-            } catch (_) {
-                return false;
+                const canceled = handle.cancel(reason, options && typeof options === 'object' ? options : {}) === true;
+                return createLifecycleResult(canceled ? 'canceled' : 'not-canceled', {
+                    handled: true,
+                    changed: canceled,
+                    terminal: canceled,
+                    recordId: key,
+                    id: key,
+                    reason: firstString(reason, canceled ? 'translation-canceled' : 'translation-not-canceled'),
+                    item: cloneItem(item),
+                });
+            } catch (error) {
+                return createLifecycleResult('cancel-failed', {
+                    handled: true,
+                    changed: false,
+                    terminal: true,
+                    recordId: key,
+                    id: key,
+                    reason: error && error.message ? error.message : 'translation-cancel-failed',
+                    item: cloneItem(item),
+                });
             }
         }
 
@@ -42,18 +91,79 @@
          * promote visible text and demote background text without losing work.
          */
         function setItemTranslationPriority(id, priority, reason = '', details = {}) {
-            const item = activeItems.get(String(id || '')) || detachedItems.get(String(id || ''));
-            if (!item || isSkippedItem(item)) return false;
+            const key = normalizeId(id);
+            const item = activeItems.get(key) || detachedItems.get(key);
+            if (!key) {
+                return createLifecycleResult('missing-id', {
+                    handled: false,
+                    changed: false,
+                    terminal: true,
+                    reason: 'missing-id',
+                });
+            }
+            if (!item) {
+                return createLifecycleResult('missing-record', {
+                    handled: false,
+                    changed: false,
+                    terminal: true,
+                    recordId: key,
+                    id: key,
+                    reason: 'missing-record',
+                });
+            }
+            if (isSkippedItem(item)) {
+                return createLifecycleResult('skipped', {
+                    handled: true,
+                    changed: false,
+                    terminal: true,
+                    recordId: key,
+                    id: key,
+                    reason: 'item-skipped',
+                    item: cloneItem(item),
+                });
+            }
             const numericPriority = clampPriority(priority);
             const itemChanged = item.priority === numericPriority
                 ? false
                 : !!setItemPriority(id, numericPriority, reason, details);
             const handle = item && item.translationHandle ? item.translationHandle : null;
-            if (!handle || typeof handle.setPriority !== 'function') return itemChanged;
+            if (!handle || typeof handle.setPriority !== 'function') {
+                return createLifecycleResult(itemChanged ? 'priority-updated' : 'unchanged', {
+                    handled: true,
+                    changed: itemChanged,
+                    recordId: key,
+                    id: key,
+                    reason: firstString(reason, itemChanged ? 'priority-updated' : 'priority-unchanged'),
+                    priority: numericPriority,
+                    item: cloneItem(getItemById(key) || item),
+                });
+            }
             try {
-                return handle.setPriority(numericPriority, reason || '') === true || itemChanged;
+                const handleChanged = handle.setPriority(numericPriority, reason || '') === true;
+                const changed = handleChanged || itemChanged;
+                return createLifecycleResult(changed ? 'priority-updated' : 'unchanged', {
+                    handled: true,
+                    changed,
+                    recordId: key,
+                    id: key,
+                    reason: firstString(reason, changed ? 'priority-updated' : 'priority-unchanged'),
+                    priority: numericPriority,
+                    handleChanged,
+                    itemChanged,
+                    item: cloneItem(getItemById(key) || item),
+                });
             } catch (_) {
-                return itemChanged;
+                return createLifecycleResult(itemChanged ? 'priority-updated' : 'priority-handle-failed', {
+                    handled: true,
+                    changed: itemChanged,
+                    recordId: key,
+                    id: key,
+                    reason: firstString(reason, itemChanged ? 'priority-updated' : 'priority-handle-failed'),
+                    priority: numericPriority,
+                    handleChanged: false,
+                    itemChanged,
+                    item: cloneItem(getItemById(key) || item),
+                });
             }
         }
 
@@ -79,9 +189,9 @@
         /**
          * Mark an item as skipped by translation policy.
          *
-         * The returned text is usually the original input. Keeping it in
-         * translationReceived makes diagnostics explicit about what the adapter
-         * was told to render or ignore.
+         * Skipped text is returned to the requester, but it is not a translated
+         * result. Keep item translation fields empty so render adapters do not
+         * mistake encoded source text for completed provider output.
          */
         function markTranslationSkipped(id, translation, details = {}) {
             const translated = firstString(translation);
@@ -89,16 +199,20 @@
                 skipReason: details && details.reason,
                 eligibilityCategory: details && details.category,
             });
+            const eventDetails = Object.assign({}, details || {}, {
+                skippedText: translated,
+            });
             return updateItem(id, {
                 status: 'skipped',
-                translation: translated,
-                translationReceived: translated,
+                translation: '',
+                translationReceived: '',
+                translationDrawn: '',
                 sourceHint: details && details.sourceHint,
                 metadata,
             }, {
                 eventType: 'item.skipped',
                 message: details && details.reason ? details.reason : '',
-                details,
+                details: eventDetails,
             });
         }
 
@@ -153,13 +267,21 @@
                 sourceHint: details && details.sourceHint ? details.sourceHint : 'cache',
                 metadata: details && details.metadata,
             };
-            return updateItem(id, patch, {
+            const updated = updateItem(id, patch, {
                 eventType: 'item.cache_hit',
                 details: Object.assign({
                     source: patch.sourceHint,
                     translationReceived: patch.translationReceived,
                 }, details || {}),
             });
+            const item = getItemById(id);
+            if (item) {
+                markItemRenderCycleTranslationKnown(item, translation, Object.assign({}, details || {}, {
+                    reason: 'cache-hit',
+                }));
+                return cloneItem(item);
+            }
+            return updated;
         }
 
         /**
@@ -177,13 +299,21 @@
                 sourceHint: details && details.sourceHint ? details.sourceHint : 'provider',
                 metadata: details && details.metadata,
             };
-            return updateItem(id, patch, {
+            const updated = updateItem(id, patch, {
                 eventType: 'item.translated',
                 details: Object.assign({
                     source: patch.sourceHint,
                     translationReceived: patch.translationReceived,
                 }, details || {}),
             });
+            const item = getItemById(id);
+            if (item) {
+                markItemRenderCycleTranslationKnown(item, translation, Object.assign({}, details || {}, {
+                    reason: 'provider-completed',
+                }));
+                return cloneItem(item);
+            }
+            return updated;
         }
 
         function markTranslationNoop(id, translation, details = {}) {
@@ -194,7 +324,7 @@
             const category = firstString(details && details.category, 'sameAsSource');
             const now = Date.now();
             clearItemTranslationRequest(item);
-            item.status = 'failed';
+            textLifecycle.applyTransition(item, 'failed');
             item.translation = '';
             item.translationReceived = received;
             item.translationDrawn = '';
@@ -206,7 +336,6 @@
             item.updatedAt = now;
             item.lastSeenAt = now;
             item.sequence = ++scope.sequence;
-            item.active = true;
             item.deactivatedAt = null;
             moveToActive(item);
             forgetSourceTranslation(item, received);
@@ -250,7 +379,11 @@
             const translated = firstString(translation);
             const reason = firstString(details && details.reason, 'translation-noop');
             const category = firstString(details && details.category, 'sameAsSource');
-            item.status = 'failed';
+            textLifecycle.applyTransition(item, 'failed', {
+                active: false,
+                detached: true,
+                requestActive: false,
+            });
             item.translation = '';
             item.translationReceived = translated;
             item.translationDrawn = '';
@@ -290,15 +423,32 @@
             return cloneItem(item);
         }
 
-        function recordDetachedTranslationFailure(item, error) {
+        function recordDetachedTranslationFailure(item, error, failureMetadata = null) {
             if (!item) return null;
             const message = error && error.message ? error.message : String(error || 'translation failed');
+            const metadata = failureMetadata && typeof failureMetadata === 'object'
+                ? failureMetadata
+                : createTranslationFailureMetadata(error);
             item.updatedAt = Date.now();
             item.sequence = ++scope.sequence;
+            if (shouldKeepDetachedFailureForProviderRestoreRetry(item, metadata)) {
+                textLifecycle.applyTransition(item, 'failed', {
+                    active: false,
+                    detached: true,
+                    requestActive: false,
+                });
+                item.metadata = mergeDetails(item.metadata, metadata);
+                moveToDetachedItem(item);
+                recordEvent(isAbortErrorLike(error) ? 'item.translation_canceled_detached' : 'item.translation_failed_detached', item, {
+                    message,
+                    details: Object.assign({ detached: true, reason: message }, metadata),
+                });
+                return cloneItem(item);
+            }
             moveToArchive(item);
             recordEvent(isAbortErrorLike(error) ? 'item.translation_canceled_detached' : 'item.translation_failed_detached', item, {
                 message,
-                details: { detached: true, reason: message },
+                details: Object.assign({ detached: true, reason: message }, metadata),
             });
             return cloneItem(item);
         }
@@ -335,16 +485,53 @@
                 ? String(details.screenState)
                 : (isVisible ? 'visible' : 'hidden');
             const item = getItemById(key);
-            if (item && item.visible === isVisible && String(item.screenState || '') === screenState) {
-                return cloneItem(item);
+            if (!key) {
+                return createLifecycleResult('missing-id', {
+                    handled: false,
+                    changed: false,
+                    terminal: true,
+                    reason: 'missing-id',
+                });
             }
-            return updateItem(id, {
+            if (!item) {
+                return createLifecycleResult('missing-record', {
+                    handled: false,
+                    changed: false,
+                    terminal: true,
+                    recordId: key,
+                    id: key,
+                    reason: 'missing-record',
+                });
+            }
+            if (item && item.visible === isVisible && String(item.screenState || '') === screenState) {
+                return createLifecycleResult('unchanged', {
+                    handled: true,
+                    changed: false,
+                    recordId: key,
+                    id: key,
+                    reason: details && details.reason ? details.reason : 'visibility-unchanged',
+                    visible: isVisible,
+                    screenState,
+                    item: cloneItem(item),
+                });
+            }
+            const updated = updateItem(id, {
                 visible: isVisible,
                 screenState,
             }, {
                 eventType: isVisible ? 'item.visible' : 'item.hidden',
                 message: details && details.reason ? details.reason : '',
                 details,
+            });
+            return createLifecycleResult(isVisible ? 'visible' : 'hidden', {
+                handled: true,
+                changed: true,
+                recordId: key,
+                id: key,
+                reason: details && details.reason ? details.reason : (isVisible ? 'item-visible' : 'item-hidden'),
+                visible: isVisible,
+                screenState,
+                item: updated,
             });
         }
 
@@ -356,6 +543,26 @@
          * subscriber instead of being canceled.
          */
         function backgroundItem(id, details = {}) {
+            const key = normalizeId(id);
+            if (!key) {
+                return createLifecycleResult('missing-id', {
+                    handled: false,
+                    changed: false,
+                    terminal: true,
+                    reason: 'missing-id',
+                });
+            }
+            const item = getItemById(key);
+            if (!item) {
+                return createLifecycleResult('missing-record', {
+                    handled: false,
+                    changed: false,
+                    terminal: true,
+                    recordId: key,
+                    id: key,
+                    reason: 'missing-record',
+                });
+            }
             const policy = resolveBackgroundPriorityPolicy(id, details);
             const priority = policy.priority;
             const updated = updateItem(id, {
@@ -369,7 +576,17 @@
                 details: Object.assign({ priority }, details || {}),
             });
             applyPriorityPolicy(id, policy);
-            return updated;
+            return createLifecycleResult('backgrounded', {
+                handled: true,
+                changed: true,
+                recordId: key,
+                id: key,
+                reason: details && details.reason ? details.reason : 'item-backgrounded',
+                priority,
+                visible: false,
+                screenState: updated && updated.screenState ? updated.screenState : 'background',
+                item: updated,
+            });
         }
 
         /**
@@ -446,9 +663,10 @@
         function failItemTranslation(id, handle, token, error) {
             const item = activeItems.get(String(id || '')) || detachedItems.get(String(id || ''));
             if (!item || item.translationHandle !== handle || item.translationToken !== token) return null;
+            const failureMetadata = createTranslationFailureMetadata(error);
             clearItemTranslationRequest(item);
             if (activeItems.get(item.id) !== item || item.active !== true) {
-                return recordDetachedTranslationFailure(item, error);
+                return recordDetachedTranslationFailure(item, error, failureMetadata);
             }
             const message = error && error.message ? error.message : String(error || 'translation failed');
             if (isAbortErrorLike(error)) {
@@ -458,11 +676,50 @@
                     details: { reason: message },
                 });
             }
-            return updateItem(item.id, { status: 'failed' }, {
+            return updateItem(item.id, {
+                status: 'failed',
+                metadata: failureMetadata,
+            }, {
                 eventType: 'item.failed',
                 message,
-                details: { reason: message },
+                details: Object.assign({ reason: message }, failureMetadata),
             });
+        }
+
+        function createTranslationFailureMetadata(error) {
+            const message = error && error.message ? String(error.message) : String(error || 'translation failed');
+            const metadata = {
+                translationFailureReason: message,
+                translationFailureCategory: 'provider',
+            };
+            if (error && error.code) metadata.translationFailureCode = String(error.code);
+            if (isRetryOnProviderRestoredError(error)) {
+                metadata.translationFailureCategory = 'providerAvailability';
+                metadata.retryOnProviderRestored = true;
+                metadata.providerAvailabilityState = 'unavailable';
+                if (error.providerAvailabilityReason) {
+                    metadata.providerAvailabilityReason = String(error.providerAvailabilityReason);
+                }
+                if (error.providerAvailabilityMessage) {
+                    metadata.providerAvailabilityMessage = String(error.providerAvailabilityMessage);
+                }
+            }
+            return metadata;
+        }
+
+        function isRetryOnProviderRestoredError(error) {
+            return !!(error
+                && typeof error === 'object'
+                && (error.retryOnProviderRestored === true
+                    || error.providerAvailability === 'unavailable'));
+        }
+
+        function shouldKeepDetachedFailureForProviderRestoreRetry(item, metadata) {
+            return !!(item
+                && metadata
+                && metadata.retryOnProviderRestored === true
+                && item.metadata
+                && item.metadata.foresight === true);
         }
 
         return {

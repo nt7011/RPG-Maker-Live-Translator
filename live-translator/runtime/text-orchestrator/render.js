@@ -12,9 +12,11 @@
     }
 
     function createController(scope = {}) {
-        const { firstString, firstNonEmptyString, finiteNumber, normalizeBounds, pickSerializableObject, normalizeId, renderCommandLimit, activeItems, renderCommands } = scope;
-        const callScope = (name) => (...args) => scope[name](...args);
-        const { markTranslationNoop, getItemById, recordEvent, isTranslationNoopRenderRejection } = Object.fromEntries(['markTranslationNoop', 'getItemById', 'recordEvent', 'isTranslationNoopRenderRejection'].map((name) => [name, callScope(name)]));
+        const { firstString, firstNonEmptyString, finiteNumber, normalizeBounds, pickSerializableObject, normalizeId, renderCommandLimit, activeItems, renderCommands, renderTransaction } = scope;
+        const { markTranslationNoop } = scope.controllerFacades.translationState;
+        const { markItemRenderCycleAdmitted, markItemRenderCycleDecision, getItemById } = scope.controllerFacades.items;
+        const { recordEvent } = scope.controllerFacades.events;
+        const { isTranslationNoopRenderRejection } = scope.controllerFacades.sourceCache;
 
         /**
          * Queue a render instruction for the adapter that owns an item.
@@ -43,6 +45,7 @@
             };
             renderCommands.push(renderCommand);
             while (renderCommands.length > renderCommandLimit) renderCommands.shift();
+            markItemRenderCycleAdmitted(item, renderCommand);
             recordEvent('item.render_queued', item, {
                 message: renderCommand.strategy || '',
                 details: renderCommand,
@@ -71,6 +74,7 @@
             const command = findRenderCommand(item.id, source.commandId);
             const details = normalizeRenderCommandDecision(normalizedStatus, source, item, command);
             updateRenderCommandStatus(command, normalizedStatus, details);
+            markItemRenderCycleDecision(item, normalizedStatus, details, command);
             const event = recordEvent(`item.render_${normalizedStatus}`, item, {
                 message: details.reason,
                 details,
@@ -111,6 +115,7 @@
                     details,
                 }, item, command);
                 updateRenderCommandStatus(command, 'rejected', decision);
+                markItemRenderCycleDecision(item, 'rejected', decision, command);
                 recordEvent('item.render_rejected', item, {
                     message: decision.reason,
                     details: decision,
@@ -141,7 +146,9 @@
 
         function normalizeRenderCommandDecision(status, decision, item, command = null) {
             const details = decision && typeof decision.details === 'object' ? decision.details : {};
-            return {
+            const normalizedDetails = pickSerializableObject(details);
+            const renderCommit = createRenderCommandDecisionCommit(status, decision, item, command, normalizedDetails);
+            const normalized = {
                 status,
                 reason: firstString(decision.reason, status),
                 commandId: firstString(decision.commandId, command && command.id),
@@ -149,8 +156,65 @@
                 commandGeneration: finiteNumber(decision.commandGeneration) || (command && command.generation) || 0,
                 queuedAt: command && command.queuedAt ? command.queuedAt : 0,
                 adapterId: item.sourceAdapter || item.hook || '',
-                details: pickSerializableObject(details),
+                details: normalizedDetails,
             };
+            if (renderCommit) normalized.renderCommit = renderCommit;
+            return normalized;
+        }
+
+        function createRenderCommandDecisionCommit(status, decision, item, command, details = {}) {
+            if (!renderTransaction || typeof renderTransaction.createRenderCommit !== 'function') return null;
+            const source = decision && typeof decision === 'object' ? decision : {};
+            const existingCommit = source.renderCommit && typeof source.renderCommit === 'object'
+                ? pickSerializableObject(source.renderCommit)
+                : null;
+            const existingDetails = existingCommit && existingCommit.details && typeof existingCommit.details === 'object'
+                ? existingCommit.details
+                : {};
+            const mergedDetails = Object.assign({}, existingDetails, details || {});
+            return renderTransaction.createRenderCommit(Object.assign({}, existingCommit || {}, {
+                status,
+                phase: resolveRenderCommandCommitPhase(status),
+                reason: firstString(source.reason, status),
+                route: firstString(existingCommit && existingCommit.route, source.route, 'text-orchestrator'),
+                adapterId: firstString(existingCommit && existingCommit.adapterId, item && (item.sourceAdapter || item.hook)),
+                itemId: item && item.id ? item.id : firstString(source.itemId, source.recordId, existingCommit && existingCommit.itemId),
+                recordId: item && item.id ? item.id : firstString(source.recordId, source.itemId, existingCommit && existingCommit.recordId),
+                surfaceId: firstString(source.surfaceId, item && item.surfaceId, existingCommit && existingCommit.surfaceId),
+                slotKey: firstString(source.slotKey, item && item.slotKey, existingCommit && existingCommit.slotKey),
+                strategy: firstString(source.strategy, command && command.strategy, item && item.renderStrategy, existingCommit && existingCommit.strategy),
+                commandId: firstString(source.commandId, command && command.id, existingCommit && existingCommit.commandId),
+                commandGeneration: finiteNumber(source.commandGeneration) || (command && command.generation) || finiteNumber(existingCommit && existingCommit.commandGeneration),
+                generation: finiteNumber(source.generation) || (command && command.generation) || finiteNumber(existingCommit && existingCommit.generation) || (item && item.generation) || 0,
+                translationReceived: firstString(
+                    source.translationReceived,
+                    details && details.translationReceived,
+                    command && command.text,
+                    existingCommit && existingCommit.translationReceived,
+                    item && item.translationReceived,
+                    item && item.translation
+                ),
+                translationDrawn: firstString(
+                    source.translationDrawn,
+                    details && details.translationDrawn,
+                    existingCommit && existingCommit.translationDrawn,
+                    item && item.translationDrawn
+                ),
+                drawBoundary: source.drawBoundary
+                    || details && details.drawBoundary
+                    || existingCommit && existingCommit.drawBoundary
+                    || item && item.drawBoundary
+                    || null,
+                details: mergedDetails,
+            }));
+        }
+
+        function resolveRenderCommandCommitPhase(status) {
+            const phases = renderTransaction && renderTransaction.PHASES || {};
+            if (status === 'accepted') return phases.RENDER_COMMITTED || 'render-committed';
+            if (status === 'deferred') return phases.RENDER_DEFERRED || 'render-deferred';
+            if (status === 'noop') return phases.RENDER_NOOP || 'render-noop';
+            return phases.RENDER_REJECTED || 'render-rejected';
         }
 
         function updateRenderCommandStatus(command, status, decision) {

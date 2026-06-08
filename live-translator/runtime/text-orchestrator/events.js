@@ -13,8 +13,7 @@
 
     function createController(scope = {}) {
         const { pickSerializableObject, cloneDiagnosticEvent, logger, eventLimit, itemEventLimit, events, listeners } = scope;
-        const callScope = (name) => (...args) => scope[name](...args);
-        const { schedulePublish } = Object.fromEntries(['schedulePublish'].map((name) => [name, callScope(name)]));
+        const { schedulePublish } = scope.controllerFacades.diagnostics;
 
         /**
          * Append a lifecycle/diagnostic event and notify listeners.

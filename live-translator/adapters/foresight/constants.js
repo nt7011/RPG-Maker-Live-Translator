@@ -5,8 +5,11 @@
     const globalScope = typeof window !== 'undefined'
         ? window
         : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const parts = globalScope.LiveTranslatorForesightParts || {};
-    globalScope.LiveTranslatorForesightParts = parts;
+    const requireRuntimeModule = globalScope.LiveTranslatorRequire;
+    if (typeof requireRuntimeModule !== 'function') {
+        throw new Error('[LiveTranslator] runtime module registry is unavailable before Foresight parts.');
+    }
+    const parts = requireRuntimeModule('adapters.foresight.partsRegistry').getParts();
 
     const DEFAULT_BUDGET = 30;
     const DEFAULT_MAX_SCAN_COMMANDS = 150;

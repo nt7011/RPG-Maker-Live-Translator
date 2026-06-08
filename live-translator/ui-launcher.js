@@ -55,11 +55,12 @@
             id: 'translator',
             title: 'LiveTranslatorGui',
             file: 'gui/index.html',
-            width: 1100,
-            height: 950,
-            screenFit: {
-                widthRatio: 0.25,
-                heightRatio: 0.95,
+            width: 960,
+            height: 2160,
+            // Open as a tall side panel, but keep enough room for the game on
+            // the same monitor.
+            sizePolicy: {
+                maxAvailableWidthRatio: 0.5,
                 anchor: 'top-right',
             },
             errorPrefix: '[LiveTranslatorGui]',

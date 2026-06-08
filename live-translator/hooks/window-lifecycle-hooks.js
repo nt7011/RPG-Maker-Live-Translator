@@ -26,12 +26,11 @@
                 windowLifecycle = null,
                 windowRegistry,
                 addWindowToRegistry,
+                registerWindowLifecyclePrototypeInstaller = null,
                 unregisterWindow,
                 getWindowTextHelpers = null,
                 getWindowDrawHelpers = null,
                 getGameMessageHelpers = null,
-                redrawGameMessageText,
-                getRedrawGameMessageText = null,
             } = options;
     
             if (!logger
@@ -53,11 +52,12 @@
                 windowLifecycle,
                 windowRegistry,
                 addWindowToRegistry,
+                registerWindowLifecyclePrototypeInstaller,
                 unregisterWindow,
                 getWindowTextHelpers,
                 getWindowDrawHelpers,
             });
-            installMessagePendingRedrawHook({ logger, redrawGameMessageText, getRedrawGameMessageText, getGameMessageHelpers });
+            installMessagePendingRedrawHook({ logger, getGameMessageHelpers });
             return {
                 status: 'installed',
                 reason: 'Window_Base lifecycle hooks installed.',
@@ -67,8 +67,6 @@
     function installMessagePendingRedrawHook(context) {
             const {
                 logger,
-                redrawGameMessageText,
-                getRedrawGameMessageText,
                 getGameMessageHelpers,
             } = context;
     
@@ -80,29 +78,20 @@
                     return null;
                 }
             };
-            const resolveRedrawGameMessageText = () => {
-                if (typeof getRedrawGameMessageText === 'function') {
-                    try {
-                        const resolved = getRedrawGameMessageText();
-                        if (typeof resolved === 'function') return resolved;
-                    } catch (_) {}
-                }
-                return typeof redrawGameMessageText === 'function' ? redrawGameMessageText : null;
-            };
             const resolveApplyPendingMessageRedraw = () => {
                 const helpers = resolveGameMessageHelpers();
                 return helpers && typeof helpers.applyPendingMessageRedraw === 'function'
                     ? helpers.applyPendingMessageRedraw
                     : null;
             };
-            if (!resolveRedrawGameMessageText() && typeof getRedrawGameMessageText !== 'function') return;
+            if (typeof getGameMessageHelpers !== 'function') return;
     
             try {
                 if (typeof Window_Message === 'undefined'
                     || !Window_Message
                     || !Window_Message.prototype
                     || typeof Window_Message.prototype.update !== 'function'
-                    || hasHookInChain(Window_Message.prototype.update, '__trPendingRedrawWrapped', true)) {
+                    || hasHookInChain(Window_Message.prototype.update, '__trMessageRenderSessionUpdateWrapped', true)) {
                     return;
                 }
     
@@ -110,26 +99,14 @@
                 Window_Message.prototype.update = function(...args) {
                     const result = originalMessageUpdate.apply(this, args);
                     try {
-                        const redraw = resolveRedrawGameMessageText();
-                        if (typeof redraw !== 'function') return result;
-                        const pending = this._trPendingRedraw;
-                        if (pending && this.visible && this.isOpen() && this.contents) {
-                            const applyPending = resolveApplyPendingMessageRedraw();
-                            if (applyPending) {
-                                applyPending(this);
-                            } else if (this._trSessionId === pending.sessionId) {
-                                redraw(this, pending.text, pending);
-                                this._trPendingRedraw = null;
-                            } else {
-                                this._trPendingRedraw = null;
-                            }
-                        }
+                        const applyPending = resolveApplyPendingMessageRedraw();
+                        if (applyPending && this.visible && this.isOpen() && this.contents) applyPending(this);
                     } catch (error) {
                         logger.warn('[Window_Message.update pending redraw error]', error);
                     }
                     return result;
                 };
-                Window_Message.prototype.update.__trPendingRedrawWrapped = true;
+                Window_Message.prototype.update.__trMessageRenderSessionUpdateWrapped = true;
                 Window_Message.prototype.update.__trOriginal = originalMessageUpdate;
             } catch (error) {
                 logger.warn('[Init] Window_Message update hook error', error);

@@ -10,6 +10,13 @@
     if (typeof defineRuntimeModule !== 'function') {
         throw new Error('[LiveTranslator] runtime module registry is unavailable before hooks/window-display-removal-hooks.js.');
     }
+    const requireRuntimeModule = globalScope.LiveTranslatorRequire;
+    if (typeof requireRuntimeModule !== 'function') {
+        throw new Error('[LiveTranslator] runtime module require is unavailable before hooks/window-display-removal-hooks.js.');
+    }
+    const displayStateModule = requireRuntimeModule('runtime.displayState');
+    const lifecycleReasons = requireRuntimeModule('runtime.lifecycleReasons').reasons;
+    const FRAME_SETTLED_DETACH_TOKEN = 'liveTranslator.windowDetach.frameSettled.v1';
 
     // PIXI container hooks unregister windows when they leave the display tree without being formally closed.
     function installWindowDisplayRemovalHookGroup(context = {}) {
@@ -22,11 +29,12 @@
         } = context;
         const WindowBase = globalScope && globalScope.Window_Base ? globalScope.Window_Base : null;
         if (!globalScope || !WindowBase || !windowRegistry || typeof hasHookInChain !== 'function') return false;
+        const displayState = displayStateModule.createDisplayStateService(globalScope);
     
         const unregisterWindowSafely = (windowInstance, reason) => {
                     if (!windowInstance || typeof unregisterWindow !== 'function') return;
                     try {
-                        unregisterWindow(windowInstance, reason || 'window-unregistered');
+                        unregisterWindow(windowInstance, reason || lifecycleReasons.WINDOW_UNREGISTERED);
                     } catch (error) {
                         logger.warn('[WindowLifecycle] Window unregister failed.', error);
                     }
@@ -86,6 +94,7 @@
 
         let pendingDetachToken = 0;
         let pendingDetachFlushScheduled = false;
+        let frameSettledDetachHooksInstalled = false;
         const pendingDetachedWindows = new Set();
 
         const getRegisteredWindowData = (windowInstance) => {
@@ -104,7 +113,7 @@
                         if (state) {
                             windowInstance._trWindowRegistryPendingDetachToken = state.token;
                             windowInstance._trWindowRegistryPendingDetachRoot = state.root || null;
-                            windowInstance._trWindowRegistryPendingDetachReason = state.reason || 'window-detached';
+                            windowInstance._trWindowRegistryPendingDetachReason = state.reason || lifecycleReasons.WINDOW_DETACHED;
                         } else {
                             delete windowInstance._trWindowRegistryPendingDetachToken;
                             delete windowInstance._trWindowRegistryPendingDetachRoot;
@@ -117,7 +126,7 @@
                             windowData._trPendingDetach = true;
                             windowData._trPendingDetachToken = state.token;
                             windowData._trPendingDetachRoot = state.root || null;
-                            windowData._trPendingDetachReason = state.reason || 'window-detached';
+                            windowData._trPendingDetachReason = state.reason || lifecycleReasons.WINDOW_DETACHED;
                         } else {
                             delete windowData._trPendingDetach;
                             delete windowData._trPendingDetachToken;
@@ -142,7 +151,7 @@
                             || windowInstance,
                         reason: (windowData && windowData._trPendingDetachReason)
                             || (windowInstance && windowInstance._trWindowRegistryPendingDetachReason)
-                            || 'window-detached',
+                            || lifecycleReasons.WINDOW_DETACHED,
                     };
                 };
 
@@ -152,20 +161,21 @@
                     setPendingDetachState(windowInstance, null);
                 };
 
+        const markAttachedTree = (root) => {
+                    if (!root) return;
+                    const windows = [];
+                    collectWindowTree(root, windows);
+                    windows.forEach((windowInstance) => {
+                        const windowData = getRegisteredWindowData(windowInstance);
+                        if (!windowData) return;
+                        try {
+                            windowData._trEverAttached = true;
+                        } catch (_) {}
+                    });
+                };
+
         const isParentChainAttached = (root) => {
-                    if (!root || root._destroyed || root.destroyed) return false;
-                    let child = root;
-                    let parent = root.parent || null;
-                    let depth = 0;
-                    while (parent && depth < 128) {
-                        if (parent._destroyed || parent.destroyed) return false;
-                        const children = Array.isArray(parent.children) ? parent.children : null;
-                        if (children && children.indexOf(child) < 0) return false;
-                        child = parent;
-                        parent = parent.parent || null;
-                        depth += 1;
-                    }
-                    return !!child && child !== root;
+                    return displayState.isDisplayObjectAttached(root);
                 };
 
         const isDescendantOf = (candidate, root) => {
@@ -189,6 +199,7 @@
                 };
 
         const flushPendingDetachedWindows = () => {
+                    pendingDetachFlushScheduled = false;
                     const windows = Array.from(pendingDetachedWindows);
                     pendingDetachedWindows.clear();
                     windows.forEach((windowInstance) => {
@@ -204,15 +215,19 @@
                             return;
                         }
                         setPendingDetachState(windowInstance, null);
-                        unregisterWindowSafely(windowInstance, state.reason || 'window-detached');
+                        unregisterWindowSafely(windowInstance, state.reason || lifecycleReasons.WINDOW_DETACHED);
                     });
                 };
 
-        const schedulePendingDetachFlush = () => {
+        const flushPendingDetachedWindowsAtFrameBoundary = () => {
+                    if (!pendingDetachFlushScheduled) return;
+                    flushPendingDetachedWindows();
+                };
+
+        const scheduleMicrotaskDetachFlush = () => {
                     if (pendingDetachFlushScheduled) return;
                     pendingDetachFlushScheduled = true;
                     const run = () => {
-                        pendingDetachFlushScheduled = false;
                         flushPendingDetachedWindows();
                     };
                     if (typeof globalScope.queueMicrotask === 'function') {
@@ -222,6 +237,20 @@
                     } else {
                         run();
                     }
+                };
+
+        const scheduleFrameSettledDetachFlush = () => {
+                    if (pendingDetachFlushScheduled) return;
+                    pendingDetachFlushScheduled = true;
+                    if (frameSettledDetachHooksInstalled || installFrameSettledDetachHooks()) return;
+
+                    // Capability fallback for test shells or unusual engines with no frame hook target.
+                    pendingDetachFlushScheduled = false;
+                    scheduleMicrotaskDetachFlush();
+                };
+
+        const schedulePendingDetachFlush = () => {
+                    scheduleFrameSettledDetachFlush();
                 };
         
         const markDetachedTreePending = (root, reason) => {
@@ -234,7 +263,7 @@
                         setPendingDetachState(windowInstance, {
                             token,
                             root,
-                            reason: reason || 'window-detached',
+                            reason: reason || lifecycleReasons.WINDOW_DETACHED,
                         });
                         pendingDetachedWindows.add(windowInstance);
                     });
@@ -246,6 +275,90 @@
                     const windows = [];
                     collectWindowTree(root, windows);
                     windows.forEach(clearPendingDetachedWindow);
+                };
+
+        const retireWindowTree = (root, reason) => {
+                    if (!root) return;
+                    const windows = [];
+                    collectWindowTree(root, windows);
+                    windows.forEach((windowInstance) => {
+                        if (!getRegisteredWindowData(windowInstance)) return;
+                        clearPendingDetachedWindow(windowInstance);
+                        unregisterWindowSafely(windowInstance, reason || lifecycleReasons.WINDOW_UNREGISTERED);
+                    });
+                };
+
+        const installSceneTerminationHooks = () => {
+                    const SceneBase = globalScope.Scene_Base || null;
+                    const prototype = SceneBase && SceneBase.prototype ? SceneBase.prototype : null;
+                    if (!prototype || typeof prototype.terminate !== 'function') return false;
+                    if (hasHookInChain(prototype.terminate, '__trWindowRegistrySceneTerminateWrapped', true)) return true;
+
+                    const originalTerminate = prototype.terminate;
+                    prototype.terminate = function(...args) {
+                        let result;
+                        try {
+                            result = originalTerminate.apply(this, args);
+                        } finally {
+                            // Scene swaps can retire an entire rendered root without any
+                            // PIXI removeChild/destroy call on its windows.
+                            retireWindowTree(this, lifecycleReasons.SCENE_TERMINATED);
+                        }
+                        return result;
+                    };
+                    prototype.terminate.__trWindowRegistrySceneTerminateWrapped = true;
+                    prototype.terminate.__trOriginal = originalTerminate;
+                    return true;
+                };
+
+        const installSceneManagerChangeHooks = () => {
+                    const sceneManager = globalScope.SceneManager || null;
+                    if (!sceneManager || typeof sceneManager.changeScene !== 'function') return false;
+                    if (hasHookInChain(sceneManager.changeScene, '__trWindowRegistrySceneManagerChangeWrapped', true)) return true;
+
+                    const originalChangeScene = sceneManager.changeScene;
+                    sceneManager.changeScene = function(...args) {
+                        const previousScene = this && this._scene ? this._scene : null;
+                        const result = originalChangeScene.apply(this, args);
+                        const currentScene = this && this._scene ? this._scene : null;
+                        if (previousScene && previousScene !== currentScene) {
+                            retireWindowTree(previousScene, lifecycleReasons.SCENE_TERMINATED);
+                        }
+                        return result;
+                    };
+                    sceneManager.changeScene.__trWindowRegistrySceneManagerChangeWrapped = true;
+                    sceneManager.changeScene.__trOriginal = originalChangeScene;
+                    return true;
+                };
+
+        const installFrameSettledDetachHooks = () => {
+                    if (frameSettledDetachHooksInstalled) return true;
+                    let installed = false;
+                    const sceneManager = globalScope.SceneManager || null;
+                    const graphics = globalScope.Graphics || null;
+                    try { installed = installFrameSettledDetachHook(sceneManager, 'updateScene') || installed; } catch (_) {}
+                    try { installed = installFrameSettledDetachHook(sceneManager, 'updateMain') || installed; } catch (_) {}
+                    try { installed = installFrameSettledDetachHook(graphics, 'render') || installed; } catch (_) {}
+                    frameSettledDetachHooksInstalled = installed;
+                    return installed;
+                };
+
+        const installFrameSettledDetachHook = (target, methodName) => {
+                    if (!target || typeof target[methodName] !== 'function') return false;
+                    if (hasHookInChain(target[methodName], '__trWindowRegistryFrameSettledDetachWrapped', FRAME_SETTLED_DETACH_TOKEN)) return true;
+                    const original = target[methodName];
+                    target[methodName] = function(...args) {
+                        let result;
+                        try {
+                            result = original.apply(this, args);
+                        } finally {
+                            flushPendingDetachedWindowsAtFrameBoundary();
+                        }
+                        return result;
+                    };
+                    target[methodName].__trWindowRegistryFrameSettledDetachWrapped = FRAME_SETTLED_DETACH_TOKEN;
+                    target[methodName].__trOriginal = original;
+                    return true;
                 };
         
         const installWindowDisplayRemovalHooks = () => {
@@ -270,7 +383,7 @@
                             if (child && child.parent === targetParent) {
                                 clearPendingDetachedTree(child);
                             } else if (child) {
-                                markDetachedTreePending(child, 'window-detached');
+                                markDetachedTreePending(child, lifecycleReasons.WINDOW_DETACHED);
                             }
                         });
                     };
@@ -287,7 +400,10 @@
                             } finally {
                                 unmarkMovingChildren(moving, this);
                                 children.forEach((child) => {
-                                    if (child && child.parent === this) clearPendingDetachedTree(child);
+                                    if (child && child.parent === this) {
+                                        clearPendingDetachedTree(child);
+                                        markAttachedTree(child);
+                                    }
                                 });
                             }
                         };
@@ -302,7 +418,7 @@
                             const result = original.apply(this, children);
                             if (hasDestroyGuard(this)) return result;
                             children.forEach((child) => {
-                                if (child && child.parent !== this) markDetachedTreePending(child, 'window-detached');
+                                if (child && child.parent !== this) markDetachedTreePending(child, lifecycleReasons.WINDOW_DETACHED);
                             });
                             return result;
                         };
@@ -316,7 +432,7 @@
                         prototype.removeChildAt = function(index, ...rest) {
                             const child = Array.isArray(this.children) ? this.children[index] : null;
                             const result = original.call(this, index, ...rest);
-                            if (!hasDestroyGuard(this)) markDetachedTreePending(result || child, 'window-detached');
+                            if (!hasDestroyGuard(this)) markDetachedTreePending(result || child, lifecycleReasons.WINDOW_DETACHED);
                             return result;
                         };
                         prototype.removeChildAt.__trWindowRegistryRemoveChildAtWrapped = true;
@@ -334,7 +450,7 @@
                             const result = original.call(this, beginIndex, endIndex, ...rest);
                             if (!hasDestroyGuard(this)) {
                                 const removed = Array.isArray(result) && result.length > 0 ? result : before;
-                                removed.forEach((child) => markDetachedTreePending(child, 'window-detached'));
+                                removed.forEach((child) => markDetachedTreePending(child, lifecycleReasons.WINDOW_DETACHED));
                             }
                             return result;
                         };
@@ -355,7 +471,7 @@
                                 setDestroyGuard(this, -1);
                                 windows.forEach((windowInstance) => {
                                     clearPendingDetachedWindow(windowInstance);
-                                    unregisterWindowSafely(windowInstance, 'window-destroyed');
+                                    unregisterWindowSafely(windowInstance, lifecycleReasons.WINDOW_DESTROYED);
                                 });
                             }
                         };
@@ -369,6 +485,9 @@
                     wrapRemoveChildAt();
                     wrapRemoveChildren();
                     wrapDestroy();
+                    installSceneTerminationHooks();
+                    installSceneManagerChangeHooks();
+                    installFrameSettledDetachHooks();
                     return true;
                 };
     

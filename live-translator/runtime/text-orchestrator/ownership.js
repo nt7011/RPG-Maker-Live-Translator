@@ -248,14 +248,17 @@
 
         function releaseOwnershipToken(token, expectedKind, reason) {
             const claim = getOwnershipClaimForToken(token);
-            if (!claim || claim.kind !== expectedKind || claim.active !== true) return false;
+            if (!token) return createOwnershipReleaseResult('missing-token', null, expectedKind, reason, token);
+            if (!claim) return createOwnershipReleaseResult('missing-claim', null, expectedKind, reason, token);
+            if (claim.kind !== expectedKind) return createOwnershipReleaseResult('kind-mismatch', claim, expectedKind, reason, token);
+            if (claim.active !== true) return createOwnershipReleaseResult('stale-claim', claim, expectedKind, reason, token);
             claim.active = false;
             claim.status = 'released';
             claim.reason = firstString(reason, 'released');
             claim.updatedAt = Date.now();
             removeClaimFromBucket(claim);
             if (claim.kind === 'text') textClaimsById.delete(claim.id);
-            return true;
+            return createOwnershipReleaseResult('released', claim, expectedKind, claim.reason, token);
         }
 
         function removeClaimFromBucket(claim) {
@@ -320,6 +323,26 @@
             });
         }
 
+        function createOwnershipReleaseResult(status, claim, expectedKind, reason, token) {
+            const released = status === 'released';
+            return Object.freeze({
+                status,
+                released,
+                changed: released,
+                handled: released,
+                terminal: true,
+                token: claim && claim.token ? claim.token : (token || null),
+                ownershipToken: claim && claim.token ? claim.token : (token || null),
+                claimId: claim && claim.id ? claim.id : '',
+                kind: claim && claim.kind ? claim.kind : firstString(expectedKind),
+                adapterId: claim && claim.adapterId ? claim.adapterId : '',
+                surfaceId: claim && claim.surfaceId ? claim.surfaceId : '',
+                surfaceType: claim && claim.surfaceType ? claim.surfaceType : '',
+                mode: claim && claim.mode ? claim.mode : '',
+                reason: firstString(reason, claim && claim.reason, status),
+            });
+        }
+
         function getDefaultOwnershipPriority(adapterId) {
             const key = firstString(adapterId, 'text');
             return Object.prototype.hasOwnProperty.call(OWNERSHIP_PRIORITY, key)
@@ -357,6 +380,7 @@
             validateObservationOwnership,
             createOwnershipDeniedResult,
             cloneOwnershipResult,
+            createOwnershipReleaseResult,
             getDefaultOwnershipPriority,
             normalizeOwnershipText,
             ownershipNumber,

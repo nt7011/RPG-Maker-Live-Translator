@@ -92,10 +92,10 @@
                 ? orchestratorSettings.eligibility
                 : {});
         const cjkSource = source.cjk && typeof source.cjk === 'object' ? source.cjk : {};
-        const legacyCjkDisabled = !!(settings
+        const cjkFilterDisabled = !!(settings
             && settings.translation
             && settings.translation.disableCjkFilter === true);
-        const cjkFilterDefaultEnabled = !legacyCjkDisabled;
+        const cjkFilterDefaultEnabled = !cjkFilterDisabled;
         return {
             skipEmpty: settingBoolean(source.skipEmpty, DEFAULT_TEXT_ELIGIBILITY_SETTINGS.skipEmpty),
             skipNative: settingBoolean(source.skipNative, DEFAULT_TEXT_ELIGIBILITY_SETTINGS.skipNative),
