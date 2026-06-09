@@ -18,6 +18,7 @@
         const { installOrchestratorSubscription, getWindowId, updateItem, recordDecision, recordRenderAccepted, recordRenderDeferred, recordRenderRejected, backgroundItem, retireItem } = scope.controllerFacades.records;
         const { warn } = scope.controllerFacades.render;
         const { discoverAndHookMessageWindowCtors, installProcessCharacterFallback, installProcessCompleteMessage, getMessageStartCoordinates } = scope.controllerFacades.session;
+        const messageContentsClaims = new WeakMap();
 
         /**
          * Install all Window_Message and Game_Message wrappers.
@@ -102,9 +103,8 @@
          */
         function isMessageWindowLike(windowInstance) {
             if (!windowInstance) return false;
-            if (windowInstance._trHasDedicatedTextHook) return true;
+            if (isDedicatedTextOwner(windowInstance)) return true;
             const ctor = windowInstance.constructor;
-            if (ctor && ctor._trHasDedicatedTextHook) return true;
             try {
                 if (typeof Window_Message !== 'undefined'
                     && Window_Message
@@ -122,33 +122,71 @@
          */
         function markDedicatedMessageWindow(windowInstance) {
             if (!windowInstance) return;
-            try { windowInstance._trHasDedicatedTextHook = true; } catch (_) {}
-            try {
-                const ctor = windowInstance.constructor;
-                if (ctor) ctor._trHasDedicatedTextHook = true;
-            } catch (_) {}
+            rememberDedicatedTextOwner(windowInstance);
+            rememberDedicatedTextConstructor(windowInstance.constructor);
             try {
                 if (windowInstance.contents) {
-                    windowInstance.contents._trHasDedicatedTextHook = true;
-                    windowInstance.contents._trMessageContents = true;
                     if (surfaceOwnership && typeof surfaceOwnership.rememberContentsOwner === 'function') {
-                        surfaceOwnership.rememberContentsOwner(windowInstance.contents, windowInstance);
+                        surfaceOwnership.rememberContentsOwner(windowInstance.contents, windowInstance, {
+                            adapterId: 'message',
+                            surfaceType: 'message',
+                            role: 'message-contents',
+                            windowOwned: true,
+                            dedicatedTextHook: true,
+                            bypassBitmapDrawReason: 'messageContents',
+                        });
                     }
                     claimMessageContentsSurface(windowInstance);
                 }
             } catch (_) {}
         }
 
+        function rememberDedicatedTextOwner(windowInstance) {
+            if (!windowInstance || !surfaceOwnership || typeof surfaceOwnership.rememberDedicatedTextOwner !== 'function') return false;
+            try {
+                return surfaceOwnership.rememberDedicatedTextOwner(windowInstance, {
+                    adapterId: 'message',
+                    surfaceType: 'message',
+                    role: 'message-window',
+                    reason: 'message-adapter',
+                }) === true;
+            } catch (_) {
+                return false;
+            }
+        }
+
+        function rememberDedicatedTextConstructor(Ctor) {
+            if (!Ctor || !surfaceOwnership || typeof surfaceOwnership.rememberDedicatedTextConstructor !== 'function') return false;
+            try {
+                return surfaceOwnership.rememberDedicatedTextConstructor(Ctor, {
+                    adapterId: 'message',
+                    surfaceType: 'message',
+                    role: 'message-window',
+                    reason: 'message-adapter',
+                }) === true;
+            } catch (_) {
+                return false;
+            }
+        }
+
+        function isDedicatedTextOwner(windowInstance) {
+            if (!windowInstance || !surfaceOwnership || typeof surfaceOwnership.isDedicatedTextOwner !== 'function') return false;
+            try {
+                return surfaceOwnership.isDedicatedTextOwner(windowInstance) === true;
+            } catch (_) {
+                return false;
+            }
+        }
+
         function claimMessageContentsSurface(windowInstance) {
             if (!windowInstance || !windowInstance.contents) return false;
             if (!adapterContract || typeof adapterContract.claimSurface !== 'function') return false;
-            if (windowInstance._trMessageContentsClaim
-                && windowInstance._trMessageContentsClaimTarget === windowInstance.contents) {
+            const existingClaim = readMessageContentsClaim(windowInstance);
+            if (existingClaim && existingClaim.target === windowInstance.contents) {
                 return true;
             }
-            if (windowInstance._trMessageContentsClaim
-                && typeof adapterContract.releaseSurface === 'function') {
-                adapterContract.releaseSurface(windowInstance._trMessageContentsClaim, 'message-contents-replaced');
+            if (existingClaim && existingClaim.token && typeof adapterContract.releaseSurface === 'function') {
+                adapterContract.releaseSurface(existingClaim.token, 'message-contents-replaced');
             }
             const claim = adapterContract.claimSurface({
                 target: windowInstance.contents,
@@ -158,11 +196,29 @@
                 owner: windowInstance,
             });
             if (claim && claim.status === 'claimed' && claim.token) {
-                windowInstance._trMessageContentsClaim = claim.token;
-                windowInstance._trMessageContentsClaimTarget = windowInstance.contents;
+                rememberMessageContentsClaim(windowInstance, claim.token, windowInstance.contents);
                 return true;
             }
             return false;
+        }
+
+        function readMessageContentsClaim(windowInstance) {
+            if (!windowInstance || !messageContentsClaims || typeof messageContentsClaims.get !== 'function') return null;
+            try {
+                return messageContentsClaims.get(windowInstance) || null;
+            } catch (_) {
+                return null;
+            }
+        }
+
+        function rememberMessageContentsClaim(windowInstance, token, target) {
+            if (!windowInstance || !token || !messageContentsClaims || typeof messageContentsClaims.set !== 'function') return false;
+            try {
+                messageContentsClaims.set(windowInstance, { token, target });
+                return true;
+            } catch (_) {
+                return false;
+            }
         }
 
         /**

@@ -72,26 +72,27 @@
             } catch (_) {}
         }
 
-        function setWindowDrawRecordVisible(windowInstance, windowData, entry, visible, reason) {
+        function setWindowDrawRecordVisible(windowInstance, windowData, entry, visible, reason, screenState = null) {
             if (!isWindowEntryActive(entry)) return;
             const windowType = getWindowType(windowInstance, windowData);
+            const resolvedScreenState = visible ? 'visible' : (String(screenState || '') || 'hidden');
             try {
                 if (windowLifecycle && typeof windowLifecycle.setEntryVisible === 'function') {
                     windowLifecycle.setEntryVisible(entry, visible === true, {
                         reason: reason || (visible ? 'window-visible' : 'window-offscreen'),
-                        screenState: visible ? 'visible' : 'hidden',
+                        screenState: resolvedScreenState,
                         windowType,
                     });
                 } else {
                     entryLifecycle.setSurfaceVisible(entry, visible === true, {
                         reason: reason || (visible ? 'window-visible' : 'window-offscreen'),
-                        screenState: visible ? 'visible' : 'hidden',
+                        screenState: resolvedScreenState,
                     });
                 }
             } catch (_) {
                 entryLifecycle.setSurfaceVisible(entry, visible === true, {
                     reason: reason || (visible ? 'window-visible' : 'window-offscreen'),
-                    screenState: visible ? 'visible' : 'hidden',
+                    screenState: resolvedScreenState,
                 });
             }
         }
@@ -345,7 +346,7 @@
             data.texts.forEach((entry, key) => {
                 if (!isWindowEntryActive(entry) || entryLifecycle.isStale(entry)) return;
                 if (entryLifecycle.getSurfaceVisible(entry) !== false) {
-                    setWindowDrawRecordVisible(windowInstance, data, entry, false, reason || 'window-offscreen');
+                    setWindowDrawRecordVisible(windowInstance, data, entry, false, reason || 'window-offscreen', screenState);
                 }
                 if (isWindowEntryCompleted(entry) && shouldRetireOffscreenCompletedEntry(screenState)) {
                     completed.push({ key, entry });
@@ -357,11 +358,12 @@
         }
 
         function shouldRetireOffscreenCompletedEntry(screenState) {
-            // Opening is transient: RPG Maker may draw text while openness is 0
-            // and reveal the same contents on later updates. Retiring here loses
-            // the active source-draw owner even though the text is about to be
-            // visible.
-            return String(screenState || '') !== 'opening';
+            const state = String(screenState || '');
+            // Opening and transparent contents are visibility transitions, not
+            // proof that the logical text owner disappeared. RPG Maker plugins
+            // commonly fade contentsOpacity or use a transparent Window_Base as
+            // a scratch text surface before copying pixels elsewhere.
+            return state !== 'opening' && state !== 'transparent';
         }
 
         function retireOffscreenCompletedWindowEntry(windowInstance, data, key, entry, reason) {

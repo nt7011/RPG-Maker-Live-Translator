@@ -155,6 +155,10 @@
                 if (!surfaceOwnership || typeof surfaceOwnership.windowEntryBelongsToContents !== 'function') return false;
                 return surfaceOwnership.windowEntryBelongsToContents(entry, contents, owner, windowData);
             },
+            isDedicatedTextOwner(owner) {
+                if (!surfaceOwnership || typeof surfaceOwnership.isDedicatedTextOwner !== 'function') return false;
+                return surfaceOwnership.isDedicatedTextOwner(owner) === true;
+            },
         });
 
         const draw = Object.freeze({

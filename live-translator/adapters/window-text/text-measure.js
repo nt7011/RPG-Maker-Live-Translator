@@ -547,9 +547,11 @@
     
     function isDedicatedMessageWindow(windowInstance) {
                 if (!windowInstance) return false;
-                if (windowInstance._trHasDedicatedTextHook) return true;
+                if (surfaceService && typeof surfaceService.isDedicatedTextOwner === 'function'
+                    && surfaceService.isDedicatedTextOwner(windowInstance)) {
+                    return true;
+                }
                 const ctor = windowInstance.constructor;
-                if (ctor && ctor._trHasDedicatedTextHook) return true;
                 try {
                     if (typeof Window_Message !== 'undefined'
                         && Window_Message

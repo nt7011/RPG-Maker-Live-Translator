@@ -7,8 +7,16 @@
         ? window
         : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
     const defineRuntimeModule = globalScope.LiveTranslatorDefine;
+    const requireRuntimeModule = globalScope.LiveTranslatorRequire;
     if (typeof defineRuntimeModule !== 'function') {
         throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/bitmap-text/install.js.');
+    }
+    if (typeof requireRuntimeModule !== 'function') {
+        throw new Error('[LiveTranslator] runtime module require is unavailable before adapters/bitmap-text/install.js.');
+    }
+    const bitmapDrawRuns = requireRuntimeModule('runtime.bitmapDrawRuns');
+    if (!bitmapDrawRuns || typeof bitmapDrawRuns.collectRunsFromBatch !== 'function') {
+        throw new Error('[LiveTranslator] runtime.bitmapDrawRuns is unavailable before adapters/bitmap-text/install.js.');
     }
 
     function createController(scope = {}) {
@@ -19,7 +27,7 @@
         const { installBitmapMutationHooks, sanitizePerfLabel } = scope.controllerFacades.mutations;
         const { installFrameFlushHooks, hasActiveFrameFlushHooks, ensureActiveFrameFlushHooks, hasHookInChain, installSmallTextMarkers, installNormalCharacterMarker, isSmallTextDrawActive, isNormalCharacterDrawActive, isSmallTextScratchBitmap } = scope.controllerFacades.frameMarkers;
         const { ensureBitmapState, getBitmapState, nextDrawOrder, withBitmapReplay, collectReplayItems, replayBitmapItems } = scope.controllerFacades.replay;
-        const { estimateTextWidth, computeFontSignature, sanitizeVisibleText, isStandaloneGlyphText, recordDrawTrace, bitmapTraceDetails, readBitmapOwner, hasDedicatedOwnerHook, rectFromDimensions, isValidRect, normalizeCanvasTextAlign, describeOwnerType, stringify, finiteNumber, positiveNumber, pruneArray } = scope.controllerFacades.textUtils;
+        const { estimateTextWidth, computeFontSignature, sanitizeVisibleText, isStandaloneGlyphText, recordDrawTrace, bitmapTraceDetails, readBitmapOwner, hasDedicatedOwnerHook, describeBitmapContentsOwnership, rectFromDimensions, isValidRect, normalizeCanvasTextAlign, describeOwnerType, stringify, finiteNumber, positiveNumber, pruneArray } = scope.controllerFacades.textUtils;
 
         function install() {
             if (typeof Bitmap === 'undefined' || !Bitmap || !Bitmap.prototype) {
@@ -253,7 +261,7 @@
 
             owner = owner || readBitmapOwner(bitmap);
             ownerType = ownerType || describeOwnerType(owner, bitmap);
-            if (hasDedicatedOwnerHook(owner) || (bitmap && bitmap._trHasDedicatedTextHook)) {
+            if (hasDedicatedOwnerHook(owner) || isDedicatedTextContents(bitmap)) {
                 if (profilerOn) {
                     perfCount('bitmap.drawText.bypassed', 1, 'hook');
                     perfTop('bitmap.drawText.bypassReason', 'dedicatedOwnerHook', 1, 'hook');
@@ -276,8 +284,12 @@
 
             const isWindowOwnedBitmap = !!(owner && owner.contents === bitmap);
             const normalCharacterDrawActive = isNormalCharacterDrawActive(bitmap);
+            const normalCharacterRunContext = normalCharacterDrawActive
+                ? getActiveNormalCharacterRunContext(bitmap)
+                : null;
             const visibleText = sanitizeVisibleText(text);
-            if (isWindowOwnedBitmap && visibleText && !normalCharacterDrawActive) {
+            const deferWindowOwnedGlyphSurfaceDraw = shouldDeferWindowOwnedGlyphSurfaceDraw(methodName, visibleText, normalCharacterDrawActive);
+            if (isWindowOwnedBitmap && visibleText && !normalCharacterDrawActive && !deferWindowOwnedGlyphSurfaceDraw) {
                 const fragment = createFragment(bitmap, {
                     methodName,
                     text,
@@ -343,8 +355,8 @@
             }
 
             let status = 'native-only';
-            const normalCharacterBackdrop = normalCharacterDrawActive
-                ? captureNormalCharacterRunBackdrop(bitmap, text, x, y, maxWidth, lineHeight, align)
+            const normalCharacterBackdrop = normalCharacterRunContext
+                ? captureNormalCharacterRunBackdrop(bitmap, normalCharacterRunContext, text, x, y, maxWidth, lineHeight, align)
                 : null;
             const backgroundPatch = normalCharacterBackdrop
                 || captureBitmapDrawBackdrop(bitmap, text, x, y, maxWidth, lineHeight, align, 'text');
@@ -354,6 +366,7 @@
             const nativeTextRegion = typeof scope.createBitmapTextRegion === 'function'
                 ? scope.createBitmapTextRegion(bitmap, text, x, y, maxWidth, lineHeight, align)
                 : (backgroundPatch && backgroundPatch.region ? backgroundPatch.region : null);
+            const measuredWidth = visibleText ? estimateTextWidth(bitmap, text, 0) : 0;
             try {
                 const result = invokeOriginal('');
                 if (visibleText) {
@@ -368,8 +381,9 @@
                         align,
                         ownerType,
                         drawState,
+                        measuredWidth,
                         normalCharacter: normalCharacterDrawActive,
-                        normalCharacterRunId: bitmap && bitmap._trNormalCharRunId,
+                        normalCharacterRunId: normalCharacterRunContext && normalCharacterRunContext.runId,
                         backgroundPatch,
                         fallbackBackgroundPatch,
                     });
@@ -397,11 +411,11 @@
             }
         }
 
-        function captureNormalCharacterRunBackdrop(bitmap, text, x, y, maxWidth, lineHeight, align) {
-            const runInfo = bitmap && bitmap._trNormalCharRunInfo && typeof bitmap._trNormalCharRunInfo === 'object'
-                ? bitmap._trNormalCharRunInfo
+        function captureNormalCharacterRunBackdrop(bitmap, runContext, text, x, y, maxWidth, lineHeight, align) {
+            const runInfo = runContext && runContext.runInfo && typeof runContext.runInfo === 'object'
+                ? runContext.runInfo
                 : null;
-            const runId = bitmap && bitmap._trNormalCharRunId ? stringify(bitmap._trNormalCharRunId) : '';
+            const runId = runContext && runContext.runId ? stringify(runContext.runId) : '';
             if (!runInfo || !runId || (runInfo.runId && stringify(runInfo.runId) !== runId)) return null;
             if (runInfo.backgroundPatch) return runInfo.backgroundPatch;
             const runText = sanitizeVisibleText(runInfo.text) ? stringify(runInfo.text) : stringify(text);
@@ -424,6 +438,13 @@
                 || captureBitmapDrawBackdrop(bitmap, runText, runX, runY, runMaxWidth, runLineHeight, runAlign, 'text');
             if (patch) runInfo.backgroundPatch = patch;
             return patch || null;
+        }
+
+        function getActiveNormalCharacterRunContext(bitmap) {
+            const context = scope.bitmapServices && typeof scope.bitmapServices.getActiveDrawRunContext === 'function'
+                ? scope.bitmapServices.getActiveDrawRunContext(bitmap)
+                : null;
+            return context && context.type === 'normalCharacter' && context.runId ? context : null;
         }
 
         function captureBitmapDrawBackdrop(bitmap, text, x, y, maxWidth, lineHeight, align, mode = 'text') {
@@ -487,6 +508,17 @@
             return bitmapHooksActive && spriteHooksActive;
         }
 
+        function shouldDeferWindowOwnedGlyphSurfaceDraw(methodName, visibleText, normalCharacterDrawActive) {
+            if (normalCharacterDrawActive) return false;
+            const method = stringify(methodName || 'drawText');
+            if (method !== 'drawText' && method !== 'drawTextS' && method !== 'drawTextM') return false;
+            const glyphs = Array.from(stringify(visibleText).trim()).filter((char) => !/\s/u.test(char));
+            // Custom window renderers often emit one Bitmap.drawText per glyph
+            // without using Window_Base.processNormalCharacter. Let the draw
+            // batch collector decide whether adjacent glyphs form one source.
+            return glyphs.length === 1;
+        }
+
         function invokeFastBypassedBitmapDraw(bitmap, methodName, original, args, bypassReason) {
             const profilerOn = scope.isPerfEnabled();
             const hookStart = profilerOn ? perfNow() : null;
@@ -543,22 +575,21 @@
             const bitmap = batch.bitmap;
             let state = null;
             let queued = 0;
-            batch.forEachUnconsumed((unit) => {
-                if (!unit || unit.bitmap !== bitmap || batch.isConsumed(unit)) return;
-                if (!sanitizeVisibleText(unit.text)) return;
-                const fragment = createFragment(bitmap, {
-                    methodName: unit.methodName,
-                    text: unit.text,
-                    x: unit.x,
-                    y: unit.y,
-                    maxWidth: unit.maxWidth,
-                    lineHeight: unit.lineHeight,
-                    align: unit.align,
-                    ownerType: unit.ownerType || 'Bitmap',
-                    drawState: unit.drawState,
-                    drawBoundary: unit.drawBoundary,
-                    backgroundPatch: unit.fallbackBackgroundPatch || unit.backgroundPatch,
+            bitmapDrawRuns.collectRunsFromBatch(batch, {
+                allowFallbackGlyphRuns: false,
+            }).forEach((run) => {
+                if (!run || !Array.isArray(run.units) || !run.units.length) return;
+                if (run.units.some((unit) => !unit || unit.bitmap !== bitmap || batch.isConsumed(unit))) return;
+                const payload = bitmapDrawRuns.createSurfaceDrawPayload(batch, run, {
+                    payload: {
+                        ownershipStatus: '',
+                        backgroundPatch: getRunFallbackBackgroundPatch(run),
+                    },
                 });
+                if (!payload || !sanitizeVisibleText(payload.text)) return;
+                const fragment = createFragment(bitmap, Object.assign({}, payload, {
+                    ownerType: payload.ownerType || 'Bitmap',
+                }));
                 if (!fragment || !sanitizeVisibleText(fragment.visibleText)) return;
                 const ownership = recordBitmapSurfaceDraw(bitmap, fragment, { candidateAdapters: [] });
                 if (!ownership || ownership.status === 'ignored') return;
@@ -573,23 +604,42 @@
                 if (!state) return;
                 state.fragments.push(fragment);
                 pruneArray(state.fragments, MAX_FRAGMENTS);
-                batch.consume(unit, ADAPTER_ID);
-                queued += 1;
+                run.units.forEach((unit) => batch.consume(unit, ADAPTER_ID));
+                queued += run.units.length;
             });
             if (queued) flushAggregatedLines(bitmap, batch.reason || 'draw-batch');
             return queued;
+        }
+
+        function getRunFallbackBackgroundPatch(run) {
+            const units = run && Array.isArray(run.units) ? run.units.slice() : [];
+            units.sort(bitmapDrawRuns.compareUnits);
+            const first = units[0];
+            return first && (first.fallbackBackgroundPatch || first.backgroundPatch) || null;
         }
         
         function describeBitmapDrawBypassReason(bitmap) {
             if (!bitmap) return 'missingBitmap';
             const guardReason = scope.bitmapServices.getRenderGuardReason(bitmap);
             if (guardReason) return guardReason;
-            if (bitmap._trPreferWindowPipeline && bitmap._trWindowPipelineDepth > 0) return 'windowPipeline';
-            if (bitmap._trMessageContents) return 'messageContents';
+            const contentsReason = describeBitmapContentsBypassReason(bitmap);
+            if (contentsReason) return contentsReason;
             if (isSmallTextScratchBitmap(bitmap)) return 'smallTextScratchBitmap';
             if (isSmallTextDrawActive(bitmap)) return 'smallTextDrawActive';
             if (shouldBypassNormalCharacterDraw(bitmap)) return 'normalCharacter';
             return '';
+        }
+
+        function describeBitmapContentsBypassReason(bitmap) {
+            const ownership = describeBitmapContentsOwnership(bitmap);
+            if (!ownership) return '';
+            if (ownership.bypassBitmapDrawReason) return ownership.bypassBitmapDrawReason;
+            return ownership.dedicatedTextHook ? 'dedicatedOwnerHook' : '';
+        }
+
+        function isDedicatedTextContents(bitmap) {
+            const ownership = describeBitmapContentsOwnership(bitmap);
+            return !!(ownership && ownership.dedicatedTextHook);
         }
 
         function shouldBypassNormalCharacterDraw(bitmap) {
@@ -627,6 +677,9 @@
                 measuredWidth: fragment.width,
                 standaloneGlyph: isStandaloneGlyphText(sanitizeVisibleText(fragment.visibleText || fragment.rawText)),
                 drawBoundary: fragment.drawBoundary,
+                drawRun: fragment.drawRun,
+                backgroundPatch: fragment.backgroundPatch,
+                sourceCommitted: fragment.sourceCommitted === true,
                 candidateAdapters,
             });
         }
@@ -695,6 +748,8 @@
                 drawState: input.drawState || scope.captureBitmapDrawState(bitmap),
                 drawBoundary: cloneDrawBoundary(input.drawBoundary),
                 backgroundPatch: input.backgroundPatch || null,
+                drawRun: input.drawRun || null,
+                sourceCommitted: input.sourceCommitted === true,
                 fontSignature: computeFontSignature(input.drawState, bitmap),
                 recordedAt: Date.now(),
             };

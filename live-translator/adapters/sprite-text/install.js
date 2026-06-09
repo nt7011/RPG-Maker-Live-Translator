@@ -7,8 +7,16 @@
         ? window
         : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
     const defineRuntimeModule = globalScope.LiveTranslatorDefine;
+    const requireRuntimeModule = globalScope.LiveTranslatorRequire;
     if (typeof defineRuntimeModule !== 'function') {
         throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/sprite-text/install.js.');
+    }
+    if (typeof requireRuntimeModule !== 'function') {
+        throw new Error('[LiveTranslator] runtime module require is unavailable before adapters/sprite-text/install.js.');
+    }
+    const bitmapDrawRuns = requireRuntimeModule('runtime.bitmapDrawRuns');
+    if (!bitmapDrawRuns || typeof bitmapDrawRuns.collectRunsFromBatch !== 'function') {
+        throw new Error('[LiveTranslator] runtime.bitmapDrawRuns is unavailable before adapters/sprite-text/install.js.');
     }
 
     function createController(scope = {}) {
@@ -130,34 +138,38 @@
                     if (!batch || !batch.bitmap || typeof batch.forEachUnconsumed !== 'function') return 0;
                     const ownerClaimOnly = meta && meta.phase === 'owner-claim';
                     let handled = 0;
-                    batch.forEachUnconsumed((unit) => {
-                        if (!unit || batch.isConsumed(unit)) return;
-                        const result = recordBitmapDrawText({
-                            bitmap: batch.bitmap,
-                            methodName: unit.methodName,
-                            text: unit.text,
-                            x: unit.x,
-                            y: unit.y,
-                            maxWidth: unit.maxWidth,
-                            lineHeight: unit.lineHeight,
-                            align: unit.align,
-                            drawState: unit.drawState,
-                            drawBoundary: unit.drawBoundary,
-                            backgroundPatch: unit.backgroundPatch,
-                            measuredWidth: 0,
-                            sourceAdapter: 'bitmap',
-                            ownerClaimOnly,
+                    bitmapDrawRuns.collectRunsFromBatch(batch, {
+                        allowFallbackGlyphRuns: false,
+                    }).forEach((run) => {
+                        if (!run || !Array.isArray(run.units) || !run.units.length) return;
+                        if (run.units.some((unit) => batch.isConsumed(unit))) return;
+                        const payload = bitmapDrawRuns.createSurfaceDrawPayload(batch, run, {
+                            payload: {
+                                ownershipStatus: '',
+                                backgroundPatch: getRunBackgroundPatch(run),
+                            },
                         });
+                        if (!payload) return;
+                        const result = recordBitmapDrawText(Object.assign({}, payload, {
+                            ownerClaimOnly,
+                        }));
                         if (!result || result.status === 'ignored') return;
                         if (ownerClaimOnly && result.status === 'deferred') return;
                         if (result.status === 'claimed') {
-                            batch.consume(unit, scope.ADAPTER_ID);
+                            run.units.forEach((unit) => batch.consume(unit, scope.ADAPTER_ID));
                         }
-                        handled += 1;
+                        handled += run.units.length;
                     });
                     return handled;
                 },
             });
+        }
+
+        function getRunBackgroundPatch(run) {
+            const units = run && Array.isArray(run.units) ? run.units.slice() : [];
+            units.sort(bitmapDrawRuns.compareUnits);
+            const first = units[0];
+            return first && (first.backgroundPatch || first.fallbackBackgroundPatch) || null;
         }
 
         return { install, exposeAdapterApi, installOrchestratorSubscription, installSurfaceDrawSubscription, installBitmapDrawBatchSubscription };

@@ -77,6 +77,7 @@
                 combineReplayItems,
                 filterReplayForEntry,
                 replayMixedItems,
+                redrawCopiedWindowTextTargets,
                 supportsBitmapReplayClip,
                 getWindowEntryBackgroundSnapshotStatus,
                 restoreWindowEntryBackground,
@@ -428,10 +429,10 @@
                     perfElapsed('windowText.redraw.prepare.ms', prepareStart);
                 }
     
+                let releaseWindowPipelineGuard = () => {};
                 try {
                     if (contents) {
-                        contents._trPreferWindowPipeline = true;
-                        contents._trWindowPipelineDepth = (contents._trWindowPipelineDepth || 0) + 1;
+                        releaseWindowPipelineGuard = enterWindowPipelineGuard(contents, 'window-redraw');
                     }
                     if (contents && storedDrawState) applyBitmapDrawState(contents, storedDrawState);
     
@@ -566,6 +567,13 @@
                     redrawDetails.renderCommit = commitProof.details;
                     diagnostics.renderCommit = commitProof.details;
                     rememberRenderedEntryBounds(entry, translatedBounds, bitmapSurfaceTranslatedBounds);
+                    const copiedTargetRedraws = typeof redrawCopiedWindowTextTargets === 'function'
+                        ? redrawCopiedWindowTextTargets(entry, renderedText)
+                        : 0;
+                    if (copiedTargetRedraws > 0) {
+                        redrawDetails.copiedTargets = copiedTargetRedraws;
+                        diagnostics.copiedTargets = copiedTargetRedraws;
+                    }
                     if (contents && prevDrawState) applyBitmapDrawState(contents, prevDrawState);
     
                     telemetry.logDraw('redraw', renderedText, x, y, redrawDetails);
@@ -591,8 +599,8 @@
                     if (usedBackgroundSnapshot) perfCount('windowText.redraw.snapshot.used');
                     if (snapshotPartialClearCount > 0) perfCount('windowText.redraw.snapshot.partialClearRects', snapshotPartialClearCount);
                     if (replayCollectError) perfCount('windowText.redraw.replayCollect.errors');
+                    releaseWindowPipelineGuard();
                     if (contents) {
-                        contents._trWindowPipelineDepth = Math.max(0, (contents._trWindowPipelineDepth || 1) - 1);
                         if (aggregationIncremented) {
                             contents._trAggregationDepth = Math.max(0, (contents._trAggregationDepth || 1) - 1);
                             if (contents._trAggregationDepth === 0
@@ -1273,27 +1281,26 @@
                     ? Number(params.lineHeight)
                     : getLineHeight(targetWindow, contents);
                 const yOffset = calculateBitmapSurfaceTextYOffset(contents, entry, translatedText);
-                contents._trPreferWindowPipeline = true;
-                contents._trWindowPipelineDepth = (contents._trWindowPipelineDepth || 0) + 1;
-                contents._trAggregationDepth = (contents._trAggregationDepth || 0) + 1;
-                try {
-                    contents.drawText(
-                        translatedText,
-                        positionX,
-                        positionY + yOffset,
-                        params.maxWidth,
-                        lineHeight,
-                        normalizeDrawTextAlignValue(params.align)
-                    );
-                    return true;
-                } finally {
-                    contents._trWindowPipelineDepth = Math.max(0, (contents._trWindowPipelineDepth || 1) - 1);
-                    contents._trAggregationDepth = Math.max(0, (contents._trAggregationDepth || 1) - 1);
-                    if (contents._trAggregationDepth === 0
-                        && typeof contents._trFlushAggregatedLines === 'function') {
-                        try { contents._trFlushAggregatedLines(); } catch (_) {}
+                return withWindowPipelineGuard(contents, () => {
+                    contents._trAggregationDepth = (contents._trAggregationDepth || 0) + 1;
+                    try {
+                        contents.drawText(
+                            translatedText,
+                            positionX,
+                            positionY + yOffset,
+                            params.maxWidth,
+                            lineHeight,
+                            normalizeDrawTextAlignValue(params.align)
+                        );
+                        return true;
+                    } finally {
+                        contents._trAggregationDepth = Math.max(0, (contents._trAggregationDepth || 1) - 1);
+                        if (contents._trAggregationDepth === 0
+                            && typeof contents._trFlushAggregatedLines === 'function') {
+                            try { contents._trFlushAggregatedLines(); } catch (_) {}
+                        }
                     }
-                }
+                }, 'window-bitmap-surface');
             }
 
     function rememberRenderedEntryBounds(entry, translatedBounds, bitmapSurfaceTranslatedBounds) {
@@ -1328,18 +1335,17 @@
                 const draw = () => {
                     if (!contents) return originalDrawText.call(windowInstance, value, x, y, maxWidth, align);
                     return withBitmapNativeDrawOwner(contents, options.nativeDrawOwner || (options.scaleText ? 'windowDrawText' : ''), () => {
-                        contents._trPreferWindowPipeline = true;
-                        contents._trWindowPipelineDepth = (contents._trWindowPipelineDepth || 0) + 1;
-                        contents._trAggregationDepth = (contents._trAggregationDepth || 0) + 1;
-                        try {
-                            return originalDrawText.call(windowInstance, value, x, y, maxWidth, align);
-                        } finally {
-                            contents._trWindowPipelineDepth = Math.max(0, (contents._trWindowPipelineDepth || 1) - 1);
-                            contents._trAggregationDepth = Math.max(0, (contents._trAggregationDepth || 1) - 1);
-                            if (contents._trAggregationDepth === 0 && typeof contents._trFlushAggregatedLines === 'function') {
-                                try { contents._trFlushAggregatedLines(); } catch (_) {}
+                        return withWindowPipelineGuard(contents, () => {
+                            contents._trAggregationDepth = (contents._trAggregationDepth || 0) + 1;
+                            try {
+                                return originalDrawText.call(windowInstance, value, x, y, maxWidth, align);
+                            } finally {
+                                contents._trAggregationDepth = Math.max(0, (contents._trAggregationDepth || 1) - 1);
+                                if (contents._trAggregationDepth === 0 && typeof contents._trFlushAggregatedLines === 'function') {
+                                    try { contents._trFlushAggregatedLines(); } catch (_) {}
+                                }
                             }
-                        }
+                        }, options.nativeDrawOwner || (options.scaleText ? 'windowDrawText' : 'window-drawText'));
                     });
                 };
                 return options && options.scaleText ? withWindowTranslatedDrawScope(windowInstance, draw) : draw();
@@ -1364,6 +1370,24 @@
                     throw new Error('[WindowText] bitmap skip guard service is required.');
                 }
                 return bitmapDraws.withBitmapSkipGuard(bitmap, callback);
+            }
+
+    function enterWindowPipelineGuard(bitmap, source) {
+                if (!bitmap) return () => {};
+                const bitmapDraws = replayService && replayService.bitmapDraws;
+                if (!bitmapDraws || typeof bitmapDraws.enterWindowPipelineGuard !== 'function') {
+                    throw new Error('[WindowText] bitmap window-pipeline guard service is required.');
+                }
+                return bitmapDraws.enterWindowPipelineGuard(bitmap, source || 'window-pipeline') || (() => {});
+            }
+
+    function withWindowPipelineGuard(bitmap, callback, source) {
+                if (!bitmap) return typeof callback === 'function' ? callback() : undefined;
+                const bitmapDraws = replayService && replayService.bitmapDraws;
+                if (!bitmapDraws || typeof bitmapDraws.withWindowPipelineGuard !== 'function') {
+                    throw new Error('[WindowText] bitmap window-pipeline guard service is required.');
+                }
+                return bitmapDraws.withWindowPipelineGuard(bitmap, callback, source || 'window-pipeline');
             }
 
     function getWindowNativeDrawOwner(entry, route = '') {

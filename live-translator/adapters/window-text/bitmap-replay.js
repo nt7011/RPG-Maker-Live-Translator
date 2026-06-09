@@ -191,6 +191,333 @@
                 return redrawn;
             }
 
+    function prepareCopiedTargetsForBitmapMutation(targetBitmap, methodName, mutation = {}) {
+                if (!isCopiedWindowTextMutation(targetBitmap, methodName, mutation)) return [];
+                const sourceBitmap = mutation.sourceBitmap || null;
+                const sourceRect = cloneValidReplayRect(mutation.sourceRect);
+                const targetRect = cloneValidReplayRect(mutation.rect);
+                if (!sourceBitmap || sourceBitmap === targetBitmap || !sourceRect || !targetRect) return [];
+
+                const match = resolveBitmapWindowData(sourceBitmap);
+                if (!match || !match.windowData || !match.windowData.texts || typeof match.windowData.texts.forEach !== 'function') return [];
+
+                const prepared = [];
+                try {
+                    match.windowData.texts.forEach((entry) => {
+                        if (!entry || entryLifecycleState.isStale(entry) || !windowEntryBelongsToContents(entry, sourceBitmap)) return;
+                        const sourceBounds = getWindowEntrySnapshotBounds(sourceBitmap, entry) || entry.bounds;
+                        const copiedSourceBounds = clipRectToBitmap(sourceBounds, sourceBitmap);
+                        if (!rectHasArea(copiedSourceBounds) || !rectContainsRect(sourceRect, copiedSourceBounds)) return;
+                        const copiedTarget = createCopiedRenderTarget(entry, targetBitmap, sourceBitmap, sourceRect, targetRect, copiedSourceBounds, methodName);
+                        if (copiedTarget) prepared.push({ entry, target: copiedTarget });
+                    });
+                } catch (_) {}
+                return prepared;
+            }
+
+    function commitCopiedTargetsForBitmapMutation(targetBitmap, methodName, mutation = {}, prepared = []) {
+                if (!Array.isArray(prepared) || !prepared.length) return { committed: 0, redrawn: 0 };
+                let committed = 0;
+                let redrawn = 0;
+                prepared.forEach((item) => {
+                    const entry = item && item.entry;
+                    const target = item && item.target;
+                    if (!entry || entryLifecycleState.isStale(entry) || !isCopiedRenderTargetCurrent(targetBitmap, methodName, mutation, target)) return;
+                    const targets = Array.isArray(entry._trCopiedRenderTargets)
+                        ? entry._trCopiedRenderTargets.filter((existing) => !sameCopiedTargetRegion(existing, target))
+                        : [];
+                    targets.push(target);
+                    entry._trCopiedRenderTargets = targets.slice(-16);
+                    committed += 1;
+                    if (isEntryCompleted(entry) && entry.renderedText && redrawCopiedWindowTextTarget(entry, target, entry.renderedText)) {
+                        redrawn += 1;
+                    }
+                });
+                return { committed, redrawn };
+            }
+
+    function invalidateCopiedTargetsForBitmapMutation(targetBitmap, rect = null, reason = 'bitmap-mutation') {
+                if (!targetBitmap) return 0;
+                let removed = 0;
+                surfaceService.forEachRegisteredWindow((windowInstance) => {
+                    const windowData = surfaceService.getWindowData(windowInstance);
+                    if (!windowData || !windowData.texts || typeof windowData.texts.forEach !== 'function') return;
+                    try {
+                        windowData.texts.forEach((entry) => {
+                            if (!entry || !Array.isArray(entry._trCopiedRenderTargets) || !entry._trCopiedRenderTargets.length) return;
+                            const kept = entry._trCopiedRenderTargets.filter((target) => {
+                                if (!target || target.targetBitmap !== targetBitmap) return true;
+                                if (!rect || !rectHasArea(rect) || !rectHasArea(target.bounds) || replayRectsOverlap(rect, target.bounds)) {
+                                    return false;
+                                }
+                                return true;
+                            });
+                            removed += entry._trCopiedRenderTargets.length - kept.length;
+                            if (kept.length) entry._trCopiedRenderTargets = kept;
+                            else delete entry._trCopiedRenderTargets;
+                        });
+                    } catch (_) {}
+                });
+                return removed;
+            }
+
+    function hasCopiedTargetsForBitmap(targetBitmap) {
+                if (!targetBitmap) return false;
+                let found = false;
+                surfaceService.forEachRegisteredWindow((windowInstance) => {
+                    if (found) return;
+                    const windowData = surfaceService.getWindowData(windowInstance);
+                    if (!windowData || !windowData.texts || typeof windowData.texts.forEach !== 'function') return;
+                    try {
+                        windowData.texts.forEach((entry) => {
+                            if (found || !entry || !Array.isArray(entry._trCopiedRenderTargets)) return;
+                            found = entry._trCopiedRenderTargets.some((target) => target && target.targetBitmap === targetBitmap);
+                        });
+                    } catch (_) {}
+                });
+                return found;
+            }
+
+    function redrawCopiedWindowTextTargets(entry, translatedText = '') {
+                if (!entry || !Array.isArray(entry._trCopiedRenderTargets) || !entry._trCopiedRenderTargets.length) return 0;
+                const rendered = sanitizeDrawTextOutput(translatedText || entry.renderedText || '', entry.type);
+                if (!rendered) return 0;
+                let redrawn = 0;
+                const kept = [];
+                entry._trCopiedRenderTargets.forEach((target) => {
+                    if (!isUsableCopiedRenderTarget(target)) return;
+                    kept.push(target);
+                    if (redrawCopiedWindowTextTarget(entry, target, rendered)) redrawn += 1;
+                });
+                if (kept.length) entry._trCopiedRenderTargets = kept;
+                else delete entry._trCopiedRenderTargets;
+                return redrawn;
+            }
+
+    function isCopiedWindowTextMutation(targetBitmap, methodName, mutation) {
+                const method = String(methodName || '');
+                return !!(targetBitmap
+                    && (method === 'blt' || method === 'bltImage')
+                    && mutation
+                    && mutation.sourceBitmap
+                    && mutation.sourceRect
+                    && mutation.rect);
+            }
+
+    function createCopiedRenderTarget(entry, targetBitmap, sourceBitmap, sourceRect, targetRect, sourceBounds, methodName) {
+                if (!entry || !isUsableBitmap(targetBitmap) || !rectHasArea(sourceRect) || !rectHasArea(targetRect) || !rectHasArea(sourceBounds)) return null;
+                const sourceWidth = Number(sourceRect.x2) - Number(sourceRect.x1);
+                const sourceHeight = Number(sourceRect.y2) - Number(sourceRect.y1);
+                const targetWidth = Number(targetRect.x2) - Number(targetRect.x1);
+                const targetHeight = Number(targetRect.y2) - Number(targetRect.y1);
+                const scaleX = targetWidth / sourceWidth;
+                const scaleY = targetHeight / sourceHeight;
+                if (!Number.isFinite(scaleX) || !Number.isFinite(scaleY) || scaleX <= 0 || scaleY <= 0) return null;
+
+                const bounds = mapCopiedRect(sourceBounds, sourceRect, targetRect, scaleX, scaleY);
+                if (!rectHasArea(bounds)) return null;
+                const position = entry.position || {};
+                const params = entry.originalParams || {};
+                const drawState = entry.drawState && typeof entry.drawState === 'object'
+                    ? Object.assign({}, entry.drawState)
+                    : null;
+                return {
+                    targetBitmap,
+                    sourceBitmap,
+                    sourceRect: cloneValidReplayRect(sourceRect),
+                    targetRect: cloneValidReplayRect(targetRect),
+                    sourceBounds: cloneValidReplayRect(sourceBounds),
+                    bounds,
+                    position: {
+                        x: mapCopiedNumber(position.x, sourceRect.x1, targetRect.x1, scaleX),
+                        y: mapCopiedNumber(position.y, sourceRect.y1, targetRect.y1, scaleY),
+                    },
+                    params: {
+                        maxWidth: scaleOptionalDimension(params.maxWidth, scaleX),
+                        lineHeight: scaleOptionalDimension(params.lineHeight, scaleY),
+                        align: params.align,
+                    },
+                    drawState,
+                    scaleX,
+                    scaleY,
+                    methodName: String(methodName || 'blt'),
+                    backgroundSnapshot: captureCopiedTargetBackground(targetBitmap, bounds, entry),
+                    createdAt: Date.now(),
+                };
+            }
+
+    function redrawCopiedWindowTextTarget(entry, target, renderedText) {
+                if (!entry || !isUsableCopiedRenderTarget(target) || !renderedText) return false;
+                const targetBitmap = target.targetBitmap;
+                const position = target.position || {};
+                const params = target.params || {};
+                const drawX = normalizeCopiedCoordinate(position.x);
+                const drawY = normalizeCopiedCoordinate(position.y);
+                if (drawX === null || drawY === null) return false;
+                restoreCopiedTargetBackground(targetBitmap, target);
+                const previousDrawState = drawService.captureBitmapDrawState
+                    ? drawService.captureBitmapDrawState(targetBitmap)
+                    : null;
+                const drawState = target.drawState || entry.drawState || null;
+                try {
+                    if (drawState && drawService.applyBitmapDrawState) drawService.applyBitmapDrawState(targetBitmap, drawState);
+                    const sourceYOffset = calculateBitmapSurfaceTextYOffset(entry.contentsBitmap || target.sourceBitmap, entry, renderedText);
+                    const yOffset = Number.isFinite(Number(sourceYOffset)) ? Number(sourceYOffset) * (Number(target.scaleY) || 1) : 0;
+                    withCopiedTargetDrawGuard(targetBitmap, () => {
+                        targetBitmap.drawText(
+                            renderedText,
+                            drawX,
+                            drawY + yOffset,
+                            params.maxWidth,
+                            params.lineHeight,
+                            params.align
+                        );
+                    });
+                    markBitmapPixelsDirty(targetBitmap);
+                    target.lastRenderedText = String(renderedText);
+                    target.lastRenderedAt = Date.now();
+                    return true;
+                } catch (_) {
+                    return false;
+                } finally {
+                    if (previousDrawState && drawService.applyBitmapDrawState) {
+                        try { drawService.applyBitmapDrawState(targetBitmap, previousDrawState); } catch (_) {}
+                    }
+                }
+            }
+
+    function withCopiedTargetDrawGuard(bitmap, callback) {
+                const api = replayService && replayService.bitmapDraws;
+                if (api && typeof api.withWindowPipelineGuard === 'function') {
+                    return api.withWindowPipelineGuard(bitmap, callback, 'window-copy-target-redraw');
+                }
+                return typeof callback === 'function' ? callback() : undefined;
+            }
+
+    function restoreCopiedTargetBackground(targetBitmap, target) {
+                const snapshot = target && target.backgroundSnapshot;
+                if (!snapshot || snapshot.contentsBitmap !== targetBitmap || !snapshot.imageData) return false;
+                const canvasContext = getBitmapSnapshotContext(targetBitmap);
+                if (!canvasContext || typeof canvasContext.putImageData !== 'function') return false;
+                try {
+                    canvasContext.putImageData(snapshot.imageData, snapshot.x, snapshot.y);
+                    markBitmapPixelsDirty(targetBitmap);
+                    return true;
+                } catch (_) {
+                    return false;
+                }
+            }
+
+    function captureCopiedTargetBackground(targetBitmap, bounds, entry) {
+                const canvasContext = getBitmapSnapshotContext(targetBitmap);
+                if (!canvasContext || typeof canvasContext.getImageData !== 'function') return null;
+                const area = getSnapshotArea(targetBitmap, bounds, getEntrySnapshotPadding(targetBitmap, entry));
+                if (!area) return null;
+                try {
+                    const imageData = canvasContext.getImageData(area.x, area.y, area.w, area.h);
+                    if (!imageData) return null;
+                    return {
+                        contentsBitmap: targetBitmap,
+                        x: area.x,
+                        y: area.y,
+                        w: area.w,
+                        h: area.h,
+                        bounds: cloneDiagnosticRect(bounds),
+                        capturedAt: Date.now(),
+                        imageData,
+                    };
+                } catch (_) {
+                    return null;
+                }
+            }
+
+    function isCopiedRenderTargetCurrent(targetBitmap, methodName, mutation, target) {
+                if (!target || target.targetBitmap !== targetBitmap) return false;
+                if (String(target.methodName || '') !== String(methodName || '')) return false;
+                if (!sameReplayRect(target.targetRect, mutation && mutation.rect)) return false;
+                if (!sameReplayRect(target.sourceRect, mutation && mutation.sourceRect)) return false;
+                return isUsableCopiedRenderTarget(target);
+            }
+
+    function isUsableCopiedRenderTarget(target) {
+                return !!(target && isUsableBitmap(target.targetBitmap) && rectHasArea(target.bounds));
+            }
+
+    function sameCopiedTargetRegion(a, b) {
+                return !!(a && b && a.targetBitmap === b.targetBitmap && replayRectsOverlap(a.bounds, b.bounds));
+            }
+
+    function sameReplayRect(a, b) {
+                const left = cloneValidReplayRect(a);
+                const right = cloneValidReplayRect(b);
+                if (!left || !right) return false;
+                return left.x1 === right.x1 && left.y1 === right.y1 && left.x2 === right.x2 && left.y2 === right.y2;
+            }
+
+    function cloneValidReplayRect(rect) {
+                if (!rect || !isValidRect(rect)) return null;
+                return {
+                    x1: Number(rect.x1),
+                    y1: Number(rect.y1),
+                    x2: Number(rect.x2),
+                    y2: Number(rect.y2),
+                };
+            }
+
+    function rectHasArea(rect) {
+                return !!(rect && isValidRect(rect) && Number(rect.x2) > Number(rect.x1) && Number(rect.y2) > Number(rect.y1));
+            }
+
+    function rectContainsRect(outer, inner) {
+                return !!(rectHasArea(outer)
+                    && rectHasArea(inner)
+                    && Number(inner.x1) >= Number(outer.x1)
+                    && Number(inner.y1) >= Number(outer.y1)
+                    && Number(inner.x2) <= Number(outer.x2)
+                    && Number(inner.y2) <= Number(outer.y2));
+            }
+
+    function clipRectToBitmap(rect, bitmap) {
+                if (!rectHasArea(rect) || !isUsableBitmap(bitmap)) return null;
+                const clipped = {
+                    x1: Math.max(Number(rect.x1), 0),
+                    y1: Math.max(Number(rect.y1), 0),
+                    x2: Math.min(Number(rect.x2), Number(bitmap.width)),
+                    y2: Math.min(Number(rect.y2), Number(bitmap.height)),
+                };
+                return rectHasArea(clipped) ? clipped : null;
+            }
+
+    function mapCopiedRect(rect, sourceRect, targetRect, scaleX, scaleY) {
+                return {
+                    x1: mapCopiedNumber(rect.x1, sourceRect.x1, targetRect.x1, scaleX),
+                    y1: mapCopiedNumber(rect.y1, sourceRect.y1, targetRect.y1, scaleY),
+                    x2: mapCopiedNumber(rect.x2, sourceRect.x1, targetRect.x1, scaleX),
+                    y2: mapCopiedNumber(rect.y2, sourceRect.y1, targetRect.y1, scaleY),
+                };
+            }
+
+    function mapCopiedNumber(value, sourceStart, targetStart, scale) {
+                const number = Number(value);
+                const source = Number(sourceStart);
+                const target = Number(targetStart);
+                const ratio = Number(scale);
+                if (![number, source, target, ratio].every(Number.isFinite)) return 0;
+                return target + ((number - source) * ratio);
+            }
+
+    function scaleOptionalDimension(value, scale) {
+                const number = Number(value);
+                if (!Number.isFinite(number) || number <= 0 || value === Infinity) return value;
+                const ratio = Number(scale);
+                return Number.isFinite(ratio) && ratio > 0 ? number * ratio : number;
+            }
+
+    function normalizeCopiedCoordinate(value) {
+                const number = Number(value);
+                return Number.isFinite(number) ? number : null;
+            }
+
     function resolveBitmapWindowData(bitmap) {
                 if (!bitmap) return null;
                 const match = surfaceService.resolveWindowSurfaceForContents(bitmap);
@@ -546,7 +873,7 @@
     
     
     
-        return { mergeBounds, isValidRect, roundDiagnosticNumber, cloneDiagnosticRect, cloneDiagnosticArea, calculateBitmapSurfaceTextYOffset, estimateBitmapSurfaceTextBounds, withWindowRedrawClear, withWindowContents, isUsableBitmap, getRedrawContents, wasDrawnToDetachedContents, isTransientRefreshWindow, isCoreRefreshWindowType, getBitmapReplayApi, assignWindowTextDrawOrder, captureWindowEntrySource, restoreWindowEntrySource, restoreEntriesForBitmapMutation, redrawRestoredEntriesForBitmapMutation, createClearRectFromArea, getReplayItemRect, mergeReplayRect, expandReplayDirtyRect, replayRectsOverlap, collectWindowTextReplayItems, windowEntryBelongsToContents, combineReplayItems, filterReplayForEntry, replayMixedItems, replayWindowTextEntry, getWindowReplayText, getBitmapCanvasContext, supportsBitmapReplayClip, withBitmapReplayClip, getReplayClipArea, getBitmapSnapshotContext, captureWindowEntryBackground, captureWindowEntryBackgroundPatch, ensureWindowEntryBackground, getWindowEntryBackgroundSnapshotStatus, getWindowEntrySourceSnapshotStatus, restoreWindowEntryBackground, getEntryContentsRevision, getSnapshotContentsRevision, getWindowDataContentsRevision, getEntrySnapshotPadding, getSnapshotArea, getSnapshotDiagnostics, summarizeReplayItemsForDiagnostics, summarizeReplayStateForDiagnostics };
+        return { mergeBounds, isValidRect, roundDiagnosticNumber, cloneDiagnosticRect, cloneDiagnosticArea, calculateBitmapSurfaceTextYOffset, estimateBitmapSurfaceTextBounds, withWindowRedrawClear, withWindowContents, isUsableBitmap, getRedrawContents, wasDrawnToDetachedContents, isTransientRefreshWindow, isCoreRefreshWindowType, getBitmapReplayApi, assignWindowTextDrawOrder, captureWindowEntrySource, restoreWindowEntrySource, restoreEntriesForBitmapMutation, redrawRestoredEntriesForBitmapMutation, prepareCopiedTargetsForBitmapMutation, commitCopiedTargetsForBitmapMutation, invalidateCopiedTargetsForBitmapMutation, hasCopiedTargetsForBitmap, redrawCopiedWindowTextTargets, createClearRectFromArea, getReplayItemRect, mergeReplayRect, expandReplayDirtyRect, replayRectsOverlap, collectWindowTextReplayItems, windowEntryBelongsToContents, combineReplayItems, filterReplayForEntry, replayMixedItems, replayWindowTextEntry, getWindowReplayText, getBitmapCanvasContext, supportsBitmapReplayClip, withBitmapReplayClip, getReplayClipArea, getBitmapSnapshotContext, captureWindowEntryBackground, captureWindowEntryBackgroundPatch, ensureWindowEntryBackground, getWindowEntryBackgroundSnapshotStatus, getWindowEntrySourceSnapshotStatus, restoreWindowEntryBackground, getEntryContentsRevision, getSnapshotContentsRevision, getWindowDataContentsRevision, getEntrySnapshotPadding, getSnapshotArea, getSnapshotDiagnostics, summarizeReplayItemsForDiagnostics, summarizeReplayStateForDiagnostics };
     }
     
     defineRuntimeModule('adapters.windowTextBitmapReplay', { create: createBitmapReplayController });

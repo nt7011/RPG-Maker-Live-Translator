@@ -252,6 +252,7 @@
             readBitmapOwner: 'textUtils',
             resolveBitmapWindowSurface: 'textUtils',
             hasDedicatedOwnerHook: 'textUtils',
+            describeBitmapContentsOwnership: 'textUtils',
             windowEntryBelongsToBitmap: 'textUtils',
             deriveWindowEntryRect: 'textUtils',
             deriveEntryRect: 'textUtils',
@@ -465,6 +466,14 @@
             scheduleDeferredFlush(options) {
                 if (typeof api.scheduleDeferredFlush !== 'function') throw new Error('[BitmapText] bitmapServices.scheduleDeferredFlush is required.');
                 return api.scheduleDeferredFlush(options);
+            },
+            enterDrawRunContext(bitmap, input) {
+                if (typeof api.enterDrawRunContext !== 'function') return () => {};
+                try { return api.enterDrawRunContext(bitmap, input) || (() => {}); } catch (error) { onError('enterDrawRunContext', error); return () => {}; }
+            },
+            getActiveDrawRunContext(bitmap) {
+                if (typeof api.getActiveDrawRunContext !== 'function') return null;
+                try { return api.getActiveDrawRunContext(bitmap) || null; } catch (error) { onError('getActiveDrawRunContext', error); return null; }
             },
             publishMutation(bitmap, methodName, args) {
                 if (typeof api.publishMutation !== 'function') return;

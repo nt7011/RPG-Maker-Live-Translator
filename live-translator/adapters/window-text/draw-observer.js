@@ -96,12 +96,6 @@
             }
     
     function handleDrawTextEx(windowInstance, originalDrawTextEx, text, x, y) {
-                try {
-                    if (windowInstance && windowInstance.contents) {
-                        windowInstance.contents._trPreferWindowPipeline = true;
-                    }
-                } catch (_) {}
-    
                 const textStr = stringifyWindowTextInput(text);
                 const invokeOriginal = (overrideText, options = {}) => {
                     const value = overrideText !== undefined ? overrideText : textStr;
@@ -233,6 +227,10 @@
                     ownershipStatus: draw.ownershipStatus,
                     ownershipReason: draw.ownershipReason,
                     backgroundPatch: !!draw.backgroundPatch,
+                    drawRun: draw.drawRun,
+                    phase: event && (event.phase || event.sourcePhase) || '',
+                    sourceCommitted: event && event.sourceCommitted === true,
+                    nativeDrawCapability: event && event.nativeDrawCapability || '',
                 };
 
                 if (!windowInstance) {
@@ -290,6 +288,7 @@
                         target: 'window.contents',
                         ownerType: draw.ownerType,
                         measuredWidth: draw.measuredWidth,
+                        drawRun: draw.drawRun,
                         drawState: draw.drawState,
                         drawBoundary: draw.drawBoundary,
                     },
@@ -303,11 +302,11 @@
                     // pixels instead of the stale source snapshot captured earlier.
                     applySurfaceDrawBackgroundPatch(draw, observation.entry);
                 }
-                if (event && event.postDraw === true && observation && observation.entry) {
+                if (isCommittedSurfaceDrawEvent(event) && observation && observation.entry) {
                     captureSourceAfterNativeDraw(windowInstance, observation.entry);
                 }
                 if (observation && observation.completed) {
-                    if (event && event.postDraw === true) {
+                    if (isCommittedSurfaceDrawEvent(event)) {
                         const redrawResult = redrawTranslatedText(observation.entry, observation.windowData);
                         return {
                             action: redrawResult && redrawResult.status === 'accepted' ? 'redraw-applied' : 'observed-window-surface-text',
@@ -534,6 +533,7 @@
                         ? renderTransaction.createSourceDrawBoundary(source.drawBoundary)
                         : null,
                     measuredWidth: finiteNumber(source.measuredWidth, 0),
+                    drawRun: normalizeSurfaceDrawRun(source.drawRun),
                     backgroundPatch: normalizeSurfaceBackgroundPatch(source.backgroundPatch),
                     ownerType: String(source.ownerType || ''),
                     sourceAdapter: String((event && event.sourceAdapter) || source.sourceAdapter || ''),
@@ -579,10 +579,16 @@
                 const guarded = bitmap ? !!getBitmapDrawGuardService().getRenderGuardReason(bitmap) : false;
                 return !!(bitmap && (
                     guarded
-                    || bitmap._trWindowPipelineDepth > 0
                     || bitmap._trWindowTextDrawTextExReplayDepth > 0
                     || bitmap._trWindowDrawTextExReplayDepth > 0
                 ));
+            }
+
+    function isCommittedSurfaceDrawEvent(event) {
+                if (!event || typeof event !== 'object') return false;
+                if (event.sourceCommitted === true || event.postDraw === true) return true;
+                const phase = String(event.phase || event.sourcePhase || '');
+                return phase === 'source-draw-committed';
             }
 
     function getBitmapDrawGuardService() {
@@ -994,12 +1000,24 @@
                     target: String(origin.target || ''),
                     ownerType: String(origin.ownerType || ''),
                     measuredWidth: finiteNumber(origin.measuredWidth, 0),
+                    drawRun: normalizeSurfaceDrawRun(origin.drawRun),
                     drawState: origin.drawState && typeof origin.drawState === 'object'
                         ? Object.assign({}, origin.drawState)
                         : null,
                     drawBoundary: origin.drawBoundary && typeof origin.drawBoundary === 'object'
                         ? renderTransaction.createSourceDrawBoundary(origin.drawBoundary)
                         : null,
+                };
+            }
+
+    function normalizeSurfaceDrawRun(drawRun) {
+                if (!drawRun || typeof drawRun !== 'object') return null;
+                return {
+                    type: String(drawRun.type || ''),
+                    reason: String(drawRun.reason || ''),
+                    confidence: String(drawRun.confidence || ''),
+                    runKey: String(drawRun.runKey || ''),
+                    unitCount: Math.max(0, Math.floor(finiteNumber(drawRun.unitCount, 0))),
                 };
             }
 

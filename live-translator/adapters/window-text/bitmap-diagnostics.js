@@ -162,7 +162,12 @@
                         metricOffset = measuredBounds.clampNumber(offset, -maxOffset, maxOffset);
                     }
                 }
-                const sourceInkOffset = calculateBitmapSurfaceSourceInkYOffset(contents, entry, renderedText, fontSize);
+                const sourceTextWidth = firstPositiveNumber(
+                    sourceMetrics && sourceMetrics.width,
+                    measureBitmapTextWidth(contents, sourceText),
+                    params.maxWidth
+                );
+                const sourceInkOffset = calculateBitmapSurfaceSourceInkYOffset(contents, entry, renderedText, fontSize, sourceTextWidth);
                 const finalOffset = Number.isFinite(sourceInkOffset) ? sourceInkOffset : metricOffset;
                 rememberBitmapSurfaceYOffsetSource(entry, Number.isFinite(sourceInkOffset)
                     ? 'sourceInk'
@@ -176,10 +181,10 @@
                 }
             }
 
-    function calculateBitmapSurfaceSourceInkYOffset(contents, entry, renderedText, fontSize) {
+    function calculateBitmapSurfaceSourceInkYOffset(contents, entry, renderedText, fontSize, sourceTextWidth = 0) {
                 const sourceInk = measuredBounds.measureSnapshotInk(entry && entry.backgroundSnapshot, entry && entry.sourceSnapshot);
                 const translatedInk = measureBitmapSurfaceRenderedInk(contents, entry, renderedText, fontSize, createBitmapCurrentDrawState(contents));
-                return measuredBounds.calculateSourceAlignedYOffset({ sourceInk, translatedInk, fontSize });
+                return measuredBounds.calculateSourceAlignedYOffset({ sourceInk, translatedInk, fontSize, sourceTextWidth });
             }
 
     function createBitmapCurrentDrawState(contents) {
@@ -243,17 +248,18 @@
                     // Skip translation hooks while still invoking the engine's native
                     // drawText implementation. The scratch bitmap is only a measuring
                     // surface and must not create adapter records.
-                    scratch._trWindowPipelineDepth = (scratch._trWindowPipelineDepth || 0) + 1;
-                    withBitmapSkipAndSpriteReplayGuard(scratch, () => {
-                        scratch.drawText(
-                            text,
-                            horizontalPadding,
-                            verticalPadding,
-                            maxWidth,
-                            lineHeight,
-                            String(params.align || 'left')
-                        );
-                    });
+                    withWindowPipelineGuard(scratch, () => {
+                        withBitmapSkipAndSpriteReplayGuard(scratch, () => {
+                            scratch.drawText(
+                                text,
+                                horizontalPadding,
+                                verticalPadding,
+                                maxWidth,
+                                lineHeight,
+                                String(params.align || 'left')
+                            );
+                        });
+                    }, 'window-measurement');
                     const rendered = scratchContext.getImageData(0, 0, width, height);
                     const ink = measureImageDataDifference(before, rendered, width, height);
                     if (!ink) return null;
@@ -268,10 +274,6 @@
                     };
                 } catch (_) {
                     return null;
-                } finally {
-                    if (scratch) {
-                        scratch._trWindowPipelineDepth = Math.max(0, (scratch._trWindowPipelineDepth || 1) - 1);
-                    }
                 }
             }
 
@@ -281,6 +283,14 @@
                     throw new Error('[WindowText] bitmap replay guard service is required.');
                 }
                 return bitmapDraws.withBitmapSkipAndSpriteReplayGuard(bitmap, callback);
+            }
+
+    function withWindowPipelineGuard(bitmap, callback, source) {
+                const bitmapDraws = replayService && replayService.bitmapDraws;
+                if (!bitmapDraws || typeof bitmapDraws.withWindowPipelineGuard !== 'function') {
+                    throw new Error('[WindowText] bitmap window-pipeline guard service is required.');
+                }
+                return bitmapDraws.withWindowPipelineGuard(bitmap, callback, source || 'window-pipeline');
             }
 
     function createScratchBitmap(BitmapCtor, width, height) {

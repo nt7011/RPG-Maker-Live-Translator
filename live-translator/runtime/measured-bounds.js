@@ -273,9 +273,42 @@
         if (!Number.isFinite(sourceTop) || !Number.isFinite(translatedTop)) return null;
         const fontSize = positiveNumber(input.fontSize, 0);
         const maxOffset = positiveNumber(input.maxOffset, Math.max(4, fontSize * 0.75), 4);
+        // Top-align only comparable ink bands. If the source is much taller, it
+        // must also cover enough of the expected source text width to prove this
+        // is a full text band rather than a narrow copied slice or stray pixels.
+        if (!areAlignedInkBandsComparable(sourceInk, translatedInk, fontSize, input.sourceTextWidth)) return null;
         const offset = sourceTop - translatedTop;
         if (!Number.isFinite(offset) || Math.abs(offset) < 0.01) return 0;
         return clampNumber(offset, -maxOffset, maxOffset);
+    }
+
+    function areAlignedInkBandsComparable(sourceInk, translatedInk, fontSize, sourceTextWidth) {
+        const sourceHeight = getInkWorldHeight(sourceInk);
+        const translatedHeight = getInkWorldHeight(translatedInk);
+        if (!Number.isFinite(sourceHeight) || !Number.isFinite(translatedHeight)) return true;
+        const maxHeightDelta = Math.max(4, positiveNumber(fontSize, 0) * 0.35);
+        if (Math.abs(sourceHeight - translatedHeight) <= maxHeightDelta) return true;
+        return isSourceInkWidthRepresentative(sourceInk, sourceTextWidth, fontSize);
+    }
+
+    function getInkWorldHeight(ink) {
+        const bounds = ink && ink.worldBounds;
+        if (!isFiniteRect(bounds)) return NaN;
+        return Math.abs(Number(bounds.y2) - Number(bounds.y1));
+    }
+
+    function isSourceInkWidthRepresentative(sourceInk, sourceTextWidth, fontSize) {
+        const sourceWidth = getInkWorldWidth(sourceInk);
+        const expectedWidth = positiveNumber(sourceTextWidth, 0);
+        if (!Number.isFinite(sourceWidth) || sourceWidth <= 0 || expectedWidth <= 0) return false;
+        const minCoverageWidth = Math.min(expectedWidth * 0.45, expectedWidth - Math.max(2, fontSize * 0.25));
+        return sourceWidth >= Math.max(1, minCoverageWidth);
+    }
+
+    function getInkWorldWidth(ink) {
+        const bounds = ink && ink.worldBounds;
+        if (!isFiniteRect(bounds)) return NaN;
+        return Math.abs(Number(bounds.x2) - Number(bounds.x1));
     }
 
     function hasVisibleText(input) {

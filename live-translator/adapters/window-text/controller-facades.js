@@ -132,6 +132,7 @@
                 'captureWindowEntryBackground',
                 'captureWindowEntryBackgroundPatch',
                 'ensureWindowEntryBackground',
+                'redrawCopiedWindowTextTargets',
                 'createClearRectFromArea',
                 'getReplayItemRect',
                 'expandReplayDirtyRect',

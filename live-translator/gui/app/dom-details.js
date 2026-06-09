@@ -64,6 +64,7 @@ function createTextMetaGrid(item) {
     appendMeta(grid, 'Hook', item.hookKey || item.hook || '-');
     appendMeta(grid, 'Surface', item.surfaceType || item.windowType || item.ownerType || '-');
     appendMeta(grid, 'Method', item.methodName || '-');
+    if (item.drawRun) appendMeta(grid, 'Draw Run', formatDrawRun(item.drawRun));
     if (item.rawText && item.rawText !== item.original) appendMeta(grid, 'RawDetected', item.rawText);
     if (item.convertedText && item.convertedText !== item.original) appendMeta(grid, 'RenderResolved', item.convertedText);
     appendMeta(grid, 'TranslationSource', item.translationSource || item.normalizedSource || '-');
@@ -76,6 +77,7 @@ function createTextMetaGrid(item) {
         appendMeta(grid, 'Bounds', formatBounds(item.bounds));
     }
     Object.keys(item.metadata || {}).forEach((key) => {
+        if (key === 'drawRun') return;
         appendMeta(grid, key, item.metadata[key]);
     });
     return grid;
@@ -135,6 +137,16 @@ function formatDetailValue(value) {
     } catch (_) {
         return String(value);
     }
+}
+
+function formatDrawRun(drawRun) {
+    if (!drawRun || typeof drawRun !== 'object') return '-';
+    const parts = [];
+    if (drawRun.type) parts.push(String(drawRun.type));
+    if (drawRun.confidence) parts.push(`confidence=${drawRun.confidence}`);
+    if (drawRun.reason) parts.push(`reason=${drawRun.reason}`);
+    if (Number.isFinite(Number(drawRun.unitCount))) parts.push(`units=${Number(drawRun.unitCount)}`);
+    return parts.length ? parts.join(', ') : '-';
 }
 
 function formatPolicySection(policy) {
