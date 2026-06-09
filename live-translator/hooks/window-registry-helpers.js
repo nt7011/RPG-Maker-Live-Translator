@@ -276,9 +276,6 @@
                 }
                 surfaceOwnership.rememberContentsOwner(window.contents, window);
                 claimWindowContentsSurface(window, windowData);
-                if (!window.contents._trWindowPipelineDepth) {
-                    window.contents._trWindowPipelineDepth = 0;
-                }
             } catch (_) {}
         }
 

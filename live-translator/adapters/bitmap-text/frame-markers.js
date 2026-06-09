@@ -109,32 +109,20 @@
                 const original = current;
                 const wrapped = function(...args) {
                 const contents = this && this.contents ? this.contents : null;
-                const previousRunId = contents ? contents._trNormalCharRunId : undefined;
-                const previousRunInfo = contents ? contents._trNormalCharRunInfo : undefined;
                 const runId = getNormalCharacterRunId(args && args[0]);
                 const runInfo = getNormalCharacterRunInfo(this, args && args[0], runId);
+                const leaveRunContext = contents && scope.bitmapServices && typeof scope.bitmapServices.enterDrawRunContext === 'function'
+                    ? scope.bitmapServices.enterDrawRunContext(contents, {
+                        type: 'normalCharacter',
+                        runId,
+                        runInfo,
+                    })
+                    : null;
                 scope.normalCharacterDepth += 1;
-                if (contents) {
-                    contents._trNormalCharDepth = (contents._trNormalCharDepth || 0) + 1;
-                    if (runId) contents._trNormalCharRunId = runId;
-                    if (runInfo) contents._trNormalCharRunInfo = runInfo;
-                }
                 try { return original.apply(this, args); }
                 finally {
                         scope.normalCharacterDepth = Math.max(0, scope.normalCharacterDepth - 1);
-                        if (contents) {
-                            contents._trNormalCharDepth = Math.max(0, (contents._trNormalCharDepth || 1) - 1);
-                            if (previousRunId === undefined) {
-                                try { delete contents._trNormalCharRunId; } catch (_) { contents._trNormalCharRunId = ''; }
-                            } else {
-                                contents._trNormalCharRunId = previousRunId;
-                            }
-                            if (previousRunInfo === undefined) {
-                                try { delete contents._trNormalCharRunInfo; } catch (_) { contents._trNormalCharRunInfo = null; }
-                            } else {
-                                contents._trNormalCharRunInfo = previousRunInfo;
-                            }
-                        }
+                        if (typeof leaveRunContext === 'function') leaveRunContext();
                     }
                 };
                 wrapped.__trBitmapTextNormalChar = NORMAL_CHAR_TOKEN;
@@ -206,7 +194,11 @@
         }
 
         function isNormalCharacterDrawActive(bitmap) {
-            return scope.normalCharacterDepth > 0 || !!(bitmap && bitmap._trNormalCharDepth > 0);
+            if (scope.normalCharacterDepth > 0) return true;
+            const context = scope.bitmapServices && typeof scope.bitmapServices.getActiveDrawRunContext === 'function'
+                ? scope.bitmapServices.getActiveDrawRunContext(bitmap)
+                : null;
+            return !!(context && context.type === 'normalCharacter');
         }
         
         function isSmallTextScratchBitmap(bitmap) {

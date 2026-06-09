@@ -138,6 +138,7 @@
                 'readBitmapOwner',
                 'resolveBitmapWindowSurface',
                 'hasDedicatedOwnerHook',
+                'describeBitmapContentsOwnership',
                 'windowEntryBelongsToBitmap',
                 'deriveWindowEntryRect',
                 'deriveEntryRect',

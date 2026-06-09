@@ -91,12 +91,14 @@ function normalizeOrchestratorTextRecord(record, lifecycle) {
     const methodName = firstNonEmptyString(metadata.methodName, metadata.method, hook);
     const history = normalizeRecordHistory(source.history);
     const policy = normalizeTextRecordPolicy(source, history);
+    const drawRun = normalizeDrawRunMetadata(metadata.drawRun);
     const normalized = normalizeActiveTextRecord(Object.assign({}, source, {
         hookLabel: formatTextRecordHookLabel(adapter, hook),
         hook,
         methodName,
         windowType: firstNonEmptyString(metadata.windowType),
         ownerType: firstNonEmptyString(metadata.ownerType, adapter),
+        drawRun,
         x: metadata.x,
         y: metadata.y,
         onScreen: source.visible !== false,
@@ -182,6 +184,7 @@ function normalizeActiveTextRecord(record) {
         windowType: source.windowType ? String(source.windowType) : '',
         ownerType: source.ownerType ? String(source.ownerType) : '',
         methodName: source.methodName ? String(source.methodName) : '',
+        drawRun: normalizeDrawRunMetadata(source.drawRun),
         x: source.x,
         y: source.y,
         bounds: source.bounds && typeof source.bounds === 'object' ? Object.assign({}, source.bounds) : null,
@@ -196,6 +199,17 @@ function normalizeActiveTextRecord(record) {
         policy: normalizeTextRecordPolicy(source, history),
         metadata: source.metadata && typeof source.metadata === 'object' ? Object.assign({}, source.metadata) : {},
         history,
+    };
+}
+
+function normalizeDrawRunMetadata(drawRun) {
+    if (!drawRun || typeof drawRun !== 'object') return null;
+    return {
+        type: drawRun.type ? String(drawRun.type) : '',
+        reason: drawRun.reason ? String(drawRun.reason) : '',
+        confidence: drawRun.confidence ? String(drawRun.confidence) : '',
+        runKey: drawRun.runKey ? String(drawRun.runKey) : '',
+        unitCount: Math.max(0, Math.floor(Number(drawRun.unitCount) || 0)),
     };
 }
 

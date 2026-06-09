@@ -113,6 +113,7 @@
             if (!isDrawCaptureTraceEnabled()) return null;
             const owner = readBitmapOwner(bitmap);
             const guardState = scope.bitmapServices.getRenderGuardState(bitmap);
+            const contentsOwnership = describeBitmapContentsOwnership(bitmap);
             const ownerType = extra && extra.ownerType ? String(extra.ownerType) : describeOwnerType(owner, bitmap);
             const visibleText = sanitizeVisibleText(rawText);
             const state = getBitmapState(bitmap);
@@ -132,13 +133,15 @@
                     width: roundTraceNumber(bitmap.width),
                     height: roundTraceNumber(bitmap.height),
                     fontSize: roundTraceNumber(bitmap.fontSize),
-                    preferWindowPipeline: bitmap._trPreferWindowPipeline === true,
-                    windowPipelineDepth: Number(bitmap._trWindowPipelineDepth) || 0,
+                    preferWindowPipeline: guardState ? Number(guardState.windowPipelineDepth) > 0 : false,
+                    windowPipelineDepth: guardState ? Number(guardState.windowPipelineDepth) || 0 : 0,
+                    windowPipelineSource: guardState ? String(guardState.windowPipelineSource || '') : '',
                     windowRefreshDepth: Number(bitmap._trWindowRefreshDepth) || 0,
                     bitmapSkipDepth: guardState ? Number(guardState.bitmapSkipDepth) || 0 : 0,
                     bitmapReplayDepth: guardState ? Number(guardState.bitmapReplayDepth) || 0 : 0,
                     spriteTextReplayDepth: guardState ? Number(guardState.spriteTextReplayDepth) || 0 : 0,
-                    messageContents: bitmap._trMessageContents === true,
+                    messageContents: contentsOwnership ? contentsOwnership.surfaceType === 'message' || contentsOwnership.role === 'message-contents' : false,
+                    dedicatedTextHook: contentsOwnership ? contentsOwnership.dedicatedTextHook === true : false,
                 } : null,
             }, extra || {});
         }
@@ -177,9 +180,19 @@
         
         function hasDedicatedOwnerHook(owner) {
             if (!owner) return false;
-            if (owner._trHasDedicatedTextHook) return true;
-            const ctor = owner.constructor;
-            return !!(ctor && ctor._trHasDedicatedTextHook);
+            const ownership = scope.surfaceOwnership;
+            if (ownership && typeof ownership.isDedicatedTextOwner === 'function') {
+                return safeCall(() => ownership.isDedicatedTextOwner(owner) === true) === true;
+            }
+            return false;
+        }
+
+        function describeBitmapContentsOwnership(bitmap) {
+            const ownership = scope.surfaceOwnership;
+            if (bitmap && ownership && typeof ownership.describeContentsOwnership === 'function') {
+                return safeCall(() => ownership.describeContentsOwnership(bitmap));
+            }
+            return null;
         }
         
         function windowEntryBelongsToBitmap(entry, bitmap, owner, data) {
@@ -378,7 +391,7 @@
             return error && error.message ? error.message : String(error || 'translation error');
         }
 
-        return { estimateTextWidth, computeFontSignature, sanitizeVisibleText, sanitizePerChar, isStandaloneGlyphText, sanitizeBitmapDrawText, safePrepareText, describeEntryEligibility, isDrawCaptureTraceEnabled, recordDrawTrace, bitmapTraceDetails, cloneTraceRect, roundTraceNumber, readBitmapOwner, resolveBitmapWindowSurface, hasDedicatedOwnerHook, windowEntryBelongsToBitmap, deriveWindowEntryRect, deriveEntryRect, fragmentRect, rectFromDimensions, isValidRect, rectHasArea, rectOrNull, rectanglesOverlap, normalizeCanvasTextAlign, describeOwnerType, shouldKeepWindowEntryTranslation, getWindowOwnerScreenState, retireWindowEntry, logTextDetected, updateItem, safeCall, isAdapterContractFailure, warn, stringify, finiteNumber, positiveNumber, pruneArray, errorMessage };
+        return { estimateTextWidth, computeFontSignature, sanitizeVisibleText, sanitizePerChar, isStandaloneGlyphText, sanitizeBitmapDrawText, safePrepareText, describeEntryEligibility, isDrawCaptureTraceEnabled, recordDrawTrace, bitmapTraceDetails, cloneTraceRect, roundTraceNumber, readBitmapOwner, resolveBitmapWindowSurface, hasDedicatedOwnerHook, describeBitmapContentsOwnership, windowEntryBelongsToBitmap, deriveWindowEntryRect, deriveEntryRect, fragmentRect, rectFromDimensions, isValidRect, rectHasArea, rectOrNull, rectanglesOverlap, normalizeCanvasTextAlign, describeOwnerType, shouldKeepWindowEntryTranslation, getWindowOwnerScreenState, retireWindowEntry, logTextDetected, updateItem, safeCall, isAdapterContractFailure, warn, stringify, finiteNumber, positiveNumber, pruneArray, errorMessage };
     }
 
     defineRuntimeModule('adapters.bitmapTextTextUtils', { create: createController });

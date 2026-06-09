@@ -61,10 +61,11 @@
                 const notifySubscribers = !bypassMutation && hasMutationObserverInterest(this);
                 const handleMutation = !bypassMutation && shouldHandleBitmapMutation(this, methodName);
                 const restoreSource = !bypassMutation && hasWindowTextMutationSource(this, methodName, args);
+                const flushPendingWindowSource = !bypassMutation && hasPendingWindowTextMutationSource(methodName, args);
                 const handleTextInk = !bypassMutation
                     && typeof scope.hasBitmapNativeTextInkInterest === 'function'
                     && scope.hasBitmapNativeTextInkInterest(this);
-                const observeMutation = notifySubscribers || handleMutation || restoreSource || handleTextInk;
+                const observeMutation = notifySubscribers || handleMutation || restoreSource || flushPendingWindowSource || handleTextInk;
                 if (profilerOn && observeMutation) {
                     scope.perf.count('bitmap.mutation.calls');
                     scope.perf.top('bitmap.mutation.method', methodName);
@@ -81,9 +82,15 @@
                 let result;
                 let mutation = null;
                 let restoredSourceBitmaps = [];
+                let copiedWindowTextTargets = [];
                 if (observeMutation) {
                     mutation = describeMutation(this, methodName, args);
+                    // A bitmap copy can happen before the frame flush that turns
+                    // window-owned glyph draws into entries. Resolve only that
+                    // copied source now so copied-target tracking can attach.
+                    if (flushPendingWindowSource) flushPendingWindowTextSourceBeforeMutation(methodName, mutation);
                     restoredSourceBitmaps = restoreWindowTextSourcesBeforeMutation(this, methodName, mutation);
+                    copiedWindowTextTargets = prepareCopiedWindowTextTargetsBeforeMutation(this, methodName, mutation);
                 }
                 let nativeSucceeded = false;
                 if (profilerOn && observeMutation) {
@@ -122,11 +129,17 @@
                             if (!mutation) mutation = scope.measurePerf('bitmap.mutation.describe.ms', () => describeMutation(this, methodName, args));
                             scope.measurePerf('bitmap.mutation.handle.ms', () => handleBitmapMutation(this, methodName, args, mutation));
                         }
+                        if (copiedWindowTextTargets.length) {
+                            commitCopiedWindowTextTargetsAfterMutation(this, methodName, mutation, copiedWindowTextTargets);
+                        }
                     } else {
                         if (notifySubscribers) scope.bitmapServices.publishMutation(this, methodName, args);
                         if (handleMutation) {
                             if (!mutation) mutation = describeMutation(this, methodName, args);
                             handleBitmapMutation(this, methodName, args, mutation);
+                        }
+                        if (copiedWindowTextTargets.length) {
+                            commitCopiedWindowTextTargetsAfterMutation(this, methodName, mutation, copiedWindowTextTargets);
                         }
                     }
                 } finally {
@@ -161,7 +174,9 @@
             if (!bitmap) return false;
             const state = getBitmapState(bitmap);
             if (hasBitmapStateMutationInterest(state, methodName)) return true;
-            return hasWindowEntryMutationInterest(bitmap) || hasWindowSurfaceMutationInterest(bitmap, methodName);
+            return hasWindowEntryMutationInterest(bitmap)
+                || hasWindowSurfaceMutationInterest(bitmap, methodName)
+                || hasCopiedWindowTextTargetInterest(bitmap);
         }
         
         function hasBitmapStateMutationInterest(state, methodName) {
@@ -204,6 +219,35 @@
                 return false;
             }
         }
+
+        function hasPendingWindowTextMutationSource(methodName, args) {
+            switch (methodName) {
+            case 'blt':
+            case 'bltImage':
+                return isPendingWindowTextSourceBitmap(args && args[0]);
+            default:
+                return false;
+            }
+        }
+
+        function isPendingWindowTextSourceBitmap(bitmap) {
+            if (!isLiveWindowContentsBitmap(bitmap)) return false;
+            const services = scope.bitmapServices;
+            if (!services || typeof services.hasPendingDrawBatches !== 'function') return false;
+            try {
+                return services.hasPendingDrawBatches(bitmap) === true;
+            } catch (error) {
+                reportMutationError('bitmapServices.hasPendingDrawBatches', error);
+                return false;
+            }
+        }
+
+        function isLiveWindowContentsBitmap(bitmap) {
+            if (!bitmap || bitmap._trWindowRedrawClearDepth > 0) return false;
+            const match = resolveBitmapWindowSurface(bitmap);
+            const owner = match && (match.owner || match.windowInstance);
+            return !!(owner && owner.contents === bitmap);
+        }
         
         function hasAnyWindowEntries(texts) {
             if (!texts) return false;
@@ -237,13 +281,25 @@
             if (bypassReason) return String(bypassReason);
             if (!bitmap) return 'no-bitmap';
             if (bitmap._trSpriteTextOverlayBitmap) return 'sprite-overlay';
-            if (bitmap._trMessageContents) return 'message';
+            const contentsOwnership = describeBitmapContentsOwnership(bitmap);
+            if (contentsOwnership && (contentsOwnership.surfaceType === 'message' || contentsOwnership.role === 'message-contents')) return 'message';
             if (resolveBitmapWindowSurface(bitmap)) return 'window';
-            if (bitmap._trPreferWindowPipeline || bitmap._trWindowPipelineDepth > 0 || bitmap._trWindowRefreshDepth > 0) return 'window';
+            const guardState = scope.bitmapServices.getRenderGuardState(bitmap);
+            if ((guardState && guardState.windowPipelineDepth > 0) || bitmap._trWindowRefreshDepth > 0) return 'window';
             if (bitmap._trSpriteTextHasTextInterest) return 'sprite-text-interest';
             if (bitmap._trSpriteTextOwned) return 'sprite-owned';
             if (getBitmapState(bitmap)) return 'bitmap-fallback-state';
             return 'untracked';
+        }
+
+        function describeBitmapContentsOwnership(bitmap) {
+            const ownership = scope.surfaceOwnership;
+            if (!bitmap || !ownership || typeof ownership.describeContentsOwnership !== 'function') return null;
+            try {
+                return ownership.describeContentsOwnership(bitmap);
+            } catch (_) {
+                return null;
+            }
         }
         
         function bucketBitmapPixels(bitmap) {
@@ -365,6 +421,21 @@
             return restored;
         }
 
+        function flushPendingWindowTextSourceBeforeMutation(methodName, mutation) {
+            if (!mutation || !isPendingWindowTextSourceBitmap(mutation.sourceBitmap)) return 0;
+            const services = scope.bitmapServices;
+            if (!services || typeof services.flushDrawBatches !== 'function') return 0;
+            try {
+                return Number(services.flushDrawBatches(
+                    `pre-${methodName || 'bitmap'}-window-source`,
+                    mutation.sourceBitmap
+                )) || 0;
+            } catch (error) {
+                reportMutationError('bitmapServices.flushDrawBatches', error);
+                return 0;
+            }
+        }
+
         function redrawRestoredWindowTextSources(bitmaps, methodName) {
             if (!Array.isArray(bitmaps) || !bitmaps.length) return 0;
             const helpers = getWindowTextHelpers();
@@ -383,6 +454,53 @@
             return redrawn;
         }
 
+        function prepareCopiedWindowTextTargetsBeforeMutation(targetBitmap, methodName, mutation) {
+            if (!mutation) return [];
+            const helpers = getWindowTextHelpers();
+            if (!helpers || typeof helpers.prepareCopiedTargetsForBitmapMutation !== 'function') return [];
+            try {
+                const prepared = helpers.prepareCopiedTargetsForBitmapMutation(targetBitmap, methodName, mutation);
+                return Array.isArray(prepared) ? prepared : [];
+            } catch (error) {
+                reportMutationError('windowText.prepareCopiedTargetsForBitmapMutation', error);
+                return [];
+            }
+        }
+
+        function commitCopiedWindowTextTargetsAfterMutation(targetBitmap, methodName, mutation, prepared) {
+            if (!Array.isArray(prepared) || !prepared.length) return null;
+            const helpers = getWindowTextHelpers();
+            if (!helpers || typeof helpers.commitCopiedTargetsForBitmapMutation !== 'function') return null;
+            try {
+                return helpers.commitCopiedTargetsForBitmapMutation(targetBitmap, methodName, mutation, prepared);
+            } catch (error) {
+                reportMutationError('windowText.commitCopiedTargetsForBitmapMutation', error);
+                return null;
+            }
+        }
+
+        function invalidateCopiedWindowTextTargetsForMutation(targetBitmap, rect, reason) {
+            const helpers = getWindowTextHelpers();
+            if (!helpers || typeof helpers.invalidateCopiedTargetsForBitmapMutation !== 'function') return 0;
+            try {
+                return Number(helpers.invalidateCopiedTargetsForBitmapMutation(targetBitmap, rect, reason)) || 0;
+            } catch (error) {
+                reportMutationError('windowText.invalidateCopiedTargetsForBitmapMutation', error);
+                return 0;
+            }
+        }
+
+        function hasCopiedWindowTextTargetInterest(bitmap) {
+            const helpers = getWindowTextHelpers();
+            if (!helpers || typeof helpers.hasCopiedTargetsForBitmap !== 'function') return false;
+            try {
+                return helpers.hasCopiedTargetsForBitmap(bitmap) === true;
+            } catch (error) {
+                reportMutationError('windowText.hasCopiedTargetsForBitmap', error);
+                return false;
+            }
+        }
+
         function getWindowTextHelpers() {
             if (typeof scope.getWindowTextHelpers !== 'function') return null;
             try {
@@ -396,6 +514,7 @@
         function handleBitmapMutation(bitmap, methodName, args, mutation) {
             if (!bitmap || !mutation) return;
             const targetRect = mutation.rect && isValidRect(mutation.rect) ? mutation.rect : null;
+            invalidateCopiedWindowTextTargetsForMutation(bitmap, targetRect, `${methodName || 'bitmap'}-bitmap`);
             invalidateWindowEntries(bitmap, targetRect, methodName, mutation);
         
             const state = getBitmapState(bitmap) || (hasWindowSurfaceMutationInterest(bitmap, methodName)
@@ -475,13 +594,44 @@
             }
         }
 
-        function canRecoverDetachedWindowEntryAfterBlt(entry, options = {}) {
+        function canRecoverDetachedWindowEntryAfterMutation(entry, options = {}) {
             const method = String(options && options.methodName || options && options.reason || '');
-            if (method !== 'blt') return false;
-            // A bitmap copy mutates the surface, but it does not prove the logical
-            // text source disappeared. Keep pending window text recoverable unless
-            // a later observation claims the slot or replaces the source.
-            return isPendingWindowEntryTranslation(entry);
+            if (!isPendingWindowEntryTranslation(entry)) return false;
+            if (method === 'blt') {
+                // A bitmap copy mutates the surface, but it does not prove the
+                // logical text source disappeared. Keep pending window text
+                // recoverable unless a later observation claims the slot or
+                // replaces the source.
+                return true;
+            }
+            if (!isCopiedSourceInvalidationMethod(method)) return false;
+            if (!hasCopiedRenderTargets(entry)) return false;
+            const screenState = String(options && options.screenState || '');
+            return screenState !== 'visible';
+        }
+
+        function isCopiedSourceInvalidationMethod(methodName) {
+            switch (String(methodName || '')) {
+            case 'clear':
+            case 'clearRect':
+            case 'resize':
+            case 'fillRect':
+            case 'fillAll':
+            case 'gradientFillRect':
+            case 'strokeRect':
+            case 'drawCircle':
+            case 'adjustTone':
+            case 'rotateHue':
+            case 'blur':
+                return true;
+            default:
+                return false;
+            }
+        }
+
+        function hasCopiedRenderTargets(entry) {
+            if (!entry || !Array.isArray(entry._trCopiedRenderTargets)) return false;
+            return entry._trCopiedRenderTargets.some((target) => target && target.targetBitmap);
         }
 
         function canRetargetDetachedWindowEntryAfterSelfBlt(entryRect, bitmap, targetRect, options = {}) {
@@ -538,8 +688,10 @@
                 const entryRect = deriveWindowEntryRect(entry);
                 if (!rect || !entryRect || rectanglesOverlap(rect, entryRect)) {
                     if (deferUntilRefreshEnds && wasWindowEntryObservedInCurrentRefresh(entry, owner, data)) return;
-                    const allowDetachedReattach = canRecoverDetachedWindowEntryAfterBlt(entry, {
+                    const screenState = getWindowOwnerScreenState(owner, data);
+                    const allowDetachedReattach = canRecoverDetachedWindowEntryAfterMutation(entry, {
                         methodName: reason,
+                        screenState,
                     });
                     if (allowDetachedReattach && canRetargetDetachedWindowEntryAfterSelfBlt(entryRect, bitmap, rect, {
                         sourceBitmap: options && options.sourceBitmap ? options.sourceBitmap : null,

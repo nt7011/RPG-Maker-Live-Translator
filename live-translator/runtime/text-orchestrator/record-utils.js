@@ -270,6 +270,8 @@
             'effectivePriority',
             'stream',
             'mode',
+            'drawOrigin',
+            'drawRun',
         ];
         const compact = {};
         keys.forEach((key) => {

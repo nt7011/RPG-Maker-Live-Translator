@@ -15,6 +15,10 @@
         throw new Error('[LiveTranslator] runtime module require is unavailable before runtime/text-orchestrator/ownership-surface-draw.js.');
     }
     const renderTransaction = requireRuntimeModule('runtime.renderTransaction');
+    const surfaceDrawDescriptor = requireRuntimeModule('runtime.surfaceDrawDescriptor');
+    if (!surfaceDrawDescriptor || typeof surfaceDrawDescriptor.createSurfaceDrawPayload !== 'function') {
+        throw new Error('[LiveTranslator] runtime.surfaceDrawDescriptor is unavailable before runtime/text-orchestrator/ownership-surface-draw.js.');
+    }
 
     function createController(scope = {}) {
         const { firstString, surfaceDrawListeners } = scope;
@@ -85,25 +89,29 @@
                 mode: 'bitmapFallback',
                 role: 'bitmap-draw',
             }, source), 'draw');
+            const facts = surfaceDrawDescriptor.normalizeDrawFacts(source, {
+                target: descriptor.target,
+                sourceAdapter: descriptor.adapterId,
+            });
             const candidateAdapters = Array.isArray(source.candidateAdapters)
                 ? source.candidateAdapters.map((value) => firstString(value)).filter(Boolean)
                 : [];
             const normalized = Object.assign(descriptor, {
-                methodName: firstString(source.methodName, 'drawText'),
-                x: ownershipNumber(source.x, 0),
-                y: ownershipNumber(source.y, 0),
-                maxWidth: ownershipNumber(source.maxWidth, 0),
-                lineHeight: ownershipNumber(source.lineHeight, 0),
-                align: firstString(source.align, 'left'),
-                drawState: source.drawState && typeof source.drawState === 'object'
-                    ? Object.assign({}, source.drawState)
-                    : null,
-                measuredWidth: ownershipNumber(
-                    source.measuredWidth !== undefined ? source.measuredWidth : source.width,
-                    0
-                ),
-                ownerType: firstString(source.ownerType),
-                standaloneGlyph: source.standaloneGlyph === true,
+                methodName: facts.methodName,
+                x: facts.x,
+                y: facts.y,
+                maxWidth: facts.maxWidth,
+                lineHeight: facts.lineHeight,
+                align: facts.align,
+                drawState: facts.drawState,
+                measuredWidth: facts.measuredWidth,
+                ownerType: facts.ownerType,
+                standaloneGlyph: facts.standaloneGlyph,
+                drawRun: facts.drawRun,
+                backgroundPatch: facts.backgroundPatch,
+                sourceCommitted: facts.sourceCommitted,
+                phase: facts.sourceCommitted ? 'source-draw-committed' : 'source-draw-observed',
+                nativeDrawCapability: facts.sourceCommitted ? 'committed' : 'replaceable',
                 candidateAdapters,
             });
             return Object.assign(normalized, {
@@ -117,7 +125,11 @@
                 surfaceId: descriptor.surfaceId,
                 slotKey: descriptor.slotKey || createSurfaceDrawSlotKey(descriptor),
                 generation: ownershipNumber(source.generation !== undefined ? source.generation : source.revision, 0),
-                reason: 'surface-draw-observed',
+                sourceCommitted: descriptor.sourceCommitted === true || source.sourceCommitted === true,
+                beforeNativePaint: descriptor.sourceCommitted === true || source.sourceCommitted === true
+                    ? false
+                    : source.beforeNativePaint,
+                reason: descriptor.sourceCommitted === true ? 'surface-draw-committed' : 'surface-draw-observed',
                 details: {
                     methodName: descriptor.methodName,
                     mode: descriptor.mode,
@@ -146,11 +158,34 @@
         }
 
         function emitSurfaceDraw(adapterId, descriptor, status, ownerClaim) {
-            const event = {
+            const event = createSurfaceDrawEvent(adapterId, descriptor, status, ownerClaim);
+            let drawDecision = null;
+            surfaceDrawListeners.forEach((subscription) => {
+                if (!subscription || subscription.adapterId !== adapterId) return;
+                try {
+                    const nextDecision = normalizeSurfaceDrawDecision(subscription.listener(event), event);
+                    if (!drawDecision && nextDecision) drawDecision = nextDecision;
+                } catch (_) {}
+            });
+            return drawDecision;
+        }
+
+        function createSurfaceDrawEvent(adapterId, descriptor, status, ownerClaim) {
+            const phase = descriptor.phase || (descriptor.sourceCommitted ? 'source-draw-committed' : 'source-draw-observed');
+            const sourceCommitted = descriptor.sourceCommitted === true || phase === 'source-draw-committed';
+            const nativeDrawCapability = sourceCommitted ? 'committed' : 'replaceable';
+            return {
                 type: 'surface.draw',
                 adapterId,
                 sourceAdapter: descriptor.adapterId,
+                phase,
+                sourcePhase: phase,
+                sourceCommitted,
+                nativeDrawCapability,
+                canReplaceNativeDraw: nativeDrawCapability === 'replaceable',
+                canSuppressNativeDraw: nativeDrawCapability === 'replaceable',
                 status,
+                ownershipStatus: status,
                 ownerAdapter: ownerClaim ? ownerClaim.adapterId : adapterId,
                 ownerClaimId: ownerClaim ? ownerClaim.id : '',
                 reason: ownerClaim ? 'surface-owned' : status,
@@ -158,22 +193,18 @@
                 drawBoundary: descriptor.drawBoundary,
                 payload: createSurfaceDrawPayload(descriptor, status),
             };
-            let drawDecision = null;
-            surfaceDrawListeners.forEach((subscription) => {
-                if (!subscription || subscription.adapterId !== adapterId) return;
-                try {
-                    const nextDecision = normalizeSurfaceDrawDecision(subscription.listener(event));
-                    if (!drawDecision && nextDecision) drawDecision = nextDecision;
-                } catch (_) {}
-            });
-            return drawDecision;
         }
 
-        function normalizeSurfaceDrawDecision(input) {
+        function normalizeSurfaceDrawDecision(input, event = null) {
             if (!input || typeof input !== 'object') return null;
             const action = normalizeSurfaceDrawAction(input.action || input.nativeDrawAction);
             const text = firstString(input.text, input.replacementText, input.translatedText);
             if (action === 'replace-native-draw' && !text) return null;
+            if ((action === 'replace-native-draw' || action === 'suppress-native-draw')
+                && event
+                && event.canReplaceNativeDraw !== true) {
+                return null;
+            }
             if (!action) return null;
             return {
                 action,
@@ -202,7 +233,7 @@
         }
 
         function createSurfaceDrawPayload(descriptor, status) {
-            return {
+            return surfaceDrawDescriptor.createSurfaceDrawPayload({
                 target: descriptor.target,
                 bitmap: descriptor.target,
                 methodName: descriptor.methodName,
@@ -219,7 +250,10 @@
                 ownershipStatus: status,
                 sourceAdapter: descriptor.adapterId,
                 drawBoundary: descriptor.drawBoundary,
-            };
+                drawRun: descriptor.drawRun,
+                backgroundPatch: descriptor.backgroundPatch,
+                sourceCommitted: descriptor.sourceCommitted,
+            }, status);
         }
 
         function createSurfaceDrawResult(status, descriptor, ownerClaim, fallbackClaim, reason, drawDecision = null) {
@@ -238,7 +272,7 @@
             }, drawDecision ? { drawDecision } : {});
         }
 
-        return { recordSurfaceDraw, subscribeSurfaceDraws, normalizeSurfaceDrawDescriptor, hasSurfaceDrawListener, emitSurfaceDraw, createSurfaceDrawPayload, createSurfaceDrawResult, normalizeSurfaceDrawDecision };
+        return { recordSurfaceDraw, subscribeSurfaceDraws, normalizeSurfaceDrawDescriptor, hasSurfaceDrawListener, emitSurfaceDraw, createSurfaceDrawEvent, createSurfaceDrawPayload, createSurfaceDrawResult, normalizeSurfaceDrawDecision };
     }
 
     defineRuntimeModule('runtime.textOrchestratorOwnershipSurfaceDraw', { create: createController });

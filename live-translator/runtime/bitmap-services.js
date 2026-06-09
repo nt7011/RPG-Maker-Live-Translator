@@ -61,6 +61,7 @@
         let mutationPublisherCount = 0;
         const bitmapSubscribers = new WeakMap();
         const drawStates = new WeakMap();
+        const drawRunContexts = new WeakMap();
         const renderGuardStates = new WeakMap();
         const deferredFlushes = new Map();
         const pendingDrawBitmaps = new Set();
@@ -273,14 +274,20 @@
                 bitmapReplayDepth: 0,
                 bitmapSkipDepth: 0,
                 spriteTextReplayDepth: 0,
+                windowPipelineDepth: 0,
                 bitmapReplaySources: [],
+                windowPipelineSources: [],
                 activeRedrawEntries: [],
             };
         }
 
-        function canStoreRenderGuardState(bitmap) {
+        function canStoreWeakState(bitmap) {
             const type = typeof bitmap;
             return bitmap !== null && (type === 'object' || type === 'function');
+        }
+
+        function canStoreRenderGuardState(bitmap) {
+            return canStoreWeakState(bitmap);
         }
 
         function getOrCreateRenderGuardState(bitmap) {
@@ -303,7 +310,9 @@
             if (state.bitmapReplayDepth > 0
                 || state.bitmapSkipDepth > 0
                 || state.spriteTextReplayDepth > 0
+                || state.windowPipelineDepth > 0
                 || state.bitmapReplaySources.length
+                || state.windowPipelineSources.length
                 || state.activeRedrawEntries.length) {
                 return;
             }
@@ -316,7 +325,9 @@
                 bitmapReplay: source.bitmapReplay === true,
                 bitmapSkip: source.bitmapSkip === true,
                 spriteTextReplay: source.spriteTextReplay === true,
+                windowPipeline: source.windowPipeline === true,
                 bitmapReplaySource: stringify(source.bitmapReplaySource || ''),
+                windowPipelineSource: stringify(source.windowPipelineSource || ''),
             };
         }
 
@@ -331,6 +342,10 @@
             }
             if (guard.bitmapSkip) state.bitmapSkipDepth += 1;
             if (guard.spriteTextReplay) state.spriteTextReplayDepth += 1;
+            if (guard.windowPipeline) {
+                state.windowPipelineDepth += 1;
+                state.windowPipelineSources.push(guard.windowPipelineSource || 'window-pipeline');
+            }
             let active = true;
             return () => {
                 if (!active) return;
@@ -341,6 +356,10 @@
                 }
                 if (guard.bitmapSkip) state.bitmapSkipDepth = Math.max(0, state.bitmapSkipDepth - 1);
                 if (guard.spriteTextReplay) state.spriteTextReplayDepth = Math.max(0, state.spriteTextReplayDepth - 1);
+                if (guard.windowPipeline) {
+                    state.windowPipelineDepth = Math.max(0, state.windowPipelineDepth - 1);
+                    state.windowPipelineSources.pop();
+                }
                 pruneRenderGuardState(bitmap, state);
             };
         }
@@ -377,6 +396,20 @@
             }, callback);
         }
 
+        function enterWindowPipelineGuard(bitmap, source = 'window-pipeline') {
+            return enterRenderGuard(bitmap, {
+                windowPipeline: true,
+                windowPipelineSource: source || 'window-pipeline',
+            });
+        }
+
+        function withWindowPipelineGuard(bitmap, callback, source = 'window-pipeline') {
+            return withRenderGuard(bitmap, {
+                windowPipeline: true,
+                windowPipelineSource: source || 'window-pipeline',
+            }, callback);
+        }
+
         function withActiveRedrawEntry(bitmap, entry, callback) {
             if (typeof callback !== 'function') return undefined;
             if (!bitmap) return callback();
@@ -402,11 +435,16 @@
             const replaySource = state && state.bitmapReplaySources.length
                 ? state.bitmapReplaySources[state.bitmapReplaySources.length - 1]
                 : '';
+            const windowPipelineSource = state && state.windowPipelineSources.length
+                ? state.windowPipelineSources[state.windowPipelineSources.length - 1]
+                : '';
             return {
                 bitmapReplayDepth: state ? state.bitmapReplayDepth : 0,
                 bitmapSkipDepth: state ? state.bitmapSkipDepth : 0,
                 spriteTextReplayDepth: state ? state.spriteTextReplayDepth : 0,
+                windowPipelineDepth: state ? state.windowPipelineDepth : 0,
                 bitmapReplaySource: replaySource || '',
+                windowPipelineSource: windowPipelineSource || '',
                 activeRedrawEntry: getActiveRedrawEntry(bitmap),
             };
         }
@@ -419,6 +457,9 @@
             }
             if (state.bitmapSkipDepth > 0) return 'bitmap-skip';
             if (state.spriteTextReplayDepth > 0) return 'sprite-text-replay';
+            if (state.windowPipelineDepth > 0) {
+                return state.windowPipelineSources[state.windowPipelineSources.length - 1] || 'window-pipeline';
+            }
             return '';
         }
 
@@ -467,6 +508,50 @@
             try { return drawStates.get(bitmap) || null; } catch (error) { reportServiceError('getDrawState', error); return null; }
         }
 
+        function enterDrawRunContext(bitmap, input = {}) {
+            if (!canStoreWeakState(bitmap)) return () => {};
+            const context = normalizeDrawRunContext(input);
+            if (!context) return () => {};
+            let stack = drawRunContexts.get(bitmap);
+            if (!stack) {
+                stack = [];
+                drawRunContexts.set(bitmap, stack);
+            }
+            stack.push(context);
+            let active = true;
+            return () => {
+                if (!active) return;
+                active = false;
+                const current = drawRunContexts.get(bitmap);
+                if (!current) return;
+                const index = current.lastIndexOf(context);
+                if (index >= 0) current.splice(index, 1);
+                if (!current.length) drawRunContexts.delete(bitmap);
+            };
+        }
+
+        function getActiveDrawRunContext(bitmap) {
+            if (!canStoreWeakState(bitmap)) return null;
+            const stack = drawRunContexts.get(bitmap);
+            const context = stack && stack.length ? stack[stack.length - 1] : null;
+            return context || null;
+        }
+
+        function normalizeDrawRunContext(input = {}) {
+            const source = input && typeof input === 'object' ? input : {};
+            const type = stringify(source.type || source.kind || '');
+            const runId = stringify(source.runId || source.id || source.normalCharacterRunId || '');
+            if (!type || !runId) return null;
+            const runInfo = source.runInfo && typeof source.runInfo === 'object'
+                ? Object.assign({}, source.runInfo)
+                : null;
+            return {
+                type,
+                runId,
+                runInfo,
+            };
+        }
+
         function recordDraw(bitmap, input = {}) {
             if (!bitmap || !input) return null;
             const text = stringify(input.text !== undefined ? input.text : input.rawText);
@@ -480,6 +565,10 @@
             }
             const methodName = stringify(input.methodName || 'drawText') || 'drawText';
             const style = internDrawStyle(state, bitmap, input.drawState);
+            const drawRunContext = getActiveDrawRunContext(bitmap);
+            const normalCharacterContext = drawRunContext && drawRunContext.type === 'normalCharacter'
+                ? drawRunContext
+                : null;
             const unit = {
                 id: `bdu-${(++nextDrawUnitId).toString(36)}`,
                 bitmap,
@@ -491,10 +580,11 @@
                 lineHeight: positiveNumber(input.lineHeight, bitmap && bitmap.fontSize, 24),
                 align: normalizeCanvasTextAlign(input.align),
                 ownerType: stringify(input.ownerType || ''),
-                normalCharacter: input.normalCharacter === true,
-                normalCharacterRunId: stringify(input.normalCharacterRunId || ''),
+                normalCharacter: input.normalCharacter === true || !!normalCharacterContext,
+                normalCharacterRunId: stringify(input.normalCharacterRunId || normalCharacterContext && normalCharacterContext.runId || ''),
                 styleId: style.id,
                 drawState: style.state,
+                measuredWidth: nonNegativeNumber(input.measuredWidth, 0),
                 backgroundPatch: input.backgroundPatch || null,
                 fallbackBackgroundPatch: input.fallbackBackgroundPatch || null,
                 order: ++state.order,
@@ -687,9 +777,13 @@
             withBitmapSkipGuard,
             withSpriteTextReplayGuard,
             withBitmapSkipAndSpriteReplayGuard,
+            enterWindowPipelineGuard,
+            withWindowPipelineGuard,
             withActiveRedrawEntry,
             getActiveRedrawEntry,
             scheduleDeferredFlush,
+            enterDrawRunContext,
+            getActiveDrawRunContext,
             recordDraw,
             subscribeDrawBatches,
             flushDrawBatches,
@@ -726,6 +820,8 @@
             withBitmapSkipGuard,
             withSpriteTextReplayGuard,
             withBitmapSkipAndSpriteReplayGuard,
+            enterWindowPipelineGuard,
+            withWindowPipelineGuard,
             rectFromDimensions(x, y, width, height) {
                 return callReplayProvider('rectFromDimensions', null, [x, y, width, height]);
             },
@@ -746,6 +842,8 @@
             withBitmapSkipGuard,
             withSpriteTextReplayGuard,
             withBitmapSkipAndSpriteReplayGuard,
+            enterWindowPipelineGuard,
+            withWindowPipelineGuard,
             scheduleDeferredFlush,
             subscribeDrawBatches,
             flushDrawBatches,
@@ -806,6 +904,11 @@
             if (Number.isFinite(numeric) && numeric > 0) return numeric;
         }
         return 1;
+    }
+
+    function nonNegativeNumber(value, fallback) {
+        const numeric = Number(value);
+        return Number.isFinite(numeric) && numeric >= 0 ? numeric : fallback;
     }
 
     function readPositiveInteger(value, fallback) {

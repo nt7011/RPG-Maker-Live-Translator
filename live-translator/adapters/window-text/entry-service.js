@@ -182,8 +182,9 @@
                     screenState: describeWindowScreenState(windowInstance, windowData),
                     contentsRevision: windowData && windowData.contentsRevision ? windowData.contentsRevision : 0,
                     pipeline: contents ? {
-                        preferWindowPipeline: contents._trPreferWindowPipeline === true,
-                        windowPipelineDepth: Number(contents._trWindowPipelineDepth) || 0,
+                        preferWindowPipeline: guardState.windowPipelineDepth > 0,
+                        windowPipelineDepth: guardState.windowPipelineDepth,
+                        windowPipelineSource: guardState.windowPipelineSource,
                         windowRefreshDepth: Number(contents._trWindowRefreshDepth) || 0,
                         bitmapSkipDepth: guardState.bitmapSkipDepth,
                         bitmapReplayDepth: guardState.bitmapReplayDepth,
@@ -200,6 +201,8 @@
                     bitmapSkipDepth: Number(state && state.bitmapSkipDepth) || 0,
                     bitmapReplayDepth: Number(state && state.bitmapReplayDepth) || 0,
                     spriteTextReplayDepth: Number(state && state.spriteTextReplayDepth) || 0,
+                    windowPipelineDepth: Number(state && state.windowPipelineDepth) || 0,
+                    windowPipelineSource: String(state && state.windowPipelineSource || ''),
                 };
             }
 
@@ -291,9 +294,22 @@
                         methodName: entry.type || '',
                         identitySurfaceId: entry.identitySurfaceId || '',
                         contentsRevision: windowData && windowData.contentsRevision ? windowData.contentsRevision : 0,
+                        drawOrigin: entry.drawOrigin && entry.drawOrigin.type ? entry.drawOrigin.type : '',
+                        drawRun: normalizeDrawRunMetadata(entry.drawOrigin && entry.drawOrigin.drawRun),
                         x: entry.position && entry.position.x,
                         y: entry.position && entry.position.y,
                     },
+                };
+            }
+
+    function normalizeDrawRunMetadata(drawRun) {
+                if (!drawRun || typeof drawRun !== 'object') return null;
+                return {
+                    type: String(drawRun.type || ''),
+                    reason: String(drawRun.reason || ''),
+                    confidence: String(drawRun.confidence || ''),
+                    runKey: String(drawRun.runKey || ''),
+                    unitCount: Math.max(0, Math.floor(Number(drawRun.unitCount) || 0)),
                 };
             }
     

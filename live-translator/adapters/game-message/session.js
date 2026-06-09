@@ -17,7 +17,7 @@
     const lifecycleReasons = requireRuntimeModule('runtime.lifecycleReasons').reasons;
 
     function createController(scope = {}) {
-        const { globalScope, diag, preview, stripControls, registeredWindows, pruneDetachedRegisteredWindows, trackedMessageWindows } = scope;
+        const { globalScope, diag, preview, stripControls, registeredWindows, pruneDetachedRegisteredWindows, trackedMessageWindows, surfaceOwnership } = scope;
         const { getGameMessageForWindow, isMessageWindowLike, markDedicatedMessageWindow } = scope.controllerFacades.install;
         const { createEscapeAwarePayload, getResolvedTextForWindow } = scope.controllerFacades.text;
         const { readMessageOriginText, readMessageTextData } = scope.controllerFacades.foresightContext;
@@ -585,10 +585,7 @@
          */
         function wrapMessageContents(Ctor) {
             if (!Ctor || !Ctor.prototype || typeof Ctor.prototype.createContents !== 'function') return;
-            try {
-                Ctor.prototype._trHasDedicatedTextHook = true;
-                Ctor._trHasDedicatedTextHook = true;
-            } catch (_) {}
+            rememberDedicatedMessageConstructor(Ctor);
             if (hasHookInChain(Ctor.prototype.createContents, '__trGameMessageContentsWrapped', true)) return;
             const originalCreateContents = Ctor.prototype.createContents;
             // Mark every newly created contents bitmap as message-owned.
@@ -785,10 +782,21 @@
             wrapMessageContents(Ctor);
             installLifecycleHooks(Ctor);
             installStartMessageHook(Ctor, force);
+            rememberDedicatedMessageConstructor(Ctor);
+        }
+
+        function rememberDedicatedMessageConstructor(Ctor) {
+            if (!Ctor || !surfaceOwnership || typeof surfaceOwnership.rememberDedicatedTextConstructor !== 'function') return false;
             try {
-                Ctor.prototype._trHasDedicatedTextHook = true;
-                Ctor._trHasDedicatedTextHook = true;
-            } catch (_) {}
+                return surfaceOwnership.rememberDedicatedTextConstructor(Ctor, {
+                    adapterId: 'message',
+                    surfaceType: 'message',
+                    role: 'message-window',
+                    reason: 'message-adapter',
+                }) === true;
+            } catch (_) {
+                return false;
+            }
         }
 
         /**
