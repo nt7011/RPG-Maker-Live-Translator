@@ -92,6 +92,9 @@
             renderReadiness: bindControllerMethods(callController, [
                 'planTranslatedRedraw',
             ]),
+            renderProof: bindControllerMethods(callController, [
+                'resolveDetachedRenderTarget',
+            ]),
             sourceDraw: bindControllerMethods(callController, [
                 'captureWindowEntrySource',
                 'beginEntryNativeSourceDraw',

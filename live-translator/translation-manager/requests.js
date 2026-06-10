@@ -12,7 +12,7 @@
     }
 
     function createController(scope = {}) {
-        const { OVERRIDE_REGEX_SETTING, normalizeCacheKey, createImmediateHandle, createDelayedHandle, preview, precacheStore, jobsByKey } = scope;
+        const { OVERRIDE_REGEX_SETTING, normalizeCacheKey, createImmediateHandle, preview, precacheStore, jobsByKey } = scope;
         const {
             describeIgnoreTranslationRegex,
             describeSkip,
@@ -27,7 +27,7 @@
         const { createSubscriber } = scope.controllerFacades.subscribers;
         const { schedulePump } = scope.controllerFacades.queue;
 
-        function lookup(normalized, options = {}) {
+        function lookup(normalized) {
             const key = normalizeCacheKey(normalized);
             if (!key) return null;
             const override = lookupOverrideTranslationRegex(key);
@@ -43,30 +43,14 @@
             const precached = precacheStore && typeof precacheStore.lookup === 'function'
                 ? precacheStore.lookup(key)
                 : null;
-            if (precached && typeof precached.translation === 'string') {
-                return createLookupHit('precache', precached.translation, options);
-            }
+            if (precached && typeof precached.translation === 'string') return createLookupHit('precache', precached.translation);
             const cached = lookupCompleted(key);
-            if (cached !== null) return createLookupHit('cache', cached, options);
+            if (cached !== null) return createLookupHit('cache', cached);
             return null;
         }
 
-        function createLookupHit(source, translation, options = {}) {
-            if (shouldForceAsyncSource(source)) {
-                if (!options || options.includeForcedAsync !== true) return null;
-                return {
-                    source,
-                    sourceHint: source,
-                    translation,
-                    forceAsync: true,
-                };
-            }
+        function createLookupHit(source, translation) {
             return { source, sourceHint: source, translation };
-        }
-
-        function shouldForceAsyncSource(source) {
-            return scope.forceAsyncTranslation === true
-                && (source === 'cache' || source === 'precache');
         }
 
         function createCacheHitHandle(translation, normalizedRequest, sourceHint) {
@@ -76,13 +60,7 @@
                 priority: normalizedRequest.priority,
                 sourceHint,
             };
-            if (!shouldForceAsyncSource(sourceHint)) {
-                return createImmediateHandle(translation, options);
-            }
-            return createDelayedHandle(translation, Object.assign({}, options, {
-                delayMs: scope.forceAsyncTranslationDelayMs,
-                initialStatus: 'pending',
-            }));
+            return createImmediateHandle(translation, options);
         }
 
         function request(input, maybeOptions = {}) {

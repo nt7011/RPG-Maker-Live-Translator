@@ -76,9 +76,7 @@
                     || incomingStatus === 'pending'
                     || incomingStatus === 'translating'
                     || incomingStatus === 'completed') {
-                    hydrateSourceTranslation(source, {
-                        includeForcedAsync: beforeNativePaint,
-                    });
+                    hydrateSourceTranslation(source);
                 }
             }
             if (!eligibility.eligible) {
@@ -205,6 +203,7 @@
             const eventDetails = mergeDetails(optionsForEvent.details, lifecyclePolicy.details);
             applyLifecyclePolicy(existing, lifecyclePolicy);
             applyPatch(existing, normalizeInputRecord({ id: key, status }));
+            applyRetiredVisibility(existing, eventDetails);
             textLifecycle.applyTransition(existing, normalizeStatus(status, 'stale'), {
                 active: false,
                 detached: existing.detached === true,
@@ -235,6 +234,13 @@
                 detached: existing.detached === true,
                 archived: existing.archived === true,
             });
+        }
+
+        function applyRetiredVisibility(item, details = {}) {
+            if (!item) return;
+            item.visible = false;
+            item.screenState = firstString(details && details.screenState, 'hidden');
+            item.onScreen = false;
         }
 
         /**

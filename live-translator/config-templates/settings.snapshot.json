@@ -13,9 +13,6 @@
     "performanceProfiler": {
         "enabled": false
     },
-    "Snapshot": {
-        "ForceAsyncTranslation": true
-    },
     "diagnostics": {
         "mode": "full",
         "captureWhenGuiClosed": true

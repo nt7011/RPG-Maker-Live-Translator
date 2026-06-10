@@ -218,6 +218,9 @@
 
     function createRenderQueueRecord(targetWindow, windowData, entry, key, plan = null) {
                 const pending = entry && entry.renderTransaction;
+                const refreshObservation = entry
+                    && entry.renderLifecycle
+                    && entry.renderLifecycle.refreshObservation;
                 return {
                     key: String(key || ''),
                     entry,
@@ -226,6 +229,9 @@
                     commandId: pending && pending.commandId ? String(pending.commandId) : '',
                     commandGeneration: Number(pending && pending.commandGeneration) || 0,
                     entryGeneration: Number(entry && entry.surfaceRevision) || 0,
+                    refreshToken: Number(refreshObservation && refreshObservation.token) || 0,
+                    refreshObserved: refreshObservation && refreshObservation.active === true,
+                    contentsRevision: Number(windowData && windowData.contentsRevision) || 0,
                     windowType: getWindowTypeName(targetWindow, windowData),
                     queuedAt: Date.now(),
                 };

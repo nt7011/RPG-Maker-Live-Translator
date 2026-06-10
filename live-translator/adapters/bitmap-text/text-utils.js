@@ -228,7 +228,8 @@
         
         function fragmentRect(fragment) {
             if (!fragment) return null;
-            return rectFromDimensions(fragment.x, fragment.y, Math.max(1, fragment.width || fragment.maxWidth || 1), Math.max(1, fragment.lineHeight || 1));
+            const x = finiteNumber(fragment.boundsX, finiteNumber(fragment.x, 0));
+            return rectFromDimensions(x, fragment.y, Math.max(1, fragment.width || fragment.maxWidth || 1), Math.max(1, fragment.lineHeight || 1));
         }
         
         function rectFromDimensions(x, y, width, height) {

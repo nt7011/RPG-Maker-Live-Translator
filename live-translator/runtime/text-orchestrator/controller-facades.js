@@ -170,7 +170,6 @@
                 'isTranslationNoopRenderRejection',
                 'reuseCompletedSourceTranslation',
                 'lookupServiceTranslation',
-                'lookupForcedAsyncServiceTranslation',
                 'describeServiceSkip',
                 'reuseLookupTranslation',
                 'isSkippedItem',

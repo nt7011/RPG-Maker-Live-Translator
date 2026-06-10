@@ -19,7 +19,7 @@
     function createController(scope = {}) {
         const { ADAPTER_ID, ADAPTER_LABEL, SURFACE_TYPE, RENDER_STRATEGY, BITMAP_PRIORITY, DRAW_WRAPPER_TOKEN, MUTATION_WRAPPER_TOKEN, FRAME_FLUSH_TOKEN, SMALL_TEXT_TOKEN, NORMAL_CHAR_TOKEN, MAX_FRAGMENTS, MAX_REPLAY_OPS, GAP_MIN, GAP_RATIO } = scope;
         const renderTransaction = scope.renderTransaction;
-        const { withBitmapReplay, collectReplayItems, replayBitmapItems, drawBitmapTextValue, calculateClearRect } = scope.controllerFacades.replay;
+        const { withBitmapReplay, collectReplayItems, replayBitmapItems, drawBitmapTextValue, calculateClearRect, redrawCopiedBitmapTargets, forgetCopiedBitmapTargets, markBitmapPixelsDirty } = scope.controllerFacades.replay;
         const { sanitizeVisibleText, describeEntryEligibility, recordDrawTrace, bitmapTraceDetails, cloneTraceRect, rectFromDimensions, isValidRect, updateItem, isAdapterContractFailure, warn, stringify, errorMessage } = scope.controllerFacades.textUtils;
         const backdropProvider = backdropProviderModule.create({ isValidRect });
 
@@ -124,20 +124,38 @@
             }
         }
         
-        function applyRenderCommand(entry, command = {}) {
+        function applyRenderCommand(entry, command = {}, route = {}) {
             const translated = stringify(command.text);
             const restored = restoreTranslatedEntryText(entry, translated);
             const visible = sanitizeVisibleText(restored);
             if (!visible || visible === entry.visibleText) {
+                const reason = visible ? 'translated-text-matched-original' : 'restored-text-empty';
                 updateItem(entry, { status: 'skipped' }, 'item.skipped', {
-                    reason: visible ? 'translated text matched original' : 'restored text empty',
+                    reason,
                     translationReceived: translated,
                 });
-                return true;
+                return createBitmapRenderCommit('rejected', reason, entry, command, route, {
+                    translationReceived: translated,
+                    translationDrawn: '',
+                    restoredText: restored || '',
+                });
             }
         
-            redrawBitmapEntry(entry, restored, command);
+            let redrawDiagnostics = null;
+            if (!isCopiedTargetDetachedEntry(entry)) {
+                redrawDiagnostics = redrawBitmapEntry(entry, restored, command);
+            }
             entry.renderedText = restored;
+            const copiedTargetRedraws = redrawCopiedBitmapTargets(entry, restored);
+            if (isCopiedTargetDetachedEntry(entry) && copiedTargetRedraws <= 0) {
+                const reason = 'copied-bitmap-target-missing';
+                retireEntry(entry, reason, 'stale');
+                return createBitmapRenderCommit('rejected', reason, entry, command, route, {
+                    translationReceived: translated,
+                    translationDrawn: '',
+                    copiedTargetRedraws,
+                });
+            }
             updateItem(entry, {
                 status: 'completed',
                 translation: restored,
@@ -146,8 +164,45 @@
                 translationReceived: translated,
                 translationDrawn: restored,
                 sourceHint: command.metadata && command.metadata.sourceHint,
+                copiedTargetRedraws,
+                detachedCopiedTarget: isCopiedTargetDetachedEntry(entry) === true,
             });
-            return true;
+            return createBitmapRenderCommit('accepted', 'bitmap-redraw-applied', entry, command, route, {
+                translationReceived: translated,
+                translationDrawn: restored,
+                sourceHint: command.metadata && command.metadata.sourceHint,
+                ownerType: entry.ownerType,
+                methodName: entry.methodName,
+                copiedTargetRedraws,
+                detachedCopiedTarget: isCopiedTargetDetachedEntry(entry) === true,
+                redraw: redrawDiagnostics,
+            });
+        }
+
+        function createBitmapRenderCommit(status, reason, entry, command = {}, route = {}, details = {}) {
+            const payload = {
+                status,
+                mode: 'bitmap-redraw',
+                reason: reason || status || 'bitmap-redraw',
+                adapterId: ADAPTER_ID,
+                itemId: entry && entry.recordId || '',
+                recordId: entry && entry.recordId || '',
+                surfaceId: entry && entry.surfaceId || '',
+                slotKey: entry && entry.slotKey || '',
+                strategy: route && route.strategy || command.strategy || RENDER_STRATEGY,
+                commandId: command && command.id || '',
+                commandGeneration: Number(route && route.commandGeneration) || Number(command && command.generation) || 0,
+                generation: entry && entry.surfaceRevision || 0,
+                translationReceived: details.translationReceived || '',
+                translationDrawn: details.translationDrawn || '',
+                drawBoundary: entry && entry.renderLifecycle && entry.renderLifecycle.sourceDraw
+                    ? entry.renderLifecycle.sourceDraw
+                    : (command && command.metadata && command.metadata.drawBoundary || null),
+                details,
+            };
+            return renderTransaction && typeof renderTransaction.createRenderCommit === 'function'
+                ? renderTransaction.createRenderCommit(payload)
+                : payload;
         }
         
         function getRenderGeneration(entry) {
@@ -156,6 +211,7 @@
         
         function isRenderTargetCurrent(entry) {
             if (!entry || entry.stale || !entry.bitmap || !entry.state) return false;
+            if (isCopiedTargetDetachedEntry(entry)) return hasCopiedBitmapTargets(entry);
             if (entry.state.entries.get(entry.key) !== entry) return false;
             return true;
         }
@@ -199,6 +255,7 @@
                 patches: entry.backgroundPatches,
                 allowPatches: true,
             });
+            const redrawDiagnostics = createBitmapRedrawDiagnostics(clearRect, clearBounds, replayBefore, replayAfter, backdropPlan, entry);
             scope.bitmapServices.withActiveRedrawEntry(bitmap, entry, () => {
                 withBitmapReplay(bitmap, () => {
                     if (clearRect && clearRect.width > 0 && clearRect.height > 0 && typeof bitmap.clearRect === 'function') {
@@ -214,6 +271,9 @@
                     replayBitmapItems(bitmap, replayAfter);
                 }, 'bitmap-fallback-redraw');
             });
+            // Bitmap fallback redraws mutate the source canvas directly under a
+            // replay guard; make the renderer upload those pixels this frame.
+            markBitmapPixelsDirty(bitmap);
             if (scope.telemetry && typeof scope.telemetry.logDraw === 'function') {
                 scope.telemetry.logDraw('bitmap_redraw', restored, entry.drawParams.x, entry.drawParams.y, {
                     ownerType: entry.ownerType,
@@ -221,6 +281,73 @@
                     sourceHint: command && command.metadata && command.metadata.sourceHint,
                 });
             }
+            return redrawDiagnostics;
+        }
+
+        function createBitmapRedrawDiagnostics(clearRect, clearBounds, replayBefore, replayAfter, backdropPlan, entry) {
+            const patches = Array.isArray(entry && entry.backgroundPatches) ? entry.backgroundPatches : [];
+            const trustedPatches = patches.filter((patch) => patch && patch.trusted === true).length;
+            const backdrop = summarizeBitmapBackdropPlan(backdropPlan) || {};
+            return {
+                clearRect: formatArea(clearRect),
+                clearBounds: formatRect(clearBounds),
+                replayBefore: Array.isArray(replayBefore) ? replayBefore.length : 0,
+                replayAfter: Array.isArray(replayAfter) ? replayAfter.length : 0,
+                patchCount: patches.length,
+                trustedPatchCount: trustedPatches,
+                untrustedPatchCount: patches.length - trustedPatches,
+                backdropKind: backdrop.kind,
+                backdropSource: backdrop.source,
+                backdropClearMode: backdrop.clearMode,
+                backdropSteps: backdrop.steps,
+                backdropPatchesApply: backdrop.patchesApply,
+                backdropPatchCount: backdrop.patchCount,
+                backdropPatchesCoverTarget: backdrop.patchesCoverTarget,
+                backdropReplayApplyAfterClear: backdrop.replayApplyAfterClear,
+                backdropReplayItemCount: backdrop.replayItemCount,
+                backdropReplayCoversTarget: backdrop.replayCoversTarget,
+            };
+        }
+
+        function summarizeBitmapBackdropPlan(plan) {
+            if (!plan || typeof plan !== 'object') return null;
+            return {
+                kind: plan.kind || '',
+                source: plan.source || '',
+                clearMode: plan.clearMode || '',
+                steps: Array.isArray(plan.steps) ? plan.steps.join(',') : '',
+                patchesApply: plan.patches && plan.patches.apply === true,
+                patchCount: plan.patches ? Number(plan.patches.count) || 0 : 0,
+                patchesCoverTarget: plan.patches && plan.patches.coversTarget === true,
+                replayApplyAfterClear: plan.replay && plan.replay.applyAfterClear === true,
+                replayItemCount: plan.replay ? Number(plan.replay.itemCount) || 0 : 0,
+                replayCoversTarget: plan.replay && plan.replay.coversTarget === true,
+            };
+        }
+
+        function formatArea(area) {
+            if (!area) return '';
+            return [
+                `x=${formatNumber(area.x)}`,
+                `y=${formatNumber(area.y)}`,
+                `w=${formatNumber(area.width)}`,
+                `h=${formatNumber(area.height)}`,
+            ].join(',');
+        }
+
+        function formatRect(rect) {
+            if (!rect) return '';
+            return [
+                `x1=${formatNumber(rect.x1)}`,
+                `y1=${formatNumber(rect.y1)}`,
+                `x2=${formatNumber(rect.x2)}`,
+                `y2=${formatNumber(rect.y2)}`,
+            ].join(',');
+        }
+
+        function formatNumber(value) {
+            const number = Number(value);
+            return Number.isFinite(number) ? String(Math.round(number * 1000) / 1000) : '';
         }
         
         function markEntryTerminal(entry, status, reason) {
@@ -263,6 +390,7 @@
         
         function retireEntry(entry, reason = 'bitmap-entry-stale', status = 'stale') {
             if (!entry || entry.stale) return false;
+            forgetCopiedBitmapTargets(entry);
             entry.stale = true;
             if (entry.recordId && isEntryActive(entry)) {
                 scope.adapterContract.cancelItemTranslation(entry, reason, { abortJob: true });
@@ -279,6 +407,45 @@
             }
             if (entry.state && entry.state.entries.get(entry.key) === entry) entry.state.entries.delete(entry.key);
             return true;
+        }
+
+        function detachEntryForCopiedTargets(entry, reason = 'bitmap-source-invalidated') {
+            if (!entry || entry.stale || !hasCopiedBitmapTargets(entry)) return false;
+            entry._trSourceDetachedForCopiedTargets = true;
+            entry._trCopiedSourceInvalidationReason = reason || 'bitmap-source-invalidated';
+            if (entry.state && entry.state.entries && entry.state.entries.get(entry.key) === entry) {
+                entry.state.entries.delete(entry.key);
+            }
+            if (entry.ownershipToken && scope.adapterContract && typeof scope.adapterContract.releaseTextClaim === 'function') {
+                scope.adapterContract.releaseTextClaim(entry.ownershipToken, reason || 'bitmap-source-invalidated');
+                entry.ownershipToken = null;
+            }
+            if (entry.recordId && isEntryActive(entry) && scope.adapterContract && typeof scope.adapterContract.backgroundItem === 'function') {
+                scope.adapterContract.backgroundItem(entry, {
+                    reason: reason || 'bitmap-source-invalidated',
+                    screenState: 'copied-bitmap-target',
+                    copiedTargets: countCopiedBitmapTargets(entry),
+                    sourceSurfaceId: entry.surfaceId || '',
+                    ownerType: entry.ownerType || '',
+                    methodName: entry.methodName || '',
+                });
+            }
+            return true;
+        }
+
+        function isCopiedTargetDetachedEntry(entry) {
+            return !!(entry && entry._trSourceDetachedForCopiedTargets === true);
+        }
+
+        function hasCopiedBitmapTargets(entry) {
+            return !!(entry
+                && Array.isArray(entry._trCopiedBitmapTargets)
+                && entry._trCopiedBitmapTargets.some((target) => target && target.targetBitmap));
+        }
+
+        function countCopiedBitmapTargets(entry) {
+            if (!entry || !Array.isArray(entry._trCopiedBitmapTargets)) return 0;
+            return entry._trCopiedBitmapTargets.filter((target) => target && target.targetBitmap).length;
         }
         
         function shouldKeepRecordAfterRenderRejection(decision = {}) {
@@ -300,7 +467,7 @@
             return reason || 'render-rejected';
         }
 
-        return { observeEntry, requestEntryTranslation, applyRenderCommand, getRenderGeneration, isRenderTargetCurrent, handleRenderRejected, restoreTranslatedEntryText, redrawBitmapEntry, markEntryTerminal, isEntryActive, getEntryStatus, isEntryRequestActive, isEntryCompleted, getEntryObservationStatus, retireEntry, shouldKeepRecordAfterRenderRejection, isRenderApplicationFailure, normalizeRenderRejectionReason };
+        return { observeEntry, requestEntryTranslation, applyRenderCommand, getRenderGeneration, isRenderTargetCurrent, handleRenderRejected, restoreTranslatedEntryText, redrawBitmapEntry, markEntryTerminal, isEntryActive, getEntryStatus, isEntryRequestActive, isEntryCompleted, getEntryObservationStatus, retireEntry, detachEntryForCopiedTargets, shouldKeepRecordAfterRenderRejection, isRenderApplicationFailure, normalizeRenderRejectionReason };
     }
 
     defineRuntimeModule('adapters.bitmapTextRecords', { create: createController });

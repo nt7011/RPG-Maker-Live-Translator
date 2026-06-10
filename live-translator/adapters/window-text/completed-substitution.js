@@ -28,13 +28,15 @@
             windowTraceDetails,
             captureWindowEntrySource,
             completeEntryNativeSourceDraw,
+            resolveHorizontalTextFit,
+            summarizeHorizontalTextFit,
             perfCount,
             perfTop,
             perfStart,
             perfElapsed,
         } = context;
 
-        function invokeCompletedEntry(entry, originalText, invokeOriginal, eventName) {
+        function invokeCompletedEntry(entry, originalText, invokeOriginal, eventName, options = {}) {
             const translated = typeof sanitizeDrawTextOutput === 'function'
                 ? sanitizeDrawTextOutput(entry && entry.renderedText, entry && entry.type)
                 : String(entry && entry.renderedText || '');
@@ -55,21 +57,43 @@
             }
 
             const completedStart = typeof perfStart === 'function' ? perfStart() : 0;
-            logTelemetryDraw(translated, entry, eventName);
             let drew = false;
             try {
                 const windowData = typeof resolveWindowData === 'function' ? resolveWindowData(entry) : entry && entry.windowData || null;
                 const targetWindow = typeof resolveTargetWindow === 'function' ? resolveTargetWindow(entry, windowData) : entry && entry.ownerWindow || null;
                 const substitutionText = getCompletedSubstitutionText(entry, translated);
+                const contents = typeof getRedrawContents === 'function'
+                    ? getRedrawContents(targetWindow, entry)
+                    : targetWindow && targetWindow.contents || null;
+                const textFit = typeof resolveHorizontalTextFit === 'function'
+                    ? resolveHorizontalTextFit(targetWindow, windowData, contents, entry, substitutionText)
+                    : null;
+                if (shouldDeferDrawTextExSubstitutionForFit(entry, textFit, targetWindow, windowData, contents, eventName, options)) {
+                    const result = invokeOriginal();
+                    captureCompletedSourceSnapshot(contents, entry);
+                    completeNativeSourceDraw(entry, 'window-completed-substitution-deferred-for-fit');
+                    const renderResult = notifyDeferredDrawTextExFit(entry, textFit, targetWindow, windowData, contents, substitutionText, translated, eventName, options);
+                    callMetric(perfCount, `${metricPrefix}.deferredForFit`);
+                    callDecision(entry, 'draw.deferred', 'completed drawTextEx substitution waiting for same-line boundary', {
+                        windowType: entry && entry.windowData && entry.windowData.windowType ? entry.windowData.windowType : '',
+                        method: eventName,
+                        translationDrawn: translated,
+                        sourceSubstituted: false,
+                        deferredRender: summarizeDeferredRenderResult(renderResult),
+                        horizontalTextFit: typeof summarizeHorizontalTextFit === 'function'
+                            ? summarizeHorizontalTextFit(textFit)
+                            : null,
+                    });
+                    return result;
+                }
+                logTelemetryDraw(translated, entry, eventName);
                 const result = invokeOriginal(substitutionText, {
                     nativeDrawOwner: typeof getWindowNativeDrawOwner === 'function'
                         ? getWindowNativeDrawOwner(entry, `${route}.translatedSource`)
                         : '',
                     scaleText: true,
+                    textFit,
                 });
-                const contents = typeof getRedrawContents === 'function'
-                    ? getRedrawContents(targetWindow, entry)
-                    : targetWindow && targetWindow.contents || null;
                 captureCompletedSourceSnapshot(contents, entry);
                 completeNativeSourceDraw(entry, 'window-completed-substitution-translated-draw');
                 if (windowData && typeof dropRenderRetry === 'function') dropRenderRetry(windowData, entry);
@@ -83,6 +107,9 @@
                     sourceSubstituted: true,
                     drawTextExInputConverted: entry && entry.type === 'drawTextEx'
                         && substitutionText !== String(translated ?? ''),
+                    horizontalTextFit: typeof summarizeHorizontalTextFit === 'function'
+                        ? summarizeHorizontalTextFit(textFit)
+                        : null,
                 });
                 return result;
             } finally {
@@ -96,6 +123,61 @@
             return entry && entry.type === 'drawTextEx' && typeof toDrawTextExInputText === 'function'
                 ? toDrawTextExInputText(text)
                 : text;
+        }
+
+        function shouldDeferDrawTextExSubstitutionForFit(entry, textFit, targetWindow, windowData, contents, eventName, options) {
+            if (!(entry
+                && entry.type === 'drawTextEx'
+                && textFit
+                && textFit.applied !== true
+                && textFit.reason === 'missingNeighbor')) {
+                return false;
+            }
+            const shouldDefer = options && typeof options.shouldDeferForFit === 'function'
+                ? options.shouldDeferForFit
+                : null;
+            if (!shouldDefer) return false;
+            try {
+                return shouldDefer({
+                    entry,
+                    textFit,
+                    targetWindow,
+                    windowData,
+                    contents,
+                    eventName,
+                }) === true;
+            } catch (_) {
+                return false;
+            }
+        }
+
+        function notifyDeferredDrawTextExFit(entry, textFit, targetWindow, windowData, contents, substitutionText, translated, eventName, options) {
+            const onDeferred = options && typeof options.onDeferredForFit === 'function'
+                ? options.onDeferredForFit
+                : null;
+            if (!onDeferred) return null;
+            try {
+                return onDeferred({
+                    entry,
+                    textFit,
+                    targetWindow,
+                    windowData,
+                    contents,
+                    substitutionText,
+                    translated,
+                    eventName,
+                }) || null;
+            } catch (_) {
+                return { status: 'error', reason: 'deferred-fit-callback-error' };
+            }
+        }
+
+        function summarizeDeferredRenderResult(result) {
+            if (!result || typeof result !== 'object') return null;
+            return {
+                status: String(result.status || ''),
+                reason: String(result.reason || ''),
+            };
         }
 
         function recordCompletedSubstitutionRendered(entry, translated, eventName) {

@@ -16,7 +16,7 @@
         const renderTransaction = scope.renderTransaction;
         const { observeEntry, requestEntryTranslation, isEntryActive, getEntryStatus, getEntryObservationStatus, retireEntry } = scope.controllerFacades.records;
         const { getBitmapState, nextDrawOrder, recordNativeTextForReplay } = scope.controllerFacades.replay;
-        const { sanitizeVisibleText, isStandaloneGlyphText, safePrepareText, describeEntryEligibility, recordDrawTrace, bitmapTraceDetails, cloneTraceRect, fragmentRect, isValidRect, rectanglesOverlap, logTextDetected, updateItem, isAdapterContractFailure, warn, stringify } = scope.controllerFacades.textUtils;
+        const { sanitizeVisibleText, isStandaloneGlyphText, safePrepareText, describeEntryEligibility, recordDrawTrace, bitmapTraceDetails, cloneTraceRect, fragmentRect, isValidRect, rectanglesOverlap, logTextDetected, updateItem, isAdapterContractFailure, warn, stringify, finiteNumber } = scope.controllerFacades.textUtils;
 
         function scheduleFlush(bitmap) {
             const state = getBitmapState(bitmap);
@@ -166,15 +166,15 @@
             if (left.align !== right.align) return false;
             const lineHeight = Math.max(1, Number(left.lineHeight || right.lineHeight) || 24);
             const gapLimit = Math.max(GAP_MIN, Math.ceil(lineHeight * GAP_RATIO));
-            return right.x - (left.x + left.width) <= gapLimit;
+            return getFragmentBoundsX(right) - (getFragmentBoundsX(left) + left.width) <= gapLimit;
         }
         
         function createEntryFromGroup(bitmap, state, group) {
             if (!bitmap || !state || !Array.isArray(group) || !group.length) return null;
             const bounds = group.reduce((acc, fragment) => ({
-                x1: Math.min(acc.x1, fragment.x),
+                x1: Math.min(acc.x1, getFragmentBoundsX(fragment)),
                 y1: Math.min(acc.y1, fragment.y),
-                x2: Math.max(acc.x2, fragment.x + Math.max(1, fragment.width)),
+                x2: Math.max(acc.x2, getFragmentBoundsX(fragment) + Math.max(1, fragment.width)),
                 y2: Math.max(acc.y2, fragment.y + Math.max(1, fragment.lineHeight)),
             }), { x1: Infinity, y1: Infinity, x2: -Infinity, y2: -Infinity });
             if (!isValidRect(bounds)) return null;
@@ -231,7 +231,15 @@
                 bounds,
                 drawState: dominant.drawState,
                 backgroundPatches: group
-                    .map((fragment) => fragment && fragment.backgroundPatch)
+                    .reduce((patches, fragment) => {
+                        if (!fragment) return patches;
+                        if (Array.isArray(fragment.backgroundPatches) && fragment.backgroundPatches.length) {
+                            fragment.backgroundPatches.forEach((patch) => patches.push(patch));
+                        } else if (fragment.backgroundPatch) {
+                            patches.push(fragment.backgroundPatch);
+                        }
+                        return patches;
+                    }, [])
                     .filter((patch) => patch && patch.bitmap && patch.width > 0 && patch.height > 0),
                 methodName: dominant.methodName || 'drawText',
                 ownerType: dominant.ownerType || 'Bitmap',
@@ -301,6 +309,10 @@
                 });
             }
             return entry;
+        }
+
+        function getFragmentBoundsX(fragment) {
+            return finiteNumber(fragment && fragment.boundsX, finiteNumber(fragment && fragment.x, 0));
         }
         
         function refreshExistingEntry(existing, fresh) {

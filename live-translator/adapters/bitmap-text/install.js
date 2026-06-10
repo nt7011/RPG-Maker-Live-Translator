@@ -576,19 +576,25 @@
             let state = null;
             let queued = 0;
             bitmapDrawRuns.collectRunsFromBatch(batch, {
-                allowFallbackGlyphRuns: false,
+                // Bitmap fallback is the last owner for unclaimed draw batches. Use the
+                // shared draw-run collector here too, so custom per-glyph renderers enter
+                // the lifecycle as semantic text runs instead of isolated glyph records.
+                allowFallbackGlyphRuns: true,
             }).forEach((run) => {
                 if (!run || !Array.isArray(run.units) || !run.units.length) return;
                 if (run.units.some((unit) => !unit || unit.bitmap !== bitmap || batch.isConsumed(unit))) return;
+                const backgroundPatches = getRunFallbackBackgroundPatches(run);
                 const payload = bitmapDrawRuns.createSurfaceDrawPayload(batch, run, {
                     payload: {
                         ownershipStatus: '',
-                        backgroundPatch: getRunFallbackBackgroundPatch(run),
+                        backgroundPatch: backgroundPatches[0] || null,
+                        backgroundPatches,
                     },
                 });
                 if (!payload || !sanitizeVisibleText(payload.text)) return;
                 const fragment = createFragment(bitmap, Object.assign({}, payload, {
                     ownerType: payload.ownerType || 'Bitmap',
+                    backgroundPatches,
                 }));
                 if (!fragment || !sanitizeVisibleText(fragment.visibleText)) return;
                 const ownership = recordBitmapSurfaceDraw(bitmap, fragment, { candidateAdapters: [] });
@@ -611,11 +617,19 @@
             return queued;
         }
 
-        function getRunFallbackBackgroundPatch(run) {
+        function getRunFallbackBackgroundPatches(run) {
             const units = run && Array.isArray(run.units) ? run.units.slice() : [];
             units.sort(bitmapDrawRuns.compareUnits);
-            const first = units[0];
-            return first && (first.fallbackBackgroundPatch || first.backgroundPatch) || null;
+            return units
+                .map((unit) => unit && (unit.fallbackBackgroundPatch || unit.backgroundPatch))
+                .filter(isValidBackgroundPatch);
+        }
+
+        function isValidBackgroundPatch(patch) {
+            return !!(patch
+                && patch.bitmap
+                && Number(patch.width) > 0
+                && Number(patch.height) > 0);
         }
         
         function describeBitmapDrawBypassReason(bitmap) {
@@ -732,27 +746,56 @@
         
         function createFragment(bitmap, input) {
             if (!bitmap || !input) return null;
-            const width = estimateTextWidth(bitmap, input.text, input.maxWidth);
+            const rawText = stringify(input.text);
+            const align = normalizeCanvasTextAlign(input.align);
+            const measuredWidth = positiveNumber(
+                input.measuredWidth,
+                estimateTextWidth(bitmap, rawText, 0)
+            );
+            const maxWidth = positiveNumber(input.maxWidth, measuredWidth);
+            const width = Math.max(1, Math.min(Math.ceil(measuredWidth), maxWidth));
+            const x = finiteNumber(input.x, 0);
+            const backgroundPatches = Array.isArray(input.backgroundPatches)
+                ? input.backgroundPatches.filter(isValidBackgroundPatch)
+                : [];
+            if (!backgroundPatches.length && isValidBackgroundPatch(input.backgroundPatch)) {
+                backgroundPatches.push(input.backgroundPatch);
+            }
             return {
                 bitmap,
                 methodName: input.methodName || 'drawText',
-                rawText: stringify(input.text),
-                visibleText: scope.stripControls(stringify(input.text)),
-                x: input.x,
+                rawText,
+                visibleText: scope.stripControls(rawText),
+                x,
+                boundsX: resolveAlignedTextBoundsX(x, maxWidth, width, align),
                 y: input.y,
-                maxWidth: input.maxWidth > 0 ? input.maxWidth : width,
+                maxWidth,
                 lineHeight: input.lineHeight,
-                align: input.align,
+                align,
                 width,
                 ownerType: input.ownerType || 'Bitmap',
                 drawState: input.drawState || scope.captureBitmapDrawState(bitmap),
                 drawBoundary: cloneDrawBoundary(input.drawBoundary),
                 backgroundPatch: input.backgroundPatch || null,
+                backgroundPatches,
                 drawRun: input.drawRun || null,
                 sourceCommitted: input.sourceCommitted === true,
                 fontSignature: computeFontSignature(input.drawState, bitmap),
                 recordedAt: Date.now(),
             };
+        }
+
+        function resolveAlignedTextBoundsX(x, maxWidth, visibleWidth, align) {
+            const originX = finiteNumber(x, 0);
+            const boxWidth = positiveNumber(maxWidth, visibleWidth);
+            const textWidth = positiveNumber(visibleWidth);
+            if (align === 'right' || align === 'end') {
+                return originX + Math.max(0, boxWidth - textWidth);
+            }
+            if (align === 'center') {
+                return originX + Math.max(0, (boxWidth - textWidth) / 2);
+            }
+            return originX;
         }
 
         function cloneDrawBoundary(boundary) {

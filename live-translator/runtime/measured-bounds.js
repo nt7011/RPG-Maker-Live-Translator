@@ -147,21 +147,24 @@
         if (surfaceWidth <= 0 || surfaceHeight <= 0) return null;
 
         const outline = Math.max(0, finiteNumber(input.outline, 0));
-        let clearX = Math.min(Number(bounds.x1), Number(bounds.x2));
-        let clearY = Math.min(Number(bounds.y1), Number(bounds.y2));
-        let clearW = Math.abs(Number(bounds.x2) - Number(bounds.x1));
-        let clearH = Math.abs(Number(bounds.y2) - Number(bounds.y1));
+        let minX = Math.min(Number(bounds.x1), Number(bounds.x2));
+        let minY = Math.min(Number(bounds.y1), Number(bounds.y2));
+        let maxX = Math.max(Number(bounds.x1), Number(bounds.x2));
+        let maxY = Math.max(Number(bounds.y1), Number(bounds.y2));
         const minimumHeight = finiteNumber(input.minimumHeight, 0);
-        if (minimumHeight > 0) clearH = Math.max(clearH, minimumHeight);
+        if (minimumHeight > 0 && maxY - minY < minimumHeight) maxY = minY + minimumHeight;
 
-        clearX = Math.floor(clearX - outline);
-        clearY = Math.floor(clearY - outline);
-        clearW = Math.ceil(clearW + outline * 2);
-        clearH = Math.ceil(clearH + outline * 2);
-        clearX = Math.max(0, clearX);
-        clearY = Math.max(0, clearY);
-        clearW = Math.max(0, Math.min(surfaceWidth - clearX, clearW));
-        clearH = Math.max(0, Math.min(surfaceHeight - clearY, clearH));
+        const paddedX1 = Math.floor(minX - outline);
+        const paddedY1 = Math.floor(minY - outline);
+        const paddedX2 = Math.ceil(maxX + outline);
+        const paddedY2 = Math.ceil(maxY + outline);
+
+        const clearX = Math.max(0, Math.min(surfaceWidth, paddedX1));
+        const clearY = Math.max(0, Math.min(surfaceHeight, paddedY1));
+        const clearRight = Math.max(clearX, Math.min(surfaceWidth, paddedX2));
+        const clearBottom = Math.max(clearY, Math.min(surfaceHeight, paddedY2));
+        const clearW = clearRight - clearX;
+        const clearH = clearBottom - clearY;
         return clearW > 0 && clearH > 0 ? { x: clearX, y: clearY, w: clearW, h: clearH } : null;
     }
 
