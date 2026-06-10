@@ -130,17 +130,12 @@
             }, context);
         }
 
-        function lookupServiceTranslation(text, options = {}) {
+        function lookupServiceTranslation(text) {
             if (!scope.translationService || typeof scope.translationService.lookup !== 'function') return null;
             const key = String(text ?? '').trim();
             if (!key) return null;
             try {
-                const lookupOptions = options && options.includeForcedAsync === true
-                    ? { includeForcedAsync: true }
-                    : undefined;
-                const hit = lookupOptions
-                    ? scope.translationService.lookup(key, lookupOptions)
-                    : scope.translationService.lookup(key);
+                const hit = scope.translationService.lookup(key);
                 if (!hit || typeof hit.translation !== 'string' || !hit.translation.trim()) return null;
                 return {
                     translation: hit.translation,
@@ -149,26 +144,6 @@
             } catch (error) {
                 if (logger && typeof logger.warn === 'function') {
                     logger.warn('[TextOrchestrator] Translation lookup failed.', error);
-                }
-                return null;
-            }
-        }
-
-        function lookupForcedAsyncServiceTranslation(text) {
-            if (!scope.translationService || typeof scope.translationService.lookup !== 'function') return null;
-            if (scope.translationService.forceAsyncTranslation !== true) return null;
-            const key = String(text ?? '').trim();
-            if (!key) return null;
-            try {
-                const hit = scope.translationService.lookup(key, { includeForcedAsync: true });
-                if (!hit || hit.forceAsync !== true || typeof hit.translation !== 'string' || !hit.translation.trim()) return null;
-                return {
-                    translation: hit.translation,
-                    sourceHint: firstNonEmptyString(hit.source, hit.sourceHint, 'cache'),
-                };
-            } catch (error) {
-                if (logger && typeof logger.warn === 'function') {
-                    logger.warn('[TextOrchestrator] Forced async translation lookup failed.', error);
                 }
                 return null;
             }
@@ -285,7 +260,6 @@
             isTranslationNoopRenderRejection,
             reuseCompletedSourceTranslation,
             lookupServiceTranslation,
-            lookupForcedAsyncServiceTranslation,
             describeServiceSkip,
             reuseLookupTranslation,
             isSkippedItem,

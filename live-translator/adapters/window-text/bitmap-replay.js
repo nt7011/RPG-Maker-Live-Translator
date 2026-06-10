@@ -52,11 +52,15 @@
                 if (!windowInstance || !contents || typeof callback !== 'function') return undefined;
                 if (windowInstance.contents === contents) return callback();
                 const previous = windowInstance.contents;
+                const hasInstalledAccessor = windowInstance._trWindowContentsAccessorInstalled === true
+                    && Object.prototype.hasOwnProperty.call(windowInstance, '_trWindowContentsValue');
                 try {
-                    windowInstance.contents = contents;
+                    if (hasInstalledAccessor) windowInstance._trWindowContentsValue = contents;
+                    else windowInstance.contents = contents;
                     return callback();
                 } finally {
-                    windowInstance.contents = previous;
+                    if (hasInstalledAccessor) windowInstance._trWindowContentsValue = previous;
+                    else windowInstance.contents = previous;
                 }
             }
     
@@ -278,7 +282,7 @@
                 return found;
             }
 
-    function redrawCopiedWindowTextTargets(entry, translatedText = '') {
+    function redrawCopiedWindowTextTargets(entry, translatedText = '', options = {}) {
                 if (!entry || !Array.isArray(entry._trCopiedRenderTargets) || !entry._trCopiedRenderTargets.length) return 0;
                 const rendered = sanitizeDrawTextOutput(translatedText || entry.renderedText || '', entry.type);
                 if (!rendered) return 0;
@@ -287,7 +291,7 @@
                 entry._trCopiedRenderTargets.forEach((target) => {
                     if (!isUsableCopiedRenderTarget(target)) return;
                     kept.push(target);
-                    if (redrawCopiedWindowTextTarget(entry, target, rendered)) redrawn += 1;
+                    if (redrawCopiedWindowTextTarget(entry, target, rendered, options)) redrawn += 1;
                 });
                 if (kept.length) entry._trCopiedRenderTargets = kept;
                 else delete entry._trCopiedRenderTargets;
@@ -341,12 +345,12 @@
                     scaleX,
                     scaleY,
                     methodName: String(methodName || 'blt'),
-                    backgroundSnapshot: captureCopiedTargetBackground(targetBitmap, bounds, entry),
+                    backgroundSnapshot: createCopiedTargetBackgroundSnapshot(entry, targetBitmap, sourceRect, targetRect, scaleX, scaleY),
                     createdAt: Date.now(),
                 };
             }
 
-    function redrawCopiedWindowTextTarget(entry, target, renderedText) {
+    function redrawCopiedWindowTextTarget(entry, target, renderedText, options = {}) {
                 if (!entry || !isUsableCopiedRenderTarget(target) || !renderedText) return false;
                 const targetBitmap = target.targetBitmap;
                 const position = target.position || {};
@@ -361,6 +365,9 @@
                 const drawState = target.drawState || entry.drawState || null;
                 try {
                     if (drawState && drawService.applyBitmapDrawState) drawService.applyBitmapDrawState(targetBitmap, drawState);
+                    if (entry.type === 'drawTextEx' && redrawCopiedRichWindowTextTarget(entry, target, renderedText, options)) {
+                        return true;
+                    }
                     const sourceYOffset = calculateBitmapSurfaceTextYOffset(entry.contentsBitmap || target.sourceBitmap, entry, renderedText);
                     const yOffset = Number.isFinite(Number(sourceYOffset)) ? Number(sourceYOffset) * (Number(target.scaleY) || 1) : 0;
                     withCopiedTargetDrawGuard(targetBitmap, () => {
@@ -386,6 +393,67 @@
                 }
             }
 
+    function redrawCopiedRichWindowTextTarget(entry, target, renderedText, options = {}) {
+                if (!entry || !target || !renderedText || typeof drawTranslatedWindowText !== 'function') return false;
+                const targetWindow = entry.ownerWindow || null;
+                const targetBitmap = target.targetBitmap || null;
+                if (!targetWindow || !targetBitmap || typeof targetWindow.processCharacter !== 'function') return false;
+                const copiedEntry = createCopiedRenderEntry(entry, target);
+                if (!copiedEntry) return false;
+                let result = false;
+                withCopiedTargetDrawGuard(targetBitmap, () => {
+                    result = drawTranslatedWindowText(targetWindow, targetBitmap, copiedEntry, renderedText, {
+                        route: 'copiedTarget',
+                        targetRole: 'copied-render-target',
+                        textFit: mapCopiedTextFit(options && options.textFit, target),
+                    });
+                });
+                if (!(result && result.accepted === true)) return false;
+                markBitmapPixelsDirty(targetBitmap);
+                target.lastRenderedText = String(renderedText);
+                target.lastRenderedAt = Date.now();
+                return true;
+            }
+
+    function createCopiedRenderEntry(entry, target) {
+                if (!entry || !target || !isUsableBitmap(target.targetBitmap)) return null;
+                const copiedEntry = Object.create(entry);
+                copiedEntry.position = Object.assign({}, entry.position || {}, target.position || {});
+                copiedEntry.originalParams = Object.assign({}, entry.originalParams || {}, target.params || {});
+                copiedEntry.drawState = target.drawState || entry.drawState || null;
+                copiedEntry.contentsBitmap = target.targetBitmap;
+                copiedEntry.bounds = target.bounds || entry.bounds || null;
+                copiedEntry.renderedBounds = target.bounds || entry.renderedBounds || null;
+                copiedEntry.sourceContentsBitmap = target.targetBitmap;
+                copiedEntry.sourceContentsRole = 'copied-render-target';
+                return copiedEntry;
+            }
+
+    function mapCopiedTextFit(textFit, target) {
+                if (!textFit || textFit.applied !== true || !target) return textFit || null;
+                const sourceRect = target.sourceRect || null;
+                const targetRect = target.targetRect || null;
+                const scaleX = Number(target.scaleX);
+                const originX = Number(textFit.originX);
+                const mapped = Object.assign({}, textFit);
+                if (Number.isFinite(originX)
+                    && Number.isFinite(scaleX)
+                    && sourceRect
+                    && targetRect) {
+                    mapped.originX = mapCopiedNumber(originX, sourceRect.x1, targetRect.x1, scaleX);
+                }
+                if (Number.isFinite(Number(mapped.safeMaxWidth)) && Number.isFinite(scaleX)) {
+                    mapped.safeMaxWidth = Number(mapped.safeMaxWidth) * scaleX;
+                }
+                if (Number.isFinite(Number(mapped.naturalWidth)) && Number.isFinite(scaleX)) {
+                    mapped.naturalWidth = Number(mapped.naturalWidth) * scaleX;
+                }
+                if (Number.isFinite(Number(mapped.gap)) && Number.isFinite(scaleX)) {
+                    mapped.gap = Number(mapped.gap) * scaleX;
+                }
+                return mapped;
+            }
+
     function withCopiedTargetDrawGuard(bitmap, callback) {
                 const api = replayService && replayService.bitmapDraws;
                 if (api && typeof api.withWindowPipelineGuard === 'function') {
@@ -408,27 +476,30 @@
                 }
             }
 
-    function captureCopiedTargetBackground(targetBitmap, bounds, entry) {
-                const canvasContext = getBitmapSnapshotContext(targetBitmap);
-                if (!canvasContext || typeof canvasContext.getImageData !== 'function') return null;
-                const area = getSnapshotArea(targetBitmap, bounds, getEntrySnapshotPadding(targetBitmap, entry));
-                if (!area) return null;
-                try {
-                    const imageData = canvasContext.getImageData(area.x, area.y, area.w, area.h);
-                    if (!imageData) return null;
-                    return {
-                        contentsBitmap: targetBitmap,
-                        x: area.x,
-                        y: area.y,
-                        w: area.w,
-                        h: area.h,
-                        bounds: cloneDiagnosticRect(bounds),
-                        capturedAt: Date.now(),
-                        imageData,
-                    };
-                } catch (_) {
-                    return null;
-                }
+    function createCopiedTargetBackgroundSnapshot(entry, targetBitmap, sourceRect, targetRect, scaleX, scaleY) {
+                const sourceSnapshot = entry && entry.backgroundSnapshot;
+                if (!sourceSnapshot || !sourceSnapshot.imageData || !isUsableBitmap(targetBitmap)) return null;
+                if (!isUnitScale(scaleX) || !isUnitScale(scaleY)) return null;
+                const sourceArea = {
+                    x1: Number(sourceSnapshot.x),
+                    y1: Number(sourceSnapshot.y),
+                    x2: Number(sourceSnapshot.x) + Number(sourceSnapshot.w),
+                    y2: Number(sourceSnapshot.y) + Number(sourceSnapshot.h),
+                };
+                if (!rectHasArea(sourceArea) || !rectContainsRect(sourceRect, sourceArea)) return null;
+                const mappedArea = mapCopiedRect(sourceArea, sourceRect, targetRect, scaleX, scaleY);
+                if (!rectHasArea(mappedArea)) return null;
+                return {
+                    contentsBitmap: targetBitmap,
+                    x: mappedArea.x1,
+                    y: mappedArea.y1,
+                    w: mappedArea.x2 - mappedArea.x1,
+                    h: mappedArea.y2 - mappedArea.y1,
+                    bounds: cloneDiagnosticRect(mappedArea),
+                    capturedAt: Date.now(),
+                    imageData: sourceSnapshot.imageData,
+                    fromCopiedSourceSnapshot: true,
+                };
             }
 
     function isCopiedRenderTargetCurrent(targetBitmap, methodName, mutation, target) {
@@ -475,6 +546,11 @@
                     && Number(inner.y1) >= Number(outer.y1)
                     && Number(inner.x2) <= Number(outer.x2)
                     && Number(inner.y2) <= Number(outer.y2));
+            }
+
+    function isUnitScale(value) {
+                const number = Number(value);
+                return Number.isFinite(number) && Math.abs(number - 1) < 0.000001;
             }
 
     function clipRectToBitmap(rect, bitmap) {
@@ -571,7 +647,7 @@
                 });
             }
     
-    function replayMixedItems(contents, targetWindow, items, replayApi, clipRect = null) {
+    function replayMixedItems(contents, targetWindow, items, replayApi, clipRect = null, options = {}) {
                 if (!contents || !Array.isArray(items) || !items.length) return;
                 const replayGraph = drawGraph.createDrawGraph(items, {
                     getItemRect: getReplayItemRect,
@@ -582,7 +658,7 @@
                         const item = node && node.item;
                         if (!item) return;
                         if (item.type === 'windowText') {
-                            replayWindowTextEntry(targetWindow, contents, item.entry);
+                            replayWindowTextEntry(targetWindow, contents, item.entry, options);
                         } else if (replayApi && typeof replayApi.replayBitmapItems === 'function') {
                             replayApi.replayBitmapItems(contents, [item]);
                         }
@@ -591,14 +667,20 @@
                 return withBitmapReplayClip(contents, clipRect, replay);
             }
     
-    function replayWindowTextEntry(targetWindow, contents, entry) {
+    function replayWindowTextEntry(targetWindow, contents, entry, options = {}) {
                 if (!targetWindow || !contents || !entry || entryLifecycleState.isStale(entry)) return;
                 const text = getWindowReplayText(entry);
                 if (!text) return;
                 try {
                     if (entry.drawState) drawService.applyBitmapDrawState(contents, entry.drawState);
                 } catch (_) {}
-                drawTranslatedWindowText(targetWindow, contents, entry, text, { route: 'replay' });
+                const textFit = options && typeof options.resolveTextFit === 'function'
+                    ? options.resolveTextFit(entry, text)
+                    : null;
+                drawTranslatedWindowText(targetWindow, contents, entry, text, {
+                    route: 'replay',
+                    textFit,
+                });
             }
     
     function getWindowReplayText(entry) {
@@ -840,12 +922,26 @@
                     // texture dirty so the restored backdrop reaches the screen.
                     if (typeof bitmap._setDirty === 'function') {
                         bitmap._setDirty();
-                        return;
                     }
                 } catch (_) {}
                 try {
                     bitmap._dirty = true;
                 } catch (_) {}
+                markBitmapBaseTextureDirty(bitmap);
+            }
+
+    function markBitmapBaseTextureDirty(bitmap) {
+                const candidates = [
+                    bitmap && bitmap._baseTexture,
+                    bitmap && bitmap.baseTexture,
+                    bitmap && bitmap._texture && bitmap._texture.baseTexture,
+                ];
+                candidates.forEach((baseTexture) => {
+                    if (!baseTexture || typeof baseTexture.update !== 'function') return;
+                    try {
+                        baseTexture.update();
+                    } catch (_) {}
+                });
             }
 
     function restoreWindowEntryBitmapSnapshot(contents, snapshot) {

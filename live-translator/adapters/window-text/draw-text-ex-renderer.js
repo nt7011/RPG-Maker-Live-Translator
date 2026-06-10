@@ -45,7 +45,7 @@
             });
         }
 
-        function drawProcessedDrawTextEx(targetWindow, contents, entry, text, x, y) {
+        function drawProcessedDrawTextEx(targetWindow, contents, entry, text, x, y, options = {}) {
             if (!targetWindow || !contents || !entry || typeof targetWindow.processCharacter !== 'function') return false;
             const value = String(text ?? '');
             if (!value) return false;
@@ -77,14 +77,18 @@
             }
             try {
                 let guard = String(textState.text || '').length + 16;
-                while (textState.index < textState.text.length) {
-                    const before = Number(textState.index) || 0;
-                    targetWindow.processCharacter(textState);
-                    const after = Number(textState.index) || 0;
-                    if (after <= before) return false;
-                    guard -= 1;
-                    if (guard < 0) return false;
-                }
+                const process = () => {
+                    while (textState.index < textState.text.length) {
+                        const before = Number(textState.index) || 0;
+                        targetWindow.processCharacter(textState);
+                        const after = Number(textState.index) || 0;
+                        if (after <= before) return false;
+                        guard -= 1;
+                        if (guard < 0) return false;
+                    }
+                    return true;
+                };
+                if (!withHorizontalSqueeze(contents, x, options && options.scaleX, process)) return false;
                 const drawPrimitiveCount = textDrawCount + bltDrawCount;
                 if (drawPrimitiveCount > 0) markBitmapDirty(contents);
                 return {
@@ -97,6 +101,30 @@
             } finally {
                 if (originalDrawText) contents.drawText = originalDrawText;
                 if (originalBlt) contents.blt = originalBlt;
+            }
+        }
+
+        function withHorizontalSqueeze(contents, originX, scaleX, callback) {
+            if (typeof callback !== 'function') return false;
+            const factor = Number(scaleX);
+            if (!Number.isFinite(factor) || factor <= 0 || factor >= 0.999) return callback();
+            const canvasContext = contents && (contents._context || contents.context);
+            if (!canvasContext
+                || typeof canvasContext.save !== 'function'
+                || typeof canvasContext.restore !== 'function'
+                || typeof canvasContext.translate !== 'function'
+                || typeof canvasContext.scale !== 'function') {
+                return callback();
+            }
+            const origin = Number.isFinite(Number(originX)) ? Number(originX) : 0;
+            canvasContext.save();
+            try {
+                canvasContext.translate(origin, 0);
+                canvasContext.scale(factor, 1);
+                canvasContext.translate(-origin, 0);
+                return callback();
+            } finally {
+                canvasContext.restore();
             }
         }
 

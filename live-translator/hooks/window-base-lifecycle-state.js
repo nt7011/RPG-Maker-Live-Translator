@@ -271,9 +271,10 @@
             if (!ready) return;
 
             const flush = () => {
-                const keys = Array.from(data.renderQueue.keys());
-                for (const key of keys) {
-                    const queued = data.renderQueue.get(key);
+                const queuedRecords = Array.from(data.renderQueue.entries())
+                    .sort(compareQueuedRenderRecords);
+                for (const [key, queued] of queuedRecords) {
+                    if (data.renderQueue.get(key) !== queued) continue;
                     const entry = queued && queued.entry ? queued.entry : null;
                     if (!entry) {
                         data.renderQueue.delete(key);
@@ -337,6 +338,40 @@
                 return windowLifecycle.withRenderDrain(windowInstance, data, reason || 'window-update', flush);
             }
             return flush();
+        }
+
+        function compareQueuedRenderRecords(left, right) {
+            const leftKey = String(left && left[0] || '');
+            const rightKey = String(right && right[0] || '');
+            const leftQueued = left && left[1] ? left[1] : null;
+            const rightQueued = right && right[1] ? right[1] : null;
+            const leftEntry = leftQueued && leftQueued.entry ? leftQueued.entry : null;
+            const rightEntry = rightQueued && rightQueued.entry ? rightQueued.entry : null;
+            const drawOrder = compareFiniteNumbers(leftEntry && leftEntry.drawOrder, rightEntry && rightEntry.drawOrder);
+            if (drawOrder !== 0) return drawOrder;
+            const yOrder = compareFiniteNumbers(
+                leftEntry && leftEntry.position && leftEntry.position.y,
+                rightEntry && rightEntry.position && rightEntry.position.y
+            );
+            if (yOrder !== 0) return yOrder;
+            const xOrder = compareFiniteNumbers(
+                leftEntry && leftEntry.position && leftEntry.position.x,
+                rightEntry && rightEntry.position && rightEntry.position.x
+            );
+            if (xOrder !== 0) return xOrder;
+            const queuedAtOrder = compareFiniteNumbers(leftQueued && leftQueued.queuedAt, rightQueued && rightQueued.queuedAt);
+            if (queuedAtOrder !== 0) return queuedAtOrder;
+            return leftKey.localeCompare(rightKey);
+        }
+
+        function compareFiniteNumbers(left, right) {
+            const a = Number(left);
+            const b = Number(right);
+            const hasA = Number.isFinite(a);
+            const hasB = Number.isFinite(b);
+            if (hasA && hasB && a !== b) return a - b;
+            if (hasA !== hasB) return hasA ? -1 : 1;
+            return 0;
         }
 
         function markWindowEntriesOffscreen(windowInstance, data, reason) {

@@ -13,14 +13,15 @@
     function createSubscriptionControllerController(context = {}) {
     const { entriesByRecordId, RENDER_STRATEGY, entryLifecycleState } = context;
     const { lifecycle: lifecycleService, surface: surfaceService } = context.services;
-    const { bitmapReplay, entryLifecycle, entryRecords, renderCommands, renderDraw, renderQueue, textConversion, textMetrics } = context.facades;
+    const { bitmapReplay, entryLifecycle, entryRecords, renderCommands, renderDraw, renderProof, renderQueue, textConversion, textMetrics } = context.facades;
     const { observeEntry, firstNonEmptyString } = entryRecords;
     const { applyRenderCommand, markRequestSkipped, markRequestFailed, updateOrchestratorItem, beginPendingRenderCommand, markPendingRenderDeferred } = renderCommands;
     const { drawTranslatedEntry } = renderDraw;
     const { rememberDetachedEntry, takeDetachedEntry, markRecordDisappeared, clearPendingInvalidation, getCurrentEntry, getTextEntryKey, resolveWindowData, isWindowReadyForRedraw } = entryLifecycle;
+    const { resolveDetachedRenderTarget } = renderProof;
     const { queueRenderRetry } = renderQueue;
     const { restoreTranslatedWindowText, sanitizeDrawTextOutput } = textConversion;
-    const { getSurfaceId, createSlotKey, getWindowTypeName } = textMetrics;
+    const { getSurfaceId, getWindowTypeName } = textMetrics;
     const { getRedrawContents } = bitmapReplay;
 
     function installOrchestratorSubscription() {
@@ -90,7 +91,6 @@
                     });
                     return false;
                 }
-                if (isObsoleteDetachedEntry(entry)) return false;
                 const match = findDetachedTranslationWindow(event, details, entry);
                 if (!match || !match.windowInstance || !match.windowData) {
                     rememberDetachedEntry(entry, 'detached-window-missing', {
@@ -100,35 +100,40 @@
                 }
                 const windowInstance = match.windowInstance;
                 const windowData = match.windowData;
-                const reattached = reattachDetachedEntry(entry, windowInstance, windowData, received, route, event, details);
+                const renderTarget = resolveDetachedRenderTarget(entry, windowData, windowInstance);
+                if (!renderTarget || renderTarget.accepted !== true || !renderTarget.entry) return false;
+                const targetEntry = renderTarget.entry;
+                const proof = renderTarget.proof || null;
+                const reattached = reattachDetachedEntry(targetEntry, windowInstance, windowData, received, route, event, details, proof);
                 if (!reattached) return false;
-                const contents = getRedrawContents(windowInstance, entry);
+                const contents = getRedrawContents(windowInstance, targetEntry);
                 if (!isWindowReadyForRedraw(windowInstance, contents)) {
-                    beginPendingRenderCommand(entry, {
+                    beginPendingRenderCommand(targetEntry, {
                         id: `detached:${recordId}`,
                         text: received,
                     }, {
                         strategy: RENDER_STRATEGY,
-                        commandGeneration: entry.surfaceRevision || 0,
-                    }, received, entry.renderedText || '');
-                    markPendingRenderDeferred(entry, 'detached-window-redraw-deferred', {
+                        commandGeneration: targetEntry.surfaceRevision || 0,
+                    }, received, targetEntry.renderedText || '');
+                    markPendingRenderDeferred(targetEntry, 'detached-window-redraw-deferred', {
                         detached: true,
                         renderRoute: 'detached-record',
                         windowType: getWindowTypeName(windowInstance, windowData),
-                        method: entry.type || '',
+                        method: targetEntry.type || '',
+                        renderProof: proof,
                     });
-                    queueRenderRetry(windowInstance, windowData, entry, entry.key || getTextEntryKey(windowData, entry));
+                    queueRenderRetry(windowInstance, windowData, targetEntry, targetEntry.key || getTextEntryKey(windowData, targetEntry));
                     return true;
                 }
-                if (!drawTranslatedEntry(windowInstance, windowData, contents, entry)) {
-                    markRecordDisappeared(entry, 'detached-redraw-failed', {
-                        key: entry.key || '',
+                if (!drawTranslatedEntry(windowInstance, windowData, contents, targetEntry)) {
+                    markRecordDisappeared(targetEntry, 'detached-redraw-failed', {
+                        key: targetEntry.key || '',
                         windowType: getWindowTypeName(windowInstance, windowData),
                     });
                     return false;
                 }
-                const rendered = entry.renderedText || '';
-                updateOrchestratorItem(entry, {
+                const rendered = targetEntry.renderedText || '';
+                updateOrchestratorItem(targetEntry, {
                     status: 'completed',
                     translation: rendered,
                     translationReceived: received,
@@ -137,39 +142,17 @@
                     detached: true,
                     renderRoute: 'detached-record',
                     windowType: getWindowTypeName(windowInstance, windowData),
-                    method: entry.type || '',
-                    key: entry.key || '',
+                    method: targetEntry.type || '',
+                    key: targetEntry.key || '',
                     translationReceived: received,
                     translationDrawn: rendered,
+                    renderProof: proof,
                 });
                 return true;
             }
 
-    function isObsoleteDetachedEntry(entry) {
-                const reason = firstNonEmptyString(
-                    entryLifecycleState.getDetachedReason(entry),
-                    entryLifecycleState.getCanceledReason(entry),
-                    entryLifecycleState.getPendingInvalidation(entry) && entryLifecycleState.getPendingInvalidation(entry).sourceReason
-                );
-                const detachedDetails = entryLifecycleState.getDetachedDetails(entry);
-                if (detachedDetails && detachedDetails.allowDetachedReattach === true && isContentsInvalidationReason(reason)) {
-                    return false;
-                }
-                return reason === 'window-entry-replaced'
-                    || reason === 'window-entry-empty'
-                    || isContentsInvalidationReason(reason);
-            }
-
-    function isContentsInvalidationReason(reason) {
-                const text = String(reason || '');
-                return text === 'clear-contents'
-                    || text === 'clearRect-contents'
-                    || /-contents$/u.test(text);
-            }
-
-    function reattachDetachedEntry(entry, windowInstance, windowData, received, route, event, details) {
+    function reattachDetachedEntry(entry, windowInstance, windowData, received, route, event, details, proof = null) {
                 if (!entry || !windowInstance || !windowData) return false;
-                if (findSlotConflict(windowData, entry)) return false;
                 const restored = restoreTranslatedWindowText(entry, received);
                 const rendered = sanitizeDrawTextOutput(restored, entry.type);
                 if (!rendered || rendered.trim() === String(entry.convertedText || '').trim()) return false;
@@ -190,6 +173,7 @@
                 entry.renderedText = rendered;
                 entry.translationTimestamp = Date.now();
                 entry.surfaceRevision = (Number(entry.surfaceRevision) || 0) + 1;
+                entry.detachedRenderProof = proof || null;
                 clearPendingInvalidation(entry);
                 try { windowData.texts.set(key, entry); } catch (_) { return false; }
                 observeEntry(windowData, entry, 'completed', {
@@ -201,33 +185,10 @@
                         renderRoute: 'detached-record',
                         commandId: route && route.commandId || '',
                         eventType: event && event.type || '',
+                        renderProof: proof,
                     },
                 });
                 return true;
-            }
-
-    function findSlotConflict(windowData, entry) {
-                if (!windowData || !windowData.texts || !entry) return null;
-                const slotKey = entry.slotKey || createSlotKey(
-                    entry.type,
-                    entry.position && entry.position.x,
-                    entry.position && entry.position.y,
-                    entry.originalParams
-                );
-                let conflict = null;
-                try {
-                    windowData.texts.forEach((candidate) => {
-                        if (conflict || !candidate || candidate === entry || entryLifecycleState.isStale(candidate)) return;
-                        const candidateSlot = candidate.slotKey || createSlotKey(
-                            candidate.type,
-                            candidate.position && candidate.position.x,
-                            candidate.position && candidate.position.y,
-                            candidate.originalParams
-                        );
-                        if (candidateSlot === slotKey) conflict = candidate;
-                    });
-                } catch (_) {}
-                return conflict;
             }
 
     function findDetachedTranslationWindow(event, details, entry = null) {

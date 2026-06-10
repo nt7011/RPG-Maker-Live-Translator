@@ -89,7 +89,7 @@
                 });
             }
 
-            if (snapshotStatus.reason === 'staleRevision') {
+            if (snapshotStatus.reason === 'staleRevision' && input.allowStaleRevision === true) {
                 return createPlan('snapshot', {
                     clearMode: 'snapshotStaleRevision',
                     freshness: 'staleRevision',
@@ -105,7 +105,7 @@
                 });
             }
 
-            if (snapshotStatus.reason === 'staleArea') {
+            if (snapshotStatus.reason === 'staleArea' && isTrustedNativeBackdropSnapshot(entry)) {
                 return createPlan('snapshot', {
                     clearMode: 'snapshotStaleArea',
                     freshness: 'staleArea',
@@ -133,6 +133,13 @@
                 source: 'clear',
                 steps: replayAfterClear ? ['clear', 'replay'] : ['clear'],
             });
+        }
+
+        function isTrustedNativeBackdropSnapshot(entry) {
+            const snapshot = entry && entry.backgroundSnapshot;
+            return !!(snapshot
+                && snapshot.fromNativeTextBackdrop === true
+                && snapshot.trusted === true);
         }
 
         function describeReplayCandidate(entry, items, targetRect, targetBitmap = null) {
@@ -196,6 +203,7 @@
             const list = Array.isArray(patches) ? patches : [];
             return list
                 .map((patch) => {
+                    if (patch && patch.trusted === false) return null;
                     const rect = patchToRect(patch);
                     return rect ? { patch, rect } : null;
                 })
@@ -218,10 +226,14 @@
             let restored = 0;
             normalizePatches(patches).forEach(({ patch, rect }) => {
                 if (targetRect && !rectanglesOverlap(targetRect, rect)) return;
-                const width = rect.x2 - rect.x1;
-                const height = rect.y2 - rect.y1;
+                const restoreRect = targetRect ? intersectRect(rect, targetRect) : rect;
+                if (!restoreRect) return;
+                const width = restoreRect.x2 - restoreRect.x1;
+                const height = restoreRect.y2 - restoreRect.y1;
+                const sx = restoreRect.x1 - rect.x1;
+                const sy = restoreRect.y1 - rect.y1;
                 try {
-                    targetBitmap.blt(patch.bitmap, 0, 0, width, height, rect.x1, rect.y1, width, height);
+                    targetBitmap.blt(patch.bitmap, sx, sy, width, height, restoreRect.x1, restoreRect.y1, width, height);
                     restored += 1;
                 } catch (_) {}
             });
@@ -325,6 +337,15 @@
         pushRect(pieces, rect.x1, iy1, ix1, iy2);
         pushRect(pieces, ix2, iy1, rect.x2, iy2);
         return pieces;
+    }
+
+    function intersectRect(left, right) {
+        if (!rectanglesOverlap(left, right)) return null;
+        const x1 = Math.max(Number(left.x1), Number(right.x1));
+        const y1 = Math.max(Number(left.y1), Number(right.y1));
+        const x2 = Math.min(Number(left.x2), Number(right.x2));
+        const y2 = Math.min(Number(left.y2), Number(right.y2));
+        return x2 > x1 && y2 > y1 ? { x1, y1, x2, y2 } : null;
     }
 
     function pushRect(list, x1, y1, x2, y2) {

@@ -37,7 +37,7 @@
             }
 
             const pendingInvalidation = entryLifecycleState.getPendingInvalidation(entry);
-            if (pendingInvalidation) {
+            if (pendingInvalidation && !hasCopiedStagingRenderTarget(entry)) {
                 return defer('window-redraw-invalidated', 'on-update-ready', {
                     key: textKey || '',
                     reason: pendingInvalidation.reason || '',
@@ -98,6 +98,14 @@
                     windowType: context.getWindowTypeName(targetWindow, activeWindowData),
                 },
             };
+        }
+
+        function hasCopiedStagingRenderTarget(entry) {
+            const isStaging = !!(entry
+                && (entry.requiresCopiedTarget === true
+                    || entry.sourceContentsRole === 'window-staging-contents'));
+            if (!isStaging || !Array.isArray(entry._trCopiedRenderTargets)) return false;
+            return entry._trCopiedRenderTargets.some((target) => target && target.targetBitmap);
         }
 
         function isObservedInActiveRefresh(entry, targetWindow, windowData) {

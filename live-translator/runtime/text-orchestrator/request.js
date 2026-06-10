@@ -17,9 +17,9 @@
         const { updateItem, retireItem } = scope.controllerFacades.lifecycle;
         const { markTranslationRequested, skipItemTranslation, completeItemTranslation, failItemTranslation } = scope.controllerFacades.translationState;
         const { queueRenderCommand } = scope.controllerFacades.render;
-        const { getItemById, clearItemTranslationRequest } = scope.controllerFacades.items;
+        const { getItemById } = scope.controllerFacades.items;
         const { recordEvent } = scope.controllerFacades.events;
-        const { getCompletedSourceTranslation, reuseCompletedSourceTranslation, lookupForcedAsyncServiceTranslation, describeServiceSkip, reuseLookupTranslation, isSkippedItem, createSkippedTranslationHandle } = scope.controllerFacades.sourceCache;
+        const { getCompletedSourceTranslation, reuseCompletedSourceTranslation, describeServiceSkip, isSkippedItem, createSkippedTranslationHandle } = scope.controllerFacades.sourceCache;
 
         const FAILURE_METADATA_KEYS = Object.freeze([
             'translationFailureReason',
@@ -101,22 +101,6 @@
                     metadata,
                     requestPolicy,
                 });
-                // Forced-async cache hits deliberately settle later in snapshot
-                // runs. If the same source is visible again, the cache lookup is
-                // already authoritative, so complete through the normal render
-                // queue before another surface mutation can retire the slot.
-                const forcedAsyncLookup = lookupForcedAsyncServiceTranslation(text);
-                if (forcedAsyncLookup) {
-                    return createTranslationRequestResult('reused', item, completeJoinedForcedAsyncLookup(item, existingHandle, forcedAsyncLookup, requestOptions, {
-                        hook,
-                        metadata,
-                        requestPolicy,
-                    }), {
-                        reason: 'forced-async-cache-resolved',
-                        hook,
-                        priority: requestPolicy.priority,
-                    });
-                }
                 if (requestPolicy.replaceSubscriber === true) {
                     const upgradedHandle = startTranslationRequest(item, text, requestOptions, {
                         hook,
@@ -220,20 +204,6 @@
             }
             const providerDecision = describeProviderDispatch(eligibility, text);
             if (providerDecision.allowed === false) {
-                const forcedAsync = lookupForcedAsyncServiceTranslation(text);
-                if (forcedAsync) {
-                    return createTranslationRequestResult('requested', item, startTranslationRequest(item, text, Object.assign({}, requestOptions, {
-                        sourceHint: forcedAsync.sourceHint,
-                    }), {
-                        hook,
-                        priority,
-                        metadata,
-                    }), {
-                        reason: 'forced-async-provider-bypass',
-                        hook,
-                        priority,
-                    });
-                }
                 return createTranslationRequestResult('skipped', item, skipItemTranslation(item, providerDecision.decision, {
                     hook,
                     priority,
@@ -559,31 +529,6 @@
             const next = clearFailureMetadataCopy(item.metadata);
             item.metadata = next;
             return true;
-        }
-
-        function completeJoinedForcedAsyncLookup(item, existingHandle, lookupHit, requestOptions = {}, context = {}) {
-            const sourceHint = firstString(lookupHit && lookupHit.sourceHint, 'cache');
-            cancelSupersededTranslationHandle(existingHandle, 'forced async cache lookup resolved on refresh');
-            clearItemTranslationRequest(item);
-            recordEvent('item.request_resolved', item, {
-                details: {
-                    hook: context.hook,
-                    priority: context.requestPolicy && context.requestPolicy.priority,
-                    source: sourceHint,
-                    reason: 'forced async cache lookup resolved on refresh',
-                },
-            });
-            return reuseLookupTranslation(item, {
-                translation: firstString(lookupHit && lookupHit.translation),
-                sourceHint,
-            }, {
-                hook: context.hook,
-                priority: context.requestPolicy && context.requestPolicy.priority,
-                metadata: context.metadata,
-                requestOptions: Object.assign({}, requestOptions, {
-                    sourceHint,
-                }),
-            });
         }
 
         function describeProviderDispatch(eligibility, text) {

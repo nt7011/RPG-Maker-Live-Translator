@@ -23,7 +23,7 @@
     const { captureWindowEntrySource, beginEntryNativeSourceDraw, completeEntryNativeSourceDraw } = sourceDraw;
     const { estimateEntryBounds, prepareTranslationSource, describeWindowTextEligibility, isDedicatedMessageWindow, getSurfaceId, getIdentitySurfaceId, createSlotKey, createWindowTextRecordId, getWindowTypeName, getWindowCtorName, normalizeDrawTextAlignValue } = textMetrics;
     const { sanitizeDrawTextOutput, convertWindowText } = textConversion;
-    const { isValidRect, calculateBitmapSurfaceTextYOffset, assignWindowTextDrawOrder, captureWindowEntryBackground, captureWindowEntryBackgroundPatch, ensureWindowEntryBackground } = bitmapReplay;
+    const { isValidRect, calculateBitmapSurfaceTextYOffset, assignWindowTextDrawOrder, captureWindowEntryBackground, captureWindowEntryBackgroundPatch, ensureWindowEntryBackground, windowEntryBelongsToContents } = bitmapReplay;
 
     function handleDrawText(windowInstance, originalDrawText, text, x, y, maxWidth, align) {
                 const textStr = stringifyWindowTextInput(text);
@@ -83,15 +83,18 @@
                     emptyReason: text === undefined ? 'missingTextArgument' : 'empty',
                 });
                 if (observation && observation.completed) {
-                    return invokeCompletedEntry(
+                    const result = invokeCompletedEntry(
                         observation.entry,
                         observation.normalizedText,
                         invokeOriginal,
                         observation.phase === 'existing' ? 'drawText-existing' : 'drawText-entry'
                     );
+                    refitCompletedDrawTextExBeforeNeighbor(windowInstance, observation.windowData, observation.entry, 'window-drawText-completed');
+                    return result;
                 }
                 const result = invokeOriginal();
                 captureSourceAfterNativeDraw(windowInstance, observation && observation.entry);
+                refitCompletedDrawTextExBeforeNeighbor(windowInstance, observation && observation.windowData, observation && observation.entry, 'window-drawText-source');
                 return result;
             }
     
@@ -183,7 +186,13 @@
                         bounds: cloneDiagnosticRect(existing.bounds),
                     }));
                     if (isEntryCompleted(existing)) {
-                        return invokeCompletedEntry(existing, convertedTrimmed, invokeOriginal, 'drawTextEx-existing');
+                        return invokeCompletedEntry(
+                            existing,
+                            convertedTrimmed,
+                            invokeOriginal,
+                            'drawTextEx-existing',
+                            createDrawTextExCompletedSubstitutionOptions(windowInstance)
+                        );
                     }
                     requestEntryTranslation(windowData, existing);
                     const result = invokeOriginal();
@@ -209,7 +218,13 @@
     
                 const entry = createObservedEntry(windowInstance, windowData, textStr, x, y, 'drawTextEx', convertedText, params);
                 if (isEntryCompleted(entry)) {
-                    return invokeCompletedEntry(entry, convertedTrimmed, invokeOriginal, 'drawTextEx-entry');
+                    return invokeCompletedEntry(
+                        entry,
+                        convertedTrimmed,
+                        invokeOriginal,
+                        'drawTextEx-entry',
+                        createDrawTextExCompletedSubstitutionOptions(windowInstance)
+                    );
                 }
                 const result = invokeOriginal();
                 captureSourceAfterNativeDraw(windowInstance, entry);
@@ -281,6 +296,7 @@
                         lineHeight: draw.lineHeight,
                         align: draw.align,
                     },
+                    observedContents: draw.bitmap,
                     drawOrigin: {
                         type: 'bitmapSurface',
                         adapter: draw.sourceAdapter || 'bitmap',
@@ -302,27 +318,34 @@
                     // pixels instead of the stale source snapshot captured earlier.
                     applySurfaceDrawBackgroundPatch(draw, observation.entry);
                 }
-                if (isCommittedSurfaceDrawEvent(event) && observation && observation.entry) {
-                    captureSourceAfterNativeDraw(windowInstance, observation.entry);
+                const committedSurfaceDraw = isCommittedSurfaceDrawEvent(event);
+                if (committedSurfaceDraw && observation && observation.entry) {
+                    captureSourceAfterNativeDraw(windowInstance, observation.entry, draw.bitmap);
                 }
                 if (observation && observation.completed) {
-                    if (isCommittedSurfaceDrawEvent(event)) {
+                    if (committedSurfaceDraw) {
                         const redrawResult = redrawTranslatedText(observation.entry, observation.windowData);
+                        const refitCount = refitCompletedDrawTextExBeforeNeighbor(windowInstance, observation.windowData, observation.entry, 'window-surfaceDraw-completed');
                         return {
                             action: redrawResult && redrawResult.status === 'accepted' ? 'redraw-applied' : 'observed-window-surface-text',
                             reason: redrawResult && redrawResult.reason || 'post-draw-window-surface-text',
+                            refitDrawTextEx: refitCount,
                         };
                     }
                     return createSurfaceDrawDecision(windowInstance, observation.windowData, observation.entry, traceDetails);
+                }
+                if (committedSurfaceDraw && observation && observation.entry) {
+                    refitCompletedDrawTextExBeforeNeighbor(windowInstance, observation.windowData, observation.entry, 'window-surfaceDraw-source');
                 }
                 return observation && observation.entry
                     ? { action: 'observed-window-surface-text', reason: 'observed-window-surface-text' }
                     : null;
             }
 
-    function captureSourceAfterNativeDraw(windowInstance, entry) {
+    function captureSourceAfterNativeDraw(windowInstance, entry, observedContents = null) {
                 if (!entry || !entry.translationSource || entry.skipReason) return false;
-                const contents = bindEntryToLiveSourceContents(windowInstance, entry)
+                const contents = observedContents
+                    || bindEntryToLiveSourceContents(windowInstance, entry)
                     || entry.contentsBitmap
                     || (windowInstance && windowInstance.contents)
                     || null;
@@ -335,6 +358,38 @@
                 completeNativeSourceDraw(entry);
                 flushQueuedRenderAfterNativeSourceDraw(entry);
                 return captured;
+            }
+
+    function createDrawTextExCompletedSubstitutionOptions(windowInstance) {
+                return {
+                    shouldDeferForFit(payload) {
+                        return shouldDeferCompletedDrawTextExSubstitutionForFit(windowInstance, payload);
+                    },
+                    onDeferredForFit(payload) {
+                        return queueDeferredCompletedDrawTextExSubstitution(windowInstance, payload);
+                    },
+                };
+            }
+
+    function shouldDeferCompletedDrawTextExSubstitutionForFit(windowInstance, payload = {}) {
+                const entry = payload && payload.entry;
+                const textFit = payload && payload.textFit;
+                if (!entry || entry.type !== 'drawTextEx') return false;
+                if (!textFit || textFit.applied === true || textFit.reason !== 'missingNeighbor') return false;
+                const windowData = payload.windowData || entry.windowData || null;
+                const targetWindow = payload.targetWindow || windowInstance || entry.ownerWindow || null;
+                return !!(lifecycleService
+                    && typeof lifecycleService.wasEntryObservedInRefresh === 'function'
+                    && lifecycleService.wasEntryObservedInRefresh(entry, targetWindow, windowData));
+            }
+
+    function queueDeferredCompletedDrawTextExSubstitution(windowInstance, payload = {}) {
+                const entry = payload && payload.entry;
+                if (!entry || !entry.windowData) return { status: 'ignored', reason: 'missing-entry' };
+                const result = redrawTranslatedText(entry, entry.windowData);
+                return result && typeof result === 'object'
+                    ? result
+                    : { status: result === true ? 'accepted' : 'missed', reason: 'deferred-fit-redraw' };
             }
 
     function bindEntryToLiveSourceContents(windowInstance, entry) {
@@ -373,6 +428,7 @@
                 const originalParams = Object.assign({}, input.originalParams || {});
                 if (input.drawOrigin) originalParams.drawOrigin = input.drawOrigin;
                 const traceDetails = Object.assign({}, input.traceDetails || {});
+                const observedContents = input.observedContents || null;
 
                 if (!normalizedText) {
                     const slotInvalidated = retireEmptyWindowTextSlot(windowInstance, type, x, y, originalParams);
@@ -411,7 +467,7 @@
                 const windowData = ensureWindowRegistered(windowInstance);
                 const existing = findExistingEntry(windowData, type, rawText, normalizedText, x, y, originalParams);
                 if (existing) {
-                    refreshEntry(windowInstance, windowData, existing, rawText, normalizedText, x, y, type, convertedText, originalParams);
+                    refreshEntry(windowInstance, windowData, existing, rawText, normalizedText, x, y, type, convertedText, originalParams, observedContents);
                     recordDrawTrace(`${tracePrefix}.existing`, rawText, windowTraceDetails(windowInstance, traceMethod, rawText, x, y, Object.assign({
                         recordId: existing.recordId || '',
                         slotKey: existing.slotKey || createSlotKey(type, x, y, originalParams),
@@ -441,7 +497,7 @@
                     maxWidth: originalParams.maxWidth,
                     align: originalParams.align,
                 });
-                const entry = createObservedEntry(windowInstance, windowData, rawText, x, y, type, convertedText, originalParams);
+                const entry = createObservedEntry(windowInstance, windowData, rawText, x, y, type, convertedText, originalParams, observedContents);
                 if (tracePrefix !== `window.${type}`) {
                     recordDrawTrace(`${tracePrefix}.detected`, rawText, windowTraceDetails(windowInstance, traceMethod, rawText, x, y, Object.assign({
                         recordId: entry && entry.recordId || '',
@@ -755,7 +811,7 @@
                 return numeric === null ? null : numeric;
             }
     
-    function createObservedEntry(windowInstance, windowData, rawText, x, y, type, convertedText, originalParams) {
+    function createObservedEntry(windowInstance, windowData, rawText, x, y, type, convertedText, originalParams, observedContents = null) {
                 if (!windowData) return null;
                 const textToTranslate = convertedText || rawText;
                 const convertedTrimmed = String(textToTranslate || '').trim();
@@ -765,7 +821,7 @@
     
                 const slotKey = createSlotKey(type, x, y, originalParams);
                 const key = generateKey(type, x, y, windowData.windowType, convertedTrimmed, slotKey);
-                const entry = createEntry(windowInstance, windowData, key, rawText, convertedTrimmed, x, y, type, convertedText, originalParams);
+                const entry = createEntry(windowInstance, windowData, key, rawText, convertedTrimmed, x, y, type, convertedText, originalParams, observedContents);
                 windowData.texts.set(key, entry);
                 observeEntry(windowData, entry, 'detected', { eventType: 'item.detected' });
                 recordDrawTrace(`window.${type}.detected`, rawText, windowTraceDetails(windowInstance, type, rawText, x, y, {
@@ -849,8 +905,12 @@
                 return entry;
             }
 
-    function createEntry(windowInstance, windowData, key, rawText, convertedTrimmed, x, y, type, convertedText, originalParams) {
-                const contents = windowInstance && windowInstance.contents ? windowInstance.contents : null;
+    function createEntry(windowInstance, windowData, key, rawText, convertedTrimmed, x, y, type, convertedText, originalParams, observedContents = null) {
+                const liveContents = windowInstance && windowInstance.contents ? windowInstance.contents : null;
+                const contents = observedContents || liveContents;
+                const sourceContentsRole = observedContents && liveContents && observedContents !== liveContents
+                    ? 'window-staging-contents'
+                    : 'window-current-contents';
                 const surfaceId = getSurfaceId(windowData);
                 const identitySurfaceId = getIdentitySurfaceId(windowInstance, windowData);
                 const textSource = prepareTranslationSource(convertedText || convertedTrimmed || rawText);
@@ -880,6 +940,9 @@
                     timestamp: Date.now(),
                     drawState: drawOrigin.drawState || drawService.captureBitmapDrawState(contents),
                     contentsBitmap: contents,
+                    sourceContentsBitmap: contents,
+                    sourceContentsRole,
+                    requiresCopiedTarget: sourceContentsRole === 'window-staging-contents',
                     contentsRevision: windowData.contentsRevision || 0,
                     surfaceRevision: 1,
                     drawOrder: 0,
@@ -905,7 +968,12 @@
                 return entry;
             }
     
-    function refreshEntry(windowInstance, windowData, entry, rawText, convertedTrimmed, x, y, type, convertedText, originalParams) {
+    function refreshEntry(windowInstance, windowData, entry, rawText, convertedTrimmed, x, y, type, convertedText, originalParams, observedContents = null) {
+                const liveContents = windowInstance && windowInstance.contents ? windowInstance.contents : null;
+                const contents = observedContents || liveContents || entry.contentsBitmap;
+                const sourceContentsRole = observedContents && liveContents && observedContents !== liveContents
+                    ? 'window-staging-contents'
+                    : 'window-current-contents';
                 entry.type = type || entry.type;
                 entry.rawText = rawText;
                 entry.convertedText = convertedTrimmed;
@@ -914,7 +982,10 @@
                 entry.originalParams = normalizeOriginalParams(originalParams || entry.originalParams || {});
                 entry.drawOrigin = normalizeDrawOrigin(originalParams ? originalParams.drawOrigin : entry.drawOrigin, type);
                 entry.timestamp = Date.now();
-                entry.contentsBitmap = windowInstance && windowInstance.contents ? windowInstance.contents : entry.contentsBitmap;
+                entry.contentsBitmap = contents;
+                entry.sourceContentsBitmap = contents;
+                entry.sourceContentsRole = sourceContentsRole;
+                entry.requiresCopiedTarget = sourceContentsRole === 'window-staging-contents';
                 entry.contentsRevision = windowData ? (windowData.contentsRevision || 0) : entry.contentsRevision;
                 if (windowData) {
                     entry.surfaceId = getSurfaceId(windowData) || entry.surfaceId;
@@ -929,7 +1000,7 @@
                 });
                 entry.drawState = entry.drawOrigin && entry.drawOrigin.drawState
                     ? entry.drawOrigin.drawState
-                    : drawService.captureBitmapDrawState(windowInstance && windowInstance.contents);
+                    : drawService.captureBitmapDrawState(contents);
                 entry.renderedBounds = null;
                 markEntryObservedInRefresh(entry, windowInstance, windowData);
                 entry.surfaceRevision = (Number(entry.surfaceRevision) || 0) + 1;
@@ -1057,6 +1128,163 @@
                         return !!(result && result.status === 'accepted');
                     }
                 ) === true;
+            }
+
+    function refitCompletedDrawTextExBeforeNeighbor(windowInstance, windowData, neighborEntry, reason = '') {
+                if (!windowData || !neighborEntry || !windowData.texts || typeof windowData.texts.forEach !== 'function') return 0;
+                if (!neighborEntry.position) return 0;
+                if (entryLifecycleState.isStale(neighborEntry)) return 0;
+
+                const contents = neighborEntry.contentsBitmap || (windowInstance && windowInstance.contents) || null;
+                const neighborLeft = getRefitEntryLeft(neighborEntry);
+                const neighborBand = getRefitEntryBand(windowInstance, neighborEntry);
+                if (!Number.isFinite(neighborLeft) || !neighborBand) return 0;
+
+                const candidates = [];
+                try {
+                    windowData.texts.forEach((candidate) => {
+                        if (!shouldConsiderDrawTextExRefitCandidate(windowInstance, contents, candidate, neighborEntry, neighborLeft, neighborBand)) return;
+                        candidates.push(candidate);
+                    });
+                } catch (_) {}
+                if (!candidates.length) return 0;
+
+                candidates.sort((left, right) => (Number(left.drawOrder) || 0) - (Number(right.drawOrder) || 0));
+                let refitCount = 0;
+                candidates.forEach((candidate) => {
+                    const refitKey = createDrawTextExRefitKey(candidate, neighborEntry);
+                    if (candidate._trHorizontalFitRefitKey === refitKey) return;
+                    const details = {
+                        reason: String(reason || 'same-line-neighbor'),
+                        neighborSlotKey: neighborEntry.slotKey || '',
+                        neighborType: neighborEntry.type || '',
+                        neighborStatus: getEntryStatus(neighborEntry, ''),
+                        neighborLeft: roundDiagnosticNumber(neighborLeft),
+                        candidateSlotKey: candidate.slotKey || '',
+                    };
+                    recordDecision(candidate, 'draw.refit', 'same-line right text boundary detected', details);
+                    const result = redrawTranslatedText(candidate, windowData);
+                    if (result && (result.status === 'accepted' || result.status === 'deferred')) {
+                        candidate._trHorizontalFitRefitKey = refitKey;
+                        refitCount += 1;
+                    }
+                });
+                return refitCount;
+            }
+
+    function shouldConsiderDrawTextExRefitCandidate(windowInstance, contents, candidate, neighborEntry, neighborLeft, neighborBand) {
+                if (!candidate || candidate === neighborEntry) return false;
+                if (candidate.type !== 'drawTextEx') return false;
+                if (!isEntryCompleted(candidate) || !candidate.renderedText) return false;
+                if (entryLifecycleState.isStale(candidate)) return false;
+                if (contents && typeof windowEntryBelongsToContents === 'function'
+                    && !windowEntryBelongsToContents(candidate, contents)) {
+                    return false;
+                }
+
+                const candidateLeft = getRefitEntryLeft(candidate);
+                if (!Number.isFinite(candidateLeft) || candidateLeft >= neighborLeft - 1) return false;
+                const candidateBand = getRefitEntryBand(windowInstance, candidate);
+                if (!refitBandsOverlap(candidateBand, neighborBand)) return false;
+
+                const candidateRight = getRefitEntryRight(windowInstance, candidate);
+                if (!Number.isFinite(candidateRight)) return false;
+                const boundary = neighborLeft - getRefitGap(contents);
+                return candidateRight > boundary + 0.5;
+            }
+
+    function createDrawTextExRefitKey(candidate, neighborEntry) {
+                return [
+                    candidate && (candidate.recordId || candidate.key || candidate.slotKey) || '',
+                    Number(candidate && candidate.surfaceRevision) || 0,
+                    neighborEntry && (neighborEntry.recordId || neighborEntry.key || neighborEntry.slotKey) || '',
+                    Number(neighborEntry && neighborEntry.surfaceRevision) || 0,
+                ].join('|');
+            }
+
+    function getRefitEntryLeft(entry) {
+                const bounds = getStoredRefitBounds(entry);
+                if (bounds) return Number(bounds.x1);
+                const x = normalizeDrawableNumber(entry && entry.position && entry.position.x);
+                return x === null ? NaN : x;
+            }
+
+    function getRefitEntryRight(windowInstance, entry) {
+                const renderedBounds = getEstimatedRenderedRefitBounds(windowInstance, entry);
+                if (renderedBounds) return Number(renderedBounds.x2);
+                const stored = getStoredRefitBounds(entry);
+                if (stored) return Number(stored.x2);
+                return NaN;
+            }
+
+    function getRefitEntryBand(windowInstance, entry) {
+                const bounds = getEstimatedRenderedRefitBounds(windowInstance, entry) || getStoredRefitBounds(entry);
+                if (bounds) {
+                    return {
+                        top: Number(bounds.y1),
+                        bottom: Number(bounds.y2),
+                    };
+                }
+                const y = normalizeDrawableNumber(entry && entry.position && entry.position.y);
+                if (y === null) return null;
+                const lineHeight = getRefitLineHeight(windowInstance, entry);
+                return {
+                    top: y,
+                    bottom: y + lineHeight,
+                };
+            }
+
+    function getEstimatedRenderedRefitBounds(windowInstance, entry) {
+                if (!entry) return null;
+                if (isValidRect(entry.renderedBounds)) return entry.renderedBounds;
+                if (!entry.renderedText) return null;
+                const position = entry.position || {};
+                try {
+                    const rendered = sanitizeDrawTextOutput(entry.renderedText, entry.type);
+                    return estimateEntryBounds(
+                        windowInstance || entry.ownerWindow,
+                        entry.type,
+                        rendered,
+                        position.x,
+                        position.y,
+                        rendered,
+                        entry.originalParams
+                    );
+                } catch (_) {
+                    return null;
+                }
+            }
+
+    function getStoredRefitBounds(entry) {
+                if (!entry) return null;
+                if (isValidRect(entry.renderedBounds)) return entry.renderedBounds;
+                return isValidRect(entry.bounds) ? entry.bounds : null;
+            }
+
+    function getRefitLineHeight(windowInstance, entry) {
+                const params = entry && entry.originalParams || {};
+                const lineHeight = Number(params.lineHeight);
+                if (Number.isFinite(lineHeight) && lineHeight > 0) return lineHeight;
+                if (windowInstance && typeof windowInstance.lineHeight === 'function') {
+                    try {
+                        const value = Number(windowInstance.lineHeight());
+                        if (Number.isFinite(value) && value > 0) return value;
+                    } catch (_) {}
+                }
+                const contents = entry && entry.contentsBitmap || (windowInstance && windowInstance.contents) || null;
+                const fontSize = Number(contents && contents.fontSize);
+                return Number.isFinite(fontSize) && fontSize > 0 ? Math.ceil(fontSize * 1.5) : 36;
+            }
+
+    function refitBandsOverlap(left, right) {
+                return !!(left && right
+                    && Number(left.top) < Number(right.bottom)
+                    && Number(left.bottom) > Number(right.top));
+            }
+
+    function getRefitGap(contents) {
+                const outline = Math.max(0, Number(contents && contents.outlineWidth) || 0);
+                return Math.max(2, Math.ceil(outline + 2));
             }
 
     function shouldTrackNativeSourceDraw(entry) {
