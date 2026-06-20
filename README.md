@@ -18,8 +18,8 @@ Intended to be used with LM Studio (but deepl API key support exists as well for
 4. When ready, fulfill the promise by clearing out the original and draw the translation in place.
 5. Foresight: Tries to peek ahead of the dialogue and finds texts to pre-translate. Branching paths (user choices, if's) are supported.
 
-## Web Installer
-Simply visit https://nt7011.github.io/ with a Chromium browser and point the game folder. The rest the will be taken care of.
+## Web Installer (Recommended)
+Simply visit https://rmlt.pages.dev with a Chromium browser and point the game folder (where there's Game.exe).
 
 ## Prerequisites:
 1. If there's no `scripts/` in your game folder, it's probably been hidden inside `.exe` with Enigma Virtual Box. Unpack first. 
