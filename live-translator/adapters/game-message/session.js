@@ -3,18 +3,13 @@
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    if (typeof defineRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/game-message/session.js.');
-    }
-    const requireRuntimeModule = globalScope.LiveTranslatorRequire;
-    if (typeof requireRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module require is unavailable before adapters/game-message/session.js.');
-    }
-    const lifecycleReasons = requireRuntimeModule('runtime.lifecycleReasons').reasons;
+    LiveTranslatorDefine({
+        name: 'adapters.gameMessage.session',
+        requires: {
+            lifecycleReasonsModule: 'runtime.lifecycleReasons',
+        },
+        factory({ lifecycleReasonsModule }) {
+            const lifecycleReasons = lifecycleReasonsModule.reasons;
 
     function createController(scope = {}) {
         const { globalScope, diag, preview, stripControls, registeredWindows, pruneDetachedRegisteredWindows, trackedMessageWindows, surfaceOwnership } = scope;
@@ -942,5 +937,7 @@
         };
     }
 
-    defineRuntimeModule('adapters.gameMessage.session', { create: createController });
+            return { create: createController };
+        },
+    });
 })();

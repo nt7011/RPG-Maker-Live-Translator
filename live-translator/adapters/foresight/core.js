@@ -2,102 +2,109 @@
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const requireRuntimeModule = globalScope.LiveTranslatorRequire;
-    if (typeof requireRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before Foresight parts.');
-    }
-    const parts = requireRuntimeModule('adapters.foresight.partsRegistry').getParts();
+    LiveTranslatorRun({
+        name: 'adapters.foresight.core',
+        requires: {
+            partsRegistry: 'adapters.foresight.partsRegistry',
+        },
+        loadAfter: ['adapters.foresight.partsRegistry'],
+        scriptAfter: ['adapters/foresight/constants.js', 'adapters/foresight/part-facades.js', 'adapters/foresight/catalog.js'],
+        loadBefore: ['adapters.foresight'],
+        run({ partsRegistry }, { scope: globalScope }) {
+            const parts = partsRegistry.getParts();
+            const { DEFAULT_BUDGET, DEFAULT_MAX_SCAN_COMMANDS, MESSAGE_BUDGET_COST, BRANCH_BUDGET_STRATEGY, MAX_NESTED_LIST_DEPTH, MAX_NESTED_LISTS_PER_COMMAND, MAX_BRANCH_DEPTH, DIAGNOSTIC_ACTION_LIMIT, RECENT_SCAN_LIMIT, COMMAND_CATALOG_ASSET, BRANCH_MARKER_CODES, RESOLVABLE_CONTROL_FLOW_CODES, commandCatalog } = parts;
+            const { resolveMessageOrigin } = parts.facades.origin;
+            const { collectLinearMessageBlocks } = parts.facades.scanner;
+            const { createInitialBudgetSnapshot } = parts.facades.budget;
+            const { createIntel, recordScan, intelSnapshot, publishIntelSnapshot, clearIntel } = parts.facades.intel;
+            const { positiveInteger } = parts.facades.utils;
 
-    const { DEFAULT_BUDGET, DEFAULT_MAX_SCAN_COMMANDS, MESSAGE_BUDGET_COST, BRANCH_BUDGET_STRATEGY, MAX_NESTED_LIST_DEPTH, MAX_NESTED_LISTS_PER_COMMAND, MAX_BRANCH_DEPTH, DIAGNOSTIC_ACTION_LIMIT, RECENT_SCAN_LIMIT, COMMAND_CATALOG_ASSET, BRANCH_MARKER_CODES, RESOLVABLE_CONTROL_FLOW_CODES, commandCatalog } = parts;
-    const { resolveMessageOrigin } = parts.facades.origin;
-    const { collectLinearMessageBlocks } = parts.facades.scanner;
-    const { createInitialBudgetSnapshot } = parts.facades.budget;
-    const { createDiagnostics, recordScan, diagnosticsSnapshot, publishDiagnosticsSnapshot, clearDiagnostics } = parts.facades.diagnostics;
-    const { positiveInteger } = parts.facades.utils;
-    
-    function getPerformanceForesightMessageLimit(policy) {
-            if (!policy || policy.performanceMode !== true) return 0;
-            return positiveInteger(policy.limits && policy.limits.foresightMessages, 0);
-        }
-
-    function createGameMessageForesight(options = {}) {
-            const budgetLimit = positiveInteger(options.budget, DEFAULT_BUDGET);
-            const maxMessages = positiveInteger(options.maxMessages, budgetLimit);
-            const maxScanCommands = positiveInteger(options.maxScanCommands, DEFAULT_MAX_SCAN_COMMANDS);
-            const diagnostics = createDiagnostics({
-                settings: options.settings,
-            });
-    
-            function collectUpcomingMessageBlocks(input = {}) {
-                const origin = resolveMessageOrigin(input.currentMessageOrigin);
-                if (!origin) {
-                    recordScan(diagnostics, {
-                        interpreterId: '',
-                        matchedCurrentMessage: false,
-                        status: 'miss',
-                        stopReason: 'current-message-unattached',
-                        blocks: 0,
-                        scannedCommands: 0,
-                        advancedCommands: 0,
-                        budget: createInitialBudgetSnapshot(budgetLimit, maxMessages),
-                    });
-                    return [];
+            function getIntelForesightMessageLimit(policy) {
+                    if (!policy || policy.surface !== true || policy.captureForesightMessages === false) return 0;
+                    return positiveInteger(policy.limits && policy.limits.foresightMessages, 0);
                 }
-                const policy = parts.getDiagnosticsPolicy(diagnostics);
-                const previewMessageLimit = getPerformanceForesightMessageLimit(policy);
-    
-                const result = collectLinearMessageBlocks(
-                    origin.list,
-                    origin.nextIndex,
-                    origin.interpreterId,
-                    origin.indent,
-                    maxMessages,
-                    maxScanCommands,
-                    budgetLimit,
-                    origin.frames,
-                    {
-                        captureCommandActions: policy.captureForesightActions === true || previewMessageLimit > 0,
-                        commandActionMessageLimit: policy.captureForesightActions === true ? 0 : previewMessageLimit,
-                        captureBlockDiagnostics: policy.captureForesightMetadata === true,
-                    }
-                );
-                recordScan(diagnostics, Object.assign({}, result.diagnostics, {
-                    interpreterId: origin.interpreterId,
-                    matchedCurrentMessage: true,
-                }));
-                return result.blocks;
-            }
-    
-            function getSnapshot(optionsArg = {}) {
-                return diagnosticsSnapshot(diagnostics, optionsArg);
-            }
-    
-            function publishSnapshot() {
-                return publishDiagnosticsSnapshot(diagnostics);
-            }
-    
-            function clearSnapshot() {
-                clearDiagnostics(diagnostics);
-                return publishDiagnosticsSnapshot(diagnostics);
-            }
-    
-            const api = {
-                collectUpcomingMessageBlocks,
-                getSnapshot,
-                snapshot: getSnapshot,
-                publishSnapshot,
-                publish: publishSnapshot,
-                clearSnapshot,
-                clearDiagnostics: clearSnapshot,
-            };
-            try { globalScope.LiveTranslatorForesightDiagnostics = api; } catch (_) {}
-            publishSnapshot();
-            return api;
-        }
-    
-    Object.assign(parts, { createGameMessageForesight });
 
+            function createGameMessageForesight(options = {}) {
+                    const budgetLimit = positiveInteger(options.budget, DEFAULT_BUDGET);
+                    const maxMessages = positiveInteger(options.maxMessages, budgetLimit);
+                    const maxScanCommands = positiveInteger(options.maxScanCommands, DEFAULT_MAX_SCAN_COMMANDS);
+                    const diagnostics = createIntel({
+                        settings: options.settings,
+                    });
+
+                    function collectUpcomingMessageBlocks(input = {}) {
+                        const origin = resolveMessageOrigin(input.currentMessageOrigin);
+                        if (!origin) {
+                            recordScan(diagnostics, {
+                                interpreterId: '',
+                                matchedCurrentMessage: false,
+                                status: 'miss',
+                                stopReason: 'current-message-unattached',
+                                blocks: 0,
+                                scannedCommands: 0,
+                                advancedCommands: 0,
+                                budget: createInitialBudgetSnapshot(budgetLimit, maxMessages),
+                            });
+                            return [];
+                        }
+                        const policy = parts.getIntelPolicy(diagnostics);
+                        const previewMessageLimit = getIntelForesightMessageLimit(policy);
+                        const captureForesightActions = policy
+                            && policy.surface === true
+                            && policy.captureForesightActions === true;
+
+                        const result = collectLinearMessageBlocks(
+                            origin.list,
+                            origin.nextIndex,
+                            origin.interpreterId,
+                            origin.indent,
+                            maxMessages,
+                            maxScanCommands,
+                            budgetLimit,
+                            origin.frames,
+                            {
+                                captureCommandActions: captureForesightActions || previewMessageLimit > 0,
+                                commandActionMessageLimit: captureForesightActions ? 0 : previewMessageLimit,
+                                captureBlockDiagnostics: policy
+                                    && policy.surface === true
+                                    && policy.captureForesightMetadata === true,
+                            }
+                        );
+                        recordScan(diagnostics, Object.assign({}, result.diagnostics, {
+                            interpreterId: origin.interpreterId,
+                            matchedCurrentMessage: true,
+                        }));
+                        return result.blocks;
+                    }
+
+                    function getSnapshot(optionsArg = {}) {
+                        return intelSnapshot(diagnostics, optionsArg);
+                    }
+
+                    function publishSnapshot() {
+                        return publishIntelSnapshot(diagnostics);
+                    }
+
+                    function clearSnapshot() {
+                        clearIntel(diagnostics);
+                        return publishIntelSnapshot(diagnostics);
+                    }
+
+                    const api = {
+                        collectUpcomingMessageBlocks,
+                        getSnapshot,
+                        snapshot: getSnapshot,
+                        publishSnapshot,
+                        publish: publishSnapshot,
+                        clearSnapshot,
+                        clearIntel: clearSnapshot,
+                    };
+                    try { globalScope.LiveTranslatorForesightIntel = api; } catch (_) {}
+                    publishSnapshot();
+                    return api;
+                }
+
+            Object.assign(parts, { createGameMessageForesight });
+        },
+    });
 })();

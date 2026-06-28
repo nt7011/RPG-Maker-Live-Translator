@@ -2,13 +2,13 @@
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    if (typeof defineRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/window-text/text-measure.js.');
-    }
+    LiveTranslatorDefine({
+        name: 'adapters.windowText.textMeasure',
+        requires: {
+            conversionBranch: 'runtime.conversionBranch',
+            conversionScope: 'runtime.conversionScope',
+        },
+        factory({ conversionBranch, conversionScope }) {
 
     function createTextMeasureController(context = {}) {
     const { perf, textCodec, stripControls, createTextSource, restoreText, ADAPTER_ID } = context;
@@ -317,206 +317,22 @@
     function convertWindowText(windowInstance, text) {
                 try {
                     if (windowInstance && typeof windowInstance.convertEscapeCharacters === 'function') {
-                        const receiver = createConversionWindowBranch(windowInstance);
-                        return windowInstance.convertEscapeCharacters.call(receiver || windowInstance, text);
+                        const transaction = conversionScope.createTransaction({
+                            reason: 'window-text-conversion',
+                            rootWindow: windowInstance,
+                        });
+                        const receiver = conversionBranch.createWindowBranch(windowInstance, {
+                            conversionScope,
+                            conversionTransaction: transaction,
+                        });
+                        return conversionScope.run(transaction, () => {
+                            return windowInstance.convertEscapeCharacters.call(receiver || windowInstance, text);
+                        });
                     }
                 } catch (_) {}
                 return text;
             }
 
-    /**
-     * Escape conversion may run plugin code. Observe through a disposable
-     * receiver so reads still see window state, while writes and UI calls do
-     * not mutate live contents before the native draw is observed.
-     */
-    function createConversionWindowBranch(windowInstance) {
-                if (!isObjectLike(windowInstance)) return windowInstance;
-                const seen = new WeakMap();
-                const branch = createConversionWindowSink(windowInstance, seen);
-                try { branch._trEvaluationOnly = true; } catch (_) {}
-                return branch;
-            }
-
-    function copyConversionProperties(source, target, seen, options = {}) {
-                if (!isObjectLike(source) || !isObjectLike(target)) return target;
-                getOwnKeys(source).forEach((key) => {
-                    try {
-                        const descriptor = Object.getOwnPropertyDescriptor(source, key);
-                        if (!descriptor) return;
-                        const cloned = Object.assign({}, descriptor);
-                        if (Object.prototype.hasOwnProperty.call(cloned, 'value')) {
-                            cloned.value = createConversionValue(cloned.value, seen, options);
-                        }
-                        Object.defineProperty(target, key, cloned);
-                    } catch (_) {
-                        try { target[key] = createConversionValue(source[key], seen, options); } catch (_) {}
-                    }
-                });
-                return target;
-            }
-
-    function createConversionValue(value, seen, options = {}) {
-                if (!isObjectLike(value)) return value;
-                if (options.uiSinks === true && isWindowLikeValue(value)) return createConversionWindowSink(value, seen);
-                if (options.uiSinks === true && isBitmapLikeValue(value)) return createConversionBitmapSink(value, seen);
-                if (Array.isArray(value)) return cloneConversionArray(value, seen, options);
-                if (isPlainObject(value)) return cloneConversionPlainObject(value, seen, options);
-                return value;
-            }
-
-    function cloneConversionArray(value, seen, options = {}) {
-                if (!Array.isArray(value)) return value;
-                if (seen.has(value)) return seen.get(value);
-                const clone = [];
-                seen.set(value, clone);
-                value.forEach((item, index) => {
-                    clone[index] = createConversionValue(item, seen, options);
-                });
-                return clone;
-            }
-
-    function cloneConversionPlainObject(value, seen, options = {}) {
-                if (!isObjectLike(value)) return value;
-                if (seen.has(value)) return seen.get(value);
-                const clone = Object.create(Object.getPrototypeOf(value) || null);
-                seen.set(value, clone);
-                return copyConversionProperties(value, clone, seen, options);
-            }
-
-    function createConversionWindowSink(windowLike, seen = new WeakMap()) {
-                if (!isObjectLike(windowLike)) return windowLike;
-                if (seen.has(windowLike)) return seen.get(windowLike);
-                const sink = Object.create(windowLike);
-                seen.set(windowLike, sink);
-                copyConversionProperties(windowLike, sink, seen, { uiSinks: true });
-                defineConversionDataProperty(sink, 'contents', createConversionBitmapSink(windowLike.contents, seen));
-                sink.setText = function(value) {
-                    this._text = String(value || '');
-                    this.text = this._text;
-                    return this;
-                };
-                sink.refresh = function() { return undefined; };
-                sink.drawText = function() { return 0; };
-                sink.drawTextEx = function() { return 0; };
-                sink.drawTextEx2 = function() { return 0; };
-                sink.createContents = function() {
-                    if (!this.contents) this.contents = createConversionBitmapSink(windowLike.contents, seen);
-                    return this.contents;
-                };
-                sink.show = function() {
-                    this.visible = true;
-                    return this;
-                };
-                sink.hide = function() {
-                    this.visible = false;
-                    return this;
-                };
-                sink.open = function() {
-                    this.openness = 255;
-                    this._openness = 255;
-                    return this;
-                };
-                sink.close = function() {
-                    this.openness = 0;
-                    this._openness = 0;
-                    return this;
-                };
-                sink.activate = function() {
-                    this.active = true;
-                    return this;
-                };
-                sink.deactivate = function() {
-                    this.active = false;
-                    return this;
-                };
-                sink.update = function() { return undefined; };
-                sink.setBackgroundType = function(value) {
-                    this._background = value;
-                    return this;
-                };
-                return sink;
-            }
-
-    function defineConversionDataProperty(target, key, value) {
-                try {
-                    // RPG Maker MV exposes Window#contents through an accessor
-                    // that writes _windowContentsSprite.bitmap. Shadow it on
-                    // the branch so conversion sinks never replace live ink.
-                    Object.defineProperty(target, key, {
-                        value,
-                        writable: true,
-                        configurable: true,
-                        enumerable: true,
-                    });
-                    return true;
-                } catch (_) {
-                    try { target[key] = value; } catch (_) {}
-                    return false;
-                }
-            }
-
-    function createConversionBitmapSink(bitmapLike, seen = new WeakMap()) {
-                if (!isObjectLike(bitmapLike)) {
-                    return {
-                        clear() {},
-                        clearRect() {},
-                        drawText() { return 0; },
-                        blt() {},
-                        measureTextWidth(value) { return String(value || '').length; },
-                    };
-                }
-                if (seen.has(bitmapLike)) return seen.get(bitmapLike);
-                const sink = Object.create(bitmapLike);
-                seen.set(bitmapLike, sink);
-                copyConversionProperties(bitmapLike, sink, seen, { uiSinks: false });
-                sink.clear = function() { return undefined; };
-                sink.clearRect = function() { return undefined; };
-                sink.drawText = function() { return 0; };
-                sink.blt = function() { return undefined; };
-                sink.measureTextWidth = typeof bitmapLike.measureTextWidth === 'function'
-                    ? function(value) {
-                        try { return bitmapLike.measureTextWidth.call(bitmapLike, value); } catch (_) { return String(value || '').length; }
-                    }
-                    : function(value) { return String(value || '').length; };
-                return sink;
-            }
-
-    function getOwnKeys(value) {
-                const keys = Object.getOwnPropertyNames(value);
-                if (typeof Object.getOwnPropertySymbols === 'function') {
-                    return keys.concat(Object.getOwnPropertySymbols(value));
-                }
-                return keys;
-            }
-
-    function isObjectLike(value) {
-                return !!value && (typeof value === 'object' || typeof value === 'function');
-            }
-
-    function isPlainObject(value) {
-                if (!value || typeof value !== 'object') return false;
-                const prototype = Object.getPrototypeOf(value);
-                return prototype === Object.prototype || prototype === null;
-            }
-
-    function isWindowLikeValue(value) {
-                return isObjectLike(value)
-                    && (typeof value.open === 'function'
-                        || typeof value.close === 'function'
-                        || typeof value.activate === 'function'
-                        || typeof value.deactivate === 'function'
-                        || typeof value.drawText === 'function'
-                        || typeof value.drawTextEx === 'function');
-            }
-
-    function isBitmapLikeValue(value) {
-                return isObjectLike(value)
-                    && (typeof value.clearRect === 'function'
-                        || typeof value.drawText === 'function'
-                        || typeof value.blt === 'function'
-                        || typeof value.measureTextWidth === 'function');
-            }
-    
     function describeWindowTextEligibility(rawText, visibleText, methodName) {
                 return lifecycleService.describeTextEligibility({
                     sourceAdapter: ADAPTER_ID,
@@ -551,7 +367,6 @@
                     && surfaceService.isDedicatedTextOwner(windowInstance)) {
                     return true;
                 }
-                const ctor = windowInstance.constructor;
                 try {
                     if (typeof Window_Message !== 'undefined'
                         && Window_Message
@@ -560,8 +375,9 @@
                         return true;
                     }
                 } catch (_) {}
-                const name = ctor && ctor.name ? String(ctor.name) : '';
-                return /^Window_Message(?:$|_)/.test(name);
+                // Constructor names are not ownership proof. Namebox plugins can
+                // use Window_Message_* names while still drawing ordinary window text.
+                return false;
             }
     
     function getSurfaceId(windowData) {
@@ -676,7 +492,7 @@
     function createDrawParameterSlotSignature(params) {
                 if (!params || typeof params !== 'object') return '';
                 const parts = [];
-                if (hasOwn(params, 'maxWidth')) {
+                if (hasOwn(params, 'maxWidth') && params.maxWidthInferred !== true) {
                     const maxWidth = normalizeOptionalSlotNumber(params.maxWidth);
                     if (maxWidth) parts.push(`w=${maxWidth}`);
                 }
@@ -763,9 +579,10 @@
                 return 'left';
             }
     
-        return { estimateEntryBounds, measurePlainTextWidth, estimateDrawTextExFallbackWidth, estimateDrawTextExFallbackHeight, estimateMaxDrawTextExFallbackHeight, getDrawTextExLineCount, getLineHeight, getWindowIconWidth, countDrawTextExIcons, prepareTranslationSource, restoreTranslatedWindowText, sanitizeDrawTextOutput, convertWindowText, describeWindowTextEligibility, describeEntryEligibility, isDedicatedMessageWindow, getSurfaceId, getIdentitySurfaceId, createSlotKey, createWindowTextRecordId, safeRecordIdPart, hashTextForRecordId, normalizeSlotNumber, getWindowTypeName, getWindowCtorName, normalizeDrawTextAlignValue };
+        return { estimateEntryBounds, measurePlainTextWidth, estimateDrawTextExFallbackWidth, estimateDrawTextExFallbackHeight, estimateMaxDrawTextExFallbackHeight, getDrawTextExLineCount, getLineHeight, getWindowIconWidth, countDrawTextExIcons, prepareTranslationSource, restoreTranslatedWindowText, sanitizeDrawTextOutput, convertWindowText, describeWindowTextEligibility, describeEntryEligibility, isDedicatedMessageWindow, getSurfaceId, getIdentitySurfaceId, createSlotKey, createWindowTextRecordId, safeRecordIdPart, hashTextForRecordId, normalizeSlotNumber, getWindowTypeName, normalizeDrawTextAlignValue };
     }
-    
-    defineRuntimeModule('adapters.windowTextTextMeasure', { create: createTextMeasureController });
+            return { create: createTextMeasureController };
+        },
+    });
 
 })();

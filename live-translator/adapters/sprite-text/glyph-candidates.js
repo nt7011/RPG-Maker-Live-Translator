@@ -3,13 +3,9 @@
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    if (typeof defineRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/sprite-text/glyph-candidates.js.');
-    }
+    LiveTranslatorDefine({
+        name: 'adapters.spriteText.glyphCandidates',
+        factory() {
 
     function createController(scope = {}) {
         const { getSpriteObservationStatus, hasRenderedTranslation } = scope.controllerFacades.entries;
@@ -263,5 +259,7 @@
         return { createGlyphCandidate, refreshGlyphCandidateLayout, collectGlyphCandidates, processParentGlyphRuns, buildGlyphGroups, buildGlyphGroupsByChildOrder, buildGlyphGroupsBySpatialLines, splitGlyphSequence, canContinueGlyphRun, glyphsVerticallyCompatible };
     }
 
-    defineRuntimeModule('adapters.spriteText.glyphcandidates', { createController });
+            return { createController };
+        },
+    });
 })();

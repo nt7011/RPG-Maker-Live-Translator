@@ -48,6 +48,7 @@ esac
 
 game_root="$(cd "$game_root" && pwd)"
 runtime_source="$(cd "$runtime_source" && pwd)"
+diagnostics_source="$(cd "$(dirname "$runtime_source")" && pwd)/diagnostics"
 if [ -n "$snapshot_source" ]; then
     snapshot_source="$(cd "$snapshot_source" && pwd)"
 elif [ "$plugin_profile" = "snapshot" ]; then
@@ -320,6 +321,38 @@ install_optional_snapshot_plugin() {
     echo -e "\033[36mInstalled optional snapshot plugin to $snapshot_dir\033[0m"
 }
 
+install_optional_support_package() {
+    local source_root="$1"
+
+    if [ ! -d "$source_root" ]; then
+        return 0
+    fi
+
+    local support_manifest_path="${source_root}/install-manifest.json"
+    if [ ! -f "$support_manifest_path" ]; then
+        echo -e "\033[31mError: optional support install-manifest.json not found at $support_manifest_path\033[0m" >&2
+        exit 1
+    fi
+
+    local support_directory
+    support_directory="$(json_string_from_file "$support_manifest_path" supportDirectory)"
+    if [ -z "$support_directory" ]; then
+        echo -e "\033[31mError: optional support install-manifest.json missing supportDirectory\033[0m" >&2
+        exit 1
+    fi
+    if [ -z "$(json_array_from_file "$support_manifest_path" sourceFiles)" ]; then
+        echo -e "\033[31mError: optional support install-manifest.json missing fileInventory.sourceFiles\033[0m" >&2
+        exit 1
+    fi
+
+    assert_manifest_relative_file "$support_directory" "optional support directory"
+
+    local support_target="${plugins_dir}/${support_directory}"
+    mkdir -p "$support_target"
+    copy_manifest_files "$source_root" "$support_target" "$support_manifest_path" "sourceFiles" "${support_directory} fileInventory.sourceFiles" "required"
+    echo -e "\033[36mInstalled optional support package to $support_target\033[0m"
+}
+
 if [ ! -f "$manifest_path" ]; then
     echo -e "\033[31mError: install-manifest.json not found at $manifest_path\033[0m"
     exit 1
@@ -396,6 +429,7 @@ mkdir -p "$support_dir"
 copy_manifest_files "$runtime_source" "$support_dir" "$manifest_path" "sourceFiles" "live-translator fileInventory.sourceFiles" "required"
 copy_manifest_files "$runtime_source" "$support_dir" "$manifest_path" "optionalAssets" "live-translator runtime.optionalAssets" "optional"
 echo -e "\033[33mCopied live-translator runtime bundle to $support_dir\033[0m"
+install_optional_support_package "$diagnostics_source"
 install_optional_snapshot_plugin
 install_translator_file
 install_settings_file

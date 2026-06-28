@@ -9,20 +9,6 @@ function normalizeGuiPolicyObject(value) {
         : null;
 }
 
-function normalizeGuiDiagnosticsMode(value) {
-    const text = String(value || '').trim().toLowerCase();
-    if (!text) return '';
-    if (text === 'none' || text === 'off' || text === 'disabled' || text === 'closed') return 'none';
-    if (text === 'full' || text === 'detail' || text === 'details' || text === 'debug') return 'full';
-    if (text === 'performance'
-        || text === 'performancemode'
-        || text === 'performance-mode'
-        || text === 'surface'
-        || text === 'minimal'
-        || text === 'minimum') return 'performance';
-    return '';
-}
-
 function positiveGuiPolicyInteger(value, fallback) {
     const numeric = Number(value);
     if (!Number.isFinite(numeric) || numeric <= 0) return fallback;
@@ -48,21 +34,8 @@ function isGuiUpdateStatusVisible(status) {
         || status === 'missing';
 }
 
-function readGuiConfiguredDiagnosticsMode(settings, diagnostics) {
-    const configured = normalizeGuiDiagnosticsMode(diagnostics && (diagnostics.mode || diagnostics.level));
-    if (configured) return configured;
-    if (diagnostics && Object.prototype.hasOwnProperty.call(diagnostics, 'performanceMode')) {
-        return diagnostics.performanceMode === true ? 'performance' : 'full';
-    }
-    if (diagnostics && Object.prototype.hasOwnProperty.call(diagnostics, 'detailView')) {
-        return diagnostics.detailView === true ? 'full' : 'performance';
-    }
-    return settings && settings.performanceMode === true ? 'performance' : 'full';
-}
-
-function readGuiDiagnosticsLimits(diagnostics) {
-    const source = normalizeGuiPolicyObject(diagnostics && diagnostics.performanceLimits)
-        || normalizeGuiPolicyObject(diagnostics && diagnostics.limits)
+function readGuiIntelLimits(intel) {
+    const source = normalizeGuiPolicyObject(intel && intel.limits)
         || {};
     return {
         foresightScans: positiveGuiPolicyInteger(source.foresightScans, 5),
@@ -111,8 +84,9 @@ function createGuiPolicyInput() {
 function createGuiConfiguredPolicy(input = {}) {
     const sourceInput = normalizeGuiPolicyObject(input) || {};
     const settings = normalizeGuiPolicyObject(sourceInput.settings) || {};
+    const intel = normalizeGuiPolicyObject(settings.intel) || {};
     const diagnostics = normalizeGuiPolicyObject(settings.diagnostics) || {};
-    const trace = normalizeGuiPolicyObject(settings.drawCaptureTrace) || {};
+    const trace = normalizeGuiPolicyObject(diagnostics.drawCaptureTrace) || {};
     const lifecycleInput = normalizeGuiPolicyObject(sourceInput.lifecycle) || {};
     const configSource = normalizeGuiPolicyObject(sourceInput.source) || {};
     const constants = Object.assign(createDefaultGuiPolicyConstants(), normalizeGuiPolicyObject(sourceInput.constants) || {});
@@ -138,10 +112,12 @@ function createGuiConfiguredPolicy(input = {}) {
             maxBytes: constants.versionCheckMaxBytes,
             maxRedirects: constants.versionCheckMaxRedirects,
         },
+        intel: {
+            captureWhenGuiClosed: intel.captureWhenGuiClosed === true,
+            limits: readGuiIntelLimits(intel),
+        },
         diagnostics: {
-            mode: readGuiConfiguredDiagnosticsMode(settings, diagnostics),
-            captureWhenGuiClosed: diagnostics.captureWhenGuiClosed === true,
-            limits: readGuiDiagnosticsLimits(diagnostics),
+            enabled: diagnostics.enabled === true,
         },
         drawCaptureTrace: {
             enabled: trace.enabled !== false,
@@ -225,17 +201,15 @@ function createGuiViewState() {
 }
 
 function deriveGuiEffectivePolicy(configured, runtime, view) {
-    const diagnosticsMode = configured.diagnostics.mode || 'full';
-    const diagnosticsSurface = diagnosticsMode !== 'none';
-    const diagnosticsDetailView = diagnosticsMode === 'full';
-    const diagnosticsPerformanceMode = diagnosticsMode === 'performance';
+    const intelSurface = true;
+    const detailsEnabled = true;
     const trace = runtime.drawCaptureTrace;
     const traceEvents = trace && Array.isArray(trace.events) ? trace.events : [];
     const traceRuntimeEnabled = !(trace && trace.enabled === false);
-    const traceEnabled = diagnosticsDetailView
+    const traceEnabled = configured.diagnostics.enabled
         && configured.drawCaptureTrace.enabled
         && traceRuntimeEnabled;
-    const foresightControlsEnabled = configured.foresight.enabled && diagnosticsSurface;
+    const foresightControlsEnabled = configured.foresight.enabled && intelSurface;
     return {
         runtimeContext: deriveGuiRuntimeContextPolicy(runtime.context),
         updates: {
@@ -244,22 +218,22 @@ function deriveGuiEffectivePolicy(configured, runtime, view) {
             inFlight: runtime.versions.updateCheckInFlight,
             statusVisible: isGuiUpdateStatusVisible(runtime.versions.updateCheckStatus),
         },
-        diagnostics: {
-            mode: diagnosticsSurface ? diagnosticsMode : 'none',
-            surfaceEnabled: diagnosticsSurface,
-            detailView: diagnosticsDetailView,
-            performanceMode: diagnosticsPerformanceMode,
+        intel: {
+            surfaceEnabled: intelSurface,
+            detailsEnabled,
             snapshotRequest: {
-                mode: diagnosticsSurface ? diagnosticsMode : 'none',
-                detailView: diagnosticsDetailView,
+                forceIntelSurface: true,
             },
-            limits: Object.assign({}, configured.diagnostics.limits),
+            limits: Object.assign({}, configured.intel.limits),
+        },
+        diagnostics: {
+            enabled: configured.diagnostics.enabled,
         },
         drawCaptureTrace: {
             enabled: traceEnabled,
             panelVisible: configured.drawCaptureTrace.enabled,
             copyEnabled: traceEnabled && traceEvents.length > 0,
-            disabledReason: getGuiDrawCaptureDisabledReason(configured, diagnosticsDetailView, traceRuntimeEnabled),
+            disabledReason: getGuiDrawCaptureDisabledReason(configured, traceRuntimeEnabled),
             eventDisplayLimit: 28,
         },
         foresight: {
@@ -269,18 +243,18 @@ function deriveGuiEffectivePolicy(configured, runtime, view) {
             messagesOnly: foresightControlsEnabled && view.foresight.messagesOnly,
             showSpoilers: configured.foresight.showSpoilers,
             actionDisplayLimit: configured.foresight.actionDisplayLimit,
-            disabledReason: deriveGuiForesightDisabledReason(configured.foresight.enabled, diagnosticsSurface),
-            messageFilterTitle: deriveGuiForesightMessageFilterTitle(configured.foresight.enabled, diagnosticsSurface, view.foresight.messagesOnly),
+            disabledReason: deriveGuiForesightDisabledReason(configured.foresight.enabled, intelSurface),
+            messageFilterTitle: deriveGuiForesightMessageFilterTitle(configured.foresight.enabled, intelSurface, view.foresight.messagesOnly),
         },
         textRecords: {
-            detailView: diagnosticsDetailView,
+            detailsEnabled,
             inactiveDisplayLimit: configured.textRecords.inactiveDisplayLimit,
             showForesightSpoilers: configured.foresight.showSpoilers,
             selectedDetailKey: view.textRecords.selectedDetailKey,
             renderedDetailKey: view.textRecords.renderedDetailKey,
         },
         diagnosticJobs: {
-            detailView: diagnosticsDetailView,
+            detailsEnabled,
             selectedDetailKey: view.diagnostics.selectedDetailKey,
         },
         reservedLane: deriveGuiReservedLanePolicy(runtime.provider, configured.reservedLane),
@@ -309,22 +283,22 @@ function deriveGuiRuntimeContextPolicy(context) {
     };
 }
 
-function getGuiDrawCaptureDisabledReason(configured, diagnosticsDetailView, traceRuntimeEnabled) {
+function getGuiDrawCaptureDisabledReason(configured, traceRuntimeEnabled) {
+    if (!configured.diagnostics.enabled) return 'Draw capture trace disabled in settings.json';
     if (!configured.drawCaptureTrace.enabled) return 'Draw capture trace disabled in settings.json';
-    if (!diagnosticsDetailView) return 'Draw capture trace requires full diagnostics.';
     if (!traceRuntimeEnabled) return 'Draw capture trace disabled by the runtime.';
     return '';
 }
 
-function deriveGuiForesightDisabledReason(configuredEnabled, diagnosticsSurface) {
+function deriveGuiForesightDisabledReason(configuredEnabled, intelSurface) {
     if (!configuredEnabled) return 'Foresight disabled in settings.json';
-    if (!diagnosticsSurface) return 'Diagnostics disabled in settings.json';
+    if (!intelSurface) return 'Intel disabled in settings.json';
     return '';
 }
 
-function deriveGuiForesightMessageFilterTitle(configuredEnabled, diagnosticsSurface, messagesOnly) {
+function deriveGuiForesightMessageFilterTitle(configuredEnabled, intelSurface, messagesOnly) {
     if (!configuredEnabled) return 'Foresight disabled in settings.json';
-    if (!diagnosticsSurface) return 'Diagnostics disabled in settings.json';
+    if (!intelSurface) return 'Intel disabled in settings.json';
     return messagesOnly
         ? 'Show all foresight actions'
         : 'Only show game messages and message-bearing paths';
@@ -410,7 +384,7 @@ function getGuiEffectivePolicy(policySnapshot = null) {
 }
 
 function getGuiDiagnosticsSnapshotRequest(policySnapshot = null) {
-    return getGuiEffectivePolicy(policySnapshot).diagnostics.snapshotRequest;
+    return getGuiEffectivePolicy(policySnapshot).intel.snapshotRequest;
 }
 
 function getGuiDrawCapturePolicy(policySnapshot = null) {

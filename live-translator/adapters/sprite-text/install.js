@@ -3,25 +3,15 @@
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    const requireRuntimeModule = globalScope.LiveTranslatorRequire;
-    if (typeof defineRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/sprite-text/install.js.');
-    }
-    if (typeof requireRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module require is unavailable before adapters/sprite-text/install.js.');
-    }
-    const bitmapDrawRuns = requireRuntimeModule('runtime.bitmapDrawRuns');
-    if (!bitmapDrawRuns || typeof bitmapDrawRuns.collectRunsFromBatch !== 'function') {
-        throw new Error('[LiveTranslator] runtime.bitmapDrawRuns is unavailable before adapters/sprite-text/install.js.');
-    }
+    LiveTranslatorDefine({
+        name: 'adapters.spriteText.install',
+        factory() {
+            const BITMAP_TEXT_RUN_CLAIM_ORDER = 1;
 
     function createController(scope = {}) {
         const { installBitmapMutationObserver, recordBitmapDrawText, recordBitmapMutation } = scope.controllerFacades.bitmapObservation;
-        const { installSpriteBitmapObserver, isBitmapOwned, markSpriteDirty } = scope.controllerFacades.bitmapOwnership;
+        const { bitmapHasTextInterest, installSpriteBitmapObserver, isBitmapOwned, markSpriteDirty } = scope.controllerFacades.bitmapOwnership;
+        const { getBitmapState, isOverlayBitmap } = scope.controllerFacades.state;
         const {
             adoptCurrentSceneSprites,
             ensureFrameHooks,
@@ -29,7 +19,6 @@
             hasFrameHooksActive,
             installChildObservers,
             installFrameHooks,
-            scheduleFallbackFrameFlush,
         } = scope.controllerFacades.frame;
         const { applyRenderCommand, getRenderGeneration, handleRenderRejected, isRenderTargetCurrent, markRecordTerminal } = scope.controllerFacades.entries;
 
@@ -48,13 +37,15 @@
             }
             if (scope.globalScope.LiveTranslatorSpriteTextAdapter
                 && scope.globalScope.LiveTranslatorSpriteTextAdapter.__token === scope.ADAPTER_TOKEN) {
+                registerBitmapServiceCapabilities();
                 return { status: 'installed', reason: 'Sprite text adapter was already installed.' };
             }
         
             exposeAdapterApi();
+            registerBitmapServiceCapabilities();
             installOrchestratorSubscription();
             installSurfaceDrawSubscription();
-            installBitmapDrawBatchSubscription();
+            installBitmapTextRunSubscription();
             installSpriteBitmapObserver();
             installChildObservers();
             installBitmapMutationObserver();
@@ -80,14 +71,51 @@
                 recordBitmapDrawText,
                 recordBitmapMutation,
                 isBitmapOwned,
+                describeBitmapSurface,
                 markSpriteDirty,
                 flushFrame,
                 hasFrameHooksActive,
                 ensureFrameHooks,
-                scheduleFallbackFrameFlush,
                 hasFrameHook: false,
             };
             try { scope.globalScope.LiveTranslatorSpriteTextAdapter = api; } catch (_) {}
+        }
+
+        function registerBitmapServiceCapabilities() {
+            if (!scope.bitmapServices) return false;
+            if (scope.bitmapServiceCapabilitiesRegistered === true) return true;
+            let registered = false;
+            const unregisters = [];
+            if (typeof scope.bitmapServices.registerFrameFlushProvider === 'function') {
+                unregisters.push(scope.bitmapServices.registerFrameFlushProvider({
+                    adapterId: scope.ADAPTER_ID,
+                    token: scope.ADAPTER_TOKEN,
+                    ensureFrameHooks,
+                    hasFrameHooksActive,
+                }));
+                registered = true;
+            }
+            if (typeof scope.bitmapServices.registerSurfaceClassifier === 'function') {
+                unregisters.push(scope.bitmapServices.registerSurfaceClassifier({
+                    adapterId: scope.ADAPTER_ID,
+                    token: scope.ADAPTER_TOKEN,
+                    describeSurface: describeBitmapSurface,
+                }));
+                registered = true;
+            }
+            scope.bitmapServiceCapabilityUnregisters = unregisters.filter((value) => typeof value === 'function');
+            scope.bitmapServiceCapabilitiesRegistered = registered;
+            return registered;
+        }
+
+        function describeBitmapSurface(bitmap) {
+            if (!bitmap) return { kind: 'no-bitmap' };
+            if (isOverlayBitmap(bitmap)) return { kind: 'sprite-overlay', overlay: true };
+            if (isBitmapOwned(bitmap)) return { kind: 'sprite-owned', owned: true };
+            if (bitmapHasTextInterest(bitmap)) return { kind: 'sprite-text-interest', textInterest: true };
+            const state = getBitmapState(bitmap);
+            if (state && !state.destroyed) return { kind: 'sprite-observed', observed: true };
+            return { kind: 'untracked' };
         }
         
         /**
@@ -126,54 +154,54 @@
         }
 
         /**
-         * Consume frame-boundary Bitmap.drawText batches from bitmap services.
+         * Consume frame-boundary Bitmap.drawText runs from bitmap services.
          */
-        function installBitmapDrawBatchSubscription() {
-            if (!scope.bitmapServices || typeof scope.bitmapServices.subscribeDrawBatches !== 'function') return false;
-            return scope.bitmapServices.subscribeDrawBatches({
+        function installBitmapTextRunSubscription() {
+            if (!scope.bitmapServices || typeof scope.bitmapServices.subscribeTextRuns !== 'function') return false;
+            return scope.bitmapServices.subscribeTextRuns({
                 adapterId: scope.ADAPTER_ID,
                 token: 'sprite-bitmap-draws',
-                priority: 200,
-                onBatch(batch, meta = {}) {
-                    if (!batch || !batch.bitmap || typeof batch.forEachUnconsumed !== 'function') return 0;
-                    const ownerClaimOnly = meta && meta.phase === 'owner-claim';
-                    let handled = 0;
-                    bitmapDrawRuns.collectRunsFromBatch(batch, {
-                        allowFallbackGlyphRuns: false,
-                    }).forEach((run) => {
-                        if (!run || !Array.isArray(run.units) || !run.units.length) return;
-                        if (run.units.some((unit) => batch.isConsumed(unit))) return;
-                        const payload = bitmapDrawRuns.createSurfaceDrawPayload(batch, run, {
-                            payload: {
-                                ownershipStatus: '',
-                                backgroundPatch: getRunBackgroundPatch(run),
-                            },
-                        });
-                        if (!payload) return;
-                        const result = recordBitmapDrawText(Object.assign({}, payload, {
-                            ownerClaimOnly,
-                        }));
-                        if (!result || result.status === 'ignored') return;
-                        if (ownerClaimOnly && result.status === 'deferred') return;
-                        if (result.status === 'claimed') {
-                            run.units.forEach((unit) => batch.consume(unit, scope.ADAPTER_ID));
-                        }
-                        handled += run.units.length;
+                claimOrder: BITMAP_TEXT_RUN_CLAIM_ORDER,
+                allowFallbackGlyphRuns: false,
+                onRun(run, dispatch, metadata = {}) {
+                    if (!run || !Array.isArray(run.units) || !run.units.length) return 0;
+                    if (typeof metadata.createSurfaceDrawPayload !== 'function') return 0;
+                    const ownerClaimOnly = metadata.phase === 'owner-claim';
+                    const payload = metadata.createSurfaceDrawPayload(run, {
+                        payload: {
+                            ownershipStatus: '',
+                            backgroundPatch: typeof metadata.getBackgroundPatch === 'function'
+                                ? metadata.getBackgroundPatch(run)
+                                : null,
+                        },
                     });
-                    return handled;
+                    if (!payload) return 0;
+                    const result = recordBitmapDrawText(Object.assign({}, payload, {
+                        ownerClaimOnly,
+                    }));
+                    if (isTerminalBitmapDrawRunResult(result)) return 0;
+                    if (ownerClaimOnly && result.status === 'deferred') return 0;
+                    if (result.status === 'claimed') {
+                        return typeof metadata.consume === 'function'
+                            ? metadata.consume(run, scope.ADAPTER_ID)
+                            : 0;
+                    }
+                    return run.units.length;
                 },
             });
         }
 
-        function getRunBackgroundPatch(run) {
-            const units = run && Array.isArray(run.units) ? run.units.slice() : [];
-            units.sort(bitmapDrawRuns.compareUnits);
-            const first = units[0];
-            return first && (first.backgroundPatch || first.fallbackBackgroundPatch) || null;
+        function isTerminalBitmapDrawRunResult(result) {
+            if (!result) return true;
+            return result.status === 'ignored'
+                || result.status === 'source-suppressed'
+                || result.status === 'rejected';
         }
 
-        return { install, exposeAdapterApi, installOrchestratorSubscription, installSurfaceDrawSubscription, installBitmapDrawBatchSubscription };
+        return { install, exposeAdapterApi, registerBitmapServiceCapabilities, installOrchestratorSubscription, installSurfaceDrawSubscription, installBitmapTextRunSubscription };
     }
 
-    defineRuntimeModule('adapters.spriteText.install', { createController });
+            return { createController };
+        },
+    });
 })();

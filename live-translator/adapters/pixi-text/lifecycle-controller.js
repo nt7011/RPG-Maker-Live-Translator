@@ -2,15 +2,6 @@
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    if (typeof defineRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/pixi-text/lifecycle-controller.js.');
-    }
-
     // Display-object removal hooks and local state retirement for PIXI text.
     function createPixiLifecycleController(context = {}) {
         const {
@@ -160,8 +151,13 @@
         };
     }
     
-    defineRuntimeModule('adapters.pixiTextLifecycleController', {
-        create: createPixiLifecycleController,
+    LiveTranslatorDefine({
+        name: 'adapters.pixiText.lifecycleController',
+        factory() {
+            return {
+                create: createPixiLifecycleController,
+            };
+        },
     });
 
 })();

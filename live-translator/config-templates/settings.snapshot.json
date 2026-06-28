@@ -13,16 +13,25 @@
     "performanceProfiler": {
         "enabled": false
     },
-    "diagnostics": {
-        "mode": "full",
-        "captureWhenGuiClosed": true
+    "intel": {
+        "captureWhenGuiClosed": true,
+        "limits": {
+            "foresightScans": 5,
+            "foresightMessages": 5,
+            "archivedItems": 40,
+            "detachedItems": 40,
+            "pastJobs": 20
+        }
     },
-    "drawCaptureTrace": {
+    "diagnostics": {
         "enabled": true,
-        "recordCjk": true,
-        "recordAll": true,
-        "limit": 640,
-        "targetTexts": []
+        "drawCaptureTrace": {
+            "enabled": true,
+            "recordCjk": true,
+            "recordAll": true,
+            "limit": 640,
+            "targetTexts": []
+        }
     },
     "translation": {
         "disableCjkFilter": true,

@@ -3,13 +3,9 @@
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    if (typeof defineRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/sprite-text/controller-facades.js.');
-    }
+    LiveTranslatorDefine({
+        name: 'adapters.spriteText.controllerFacades',
+        factory() {
 
     function createSpriteTextControllerFacades(scope = {}) {
         return Object.freeze({
@@ -21,7 +17,6 @@
                 'recordBitmapMutation',
                 'installBitmapMutationObserver',
                 'handleObservedBitmapMutation',
-                'installFallbackBitmapMutationWrappers',
                 'recordPaintOp',
                 'deriveMutationRect',
             ]),
@@ -78,14 +73,13 @@
                 'installFrameHooks',
                 'hasFrameHooksActive',
                 'ensureFrameHooks',
-                'scheduleFallbackFrameFlush',
                 'installFrameHook',
                 'hasHookInChain',
                 'flushFrame',
                 'adoptCurrentSceneSprites',
                 'adoptSpriteTree',
                 'flushPendingBitmapOwnerClaims',
-                'flushBitmapFallbackAfterSprite',
+                'flushPendingDrawUnitsAfterSprite',
                 'syncTrackedVisibility',
                 'syncActiveOverlays',
                 'processSpriteSurface',
@@ -108,7 +102,7 @@
                 'exposeAdapterApi',
                 'installOrchestratorSubscription',
                 'installSurfaceDrawSubscription',
-                'installBitmapDrawBatchSubscription',
+                'installBitmapTextRunSubscription',
             ]),
             overlayBitmap: bindScopeMethods(scope, [
                 'renderSpriteOverlay',
@@ -285,7 +279,9 @@
         return Object.freeze(facade);
     }
 
-    defineRuntimeModule('adapters.spriteText.controllerFacades', {
-        create: createSpriteTextControllerFacades,
+            return {
+                create: createSpriteTextControllerFacades,
+            };
+        },
     });
 })();

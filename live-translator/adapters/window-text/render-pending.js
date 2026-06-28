@@ -2,18 +2,12 @@
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    const requireRuntimeModule = globalScope.LiveTranslatorRequire;
-    if (typeof defineRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/window-text/render-pending.js.');
-    }
-    if (typeof requireRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module require is unavailable before adapters/window-text/render-pending.js.');
-    }
-    const renderTransaction = requireRuntimeModule('runtime.renderTransaction');
+    LiveTranslatorDefine({
+        name: 'adapters.windowText.renderPending',
+        requires: {
+            renderTransaction: 'runtime.renderTransaction',
+        },
+        factory({ renderTransaction }) {
 
     function createRenderPendingController(context = {}) {
         const { ADAPTER_ID, RENDER_STRATEGY, entryLifecycleState } = context;
@@ -22,14 +16,14 @@
             diagnostics,
             entryLifecycle,
             renderDraw,
-            renderQueue,
+            renderReadinessSchedule,
             renderReadiness,
             textConversion,
         } = context.facades;
         const { recordDecision } = diagnostics;
         const { markRecordDisappeared, resolveWindowData } = entryLifecycle;
         const { drawTranslatedEntry } = renderDraw;
-        const { queueRenderRetry, dropRenderRetry } = renderQueue;
+        const { scheduleRenderRetry, dropScheduledRenderRetry } = renderReadinessSchedule;
         const { planTranslatedRedraw } = renderReadiness;
         const { restoreTranslatedWindowText } = textConversion;
 
@@ -96,9 +90,9 @@
                         details: getPendingRenderDetails(entry),
                     });
                 }
-                if (renderResult && renderResult.status === 'accepted') {
+                if (renderResult && renderResult.status === 'committed') {
                     return renderTransaction.createRenderCommit({
-                        status: 'accepted',
+                        status: 'committed',
                         mode: 'async-redraw',
                         reason: renderResult.reason || 'rendered',
                         adapterId: ADAPTER_ID,
@@ -168,9 +162,7 @@
                     drawBoundary: entry.renderLifecycle && entry.renderLifecycle.sourceDraw
                         ? entry.renderLifecycle.sourceDraw
                         : null,
-                    details: {
-                        method: entry.type || '',
-                    },
+                    details: createRenderCommandDetails(entry, command),
                 });
                 const admitted = renderTransaction.admitRender(known.state, {
                     reason: 'render-command-admitted',
@@ -210,19 +202,20 @@
                     translationReceived: pending && pending.translationReceived || entry && entry.providerText || '',
                     translationDrawn: rendered,
                 });
-                const acceptedTransition = pending
+                const committedTransition = pending
                     ? renderTransaction.commitRender(pending, {
                         mode: details && details.renderMode || 'async-redraw',
                         reason: 'rendered',
                         translationDrawn: rendered,
                         translationReceived: renderDetails.translationReceived,
+                        surfaceProof: renderDetails.surfaceProof,
                         details: renderDetails,
                     })
                     : null;
-                const accepted = acceptedTransition
-                    ? acceptedTransition.commit
+                const renderCommit = committedTransition
+                    ? committedTransition.commit
                     : renderTransaction.createRenderCommit({
-                        status: 'accepted',
+                        status: 'committed',
                         mode: details && details.renderMode || 'native-substitution',
                         reason: 'rendered',
                         adapterId: ADAPTER_ID,
@@ -234,11 +227,13 @@
                         generation: entry && entry.surfaceRevision || 0,
                         translationReceived: renderDetails.translationReceived,
                         translationDrawn: rendered,
+                        surfaceProof: renderDetails.surfaceProof,
                         details: renderDetails,
                     });
+                rememberRenderCommitProof(entry, renderCommit, renderDetails);
                 if (!pending) {
-                    return createPendingRenderTransitionResult('accepted', 'rendered', null, entry, {
-                        commit: accepted,
+                    return createPendingRenderTransitionResult('committed', 'rendered', null, entry, {
+                        commit: renderCommit,
                         details: renderDetails,
                     });
                 }
@@ -249,19 +244,19 @@
                 }, 'item.rendered', renderDetails);
                 let event = null;
                 if (pending.deferred === true) {
-                    event = lifecycleService.recordRenderAccepted(entry, {
+                    event = lifecycleService.recordRenderCommitted(entry, {
                         commandId: pending.commandId,
                         strategy: pending.strategy,
                         commandGeneration: pending.commandGeneration,
                         reason: 'rendered',
                         details: renderDetails,
-                        renderCommit: accepted,
+                        renderCommit,
                     });
                 }
-                dropRenderRetry(resolveWindowData(entry), entry);
+                dropScheduledRenderRetry(resolveWindowData(entry), entry);
                 clearPendingRenderCommand(entry);
-                return createPendingRenderTransitionResult('accepted', 'rendered', acceptedTransition, entry, {
-                    commit: accepted,
+                return createPendingRenderTransitionResult('committed', 'rendered', committedTransition, entry, {
+                    commit: renderCommit,
                     details: renderDetails,
                     event,
                 });
@@ -295,6 +290,52 @@
     function clearPendingRenderCommand(entry) {
                 if (entry) delete entry.renderTransaction;
             }
+
+    function rememberRenderCommitProof(entry, renderCommit, renderDetails = null) {
+                if (!entry) return false;
+                const surfaceProof = renderCommit && renderCommit.surfaceProof && typeof renderCommit.surfaceProof === 'object'
+                    ? renderCommit.surfaceProof
+                    : (renderDetails && renderDetails.surfaceProof && typeof renderDetails.surfaceProof === 'object'
+                        ? renderDetails.surfaceProof
+                        : null);
+                if (!renderCommit || renderCommit.committed !== true || !surfaceProof) {
+                    clearRenderCommitProof(entry);
+                    return false;
+                }
+                entry.renderCommitProof = Object.freeze({
+                    commandId: String(renderCommit.commandId || ''),
+                    phase: 'render-committed',
+                    surfaceProof,
+                    committedAt: Date.now(),
+                    generation: Number(renderCommit.generation) || Number(entry.surfaceRevision) || 0,
+                    surfaceId: String(renderCommit.surfaceId || entry.surfaceId || ''),
+                    slotKey: String(renderCommit.slotKey || entry.slotKey || ''),
+                    translationDrawn: String(renderCommit.translationDrawn || entry.renderedText || ''),
+                });
+                return true;
+            }
+
+    function clearRenderCommitProof(entry) {
+                if (entry && Object.prototype.hasOwnProperty.call(entry, 'renderCommitProof')) {
+                    delete entry.renderCommitProof;
+                }
+            }
+
+    function createRenderCommandDetails(entry, command) {
+                const metadata = command && command.metadata && typeof command.metadata === 'object'
+                    ? command.metadata
+                    : {};
+                const recoveryProof = command && command.recoveryProof && typeof command.recoveryProof === 'object'
+                    ? command.recoveryProof
+                    : (metadata.recoveryProof && typeof metadata.recoveryProof === 'object' ? metadata.recoveryProof : null);
+                const details = {
+                    method: entry && entry.type || '',
+                    renderIntent: String(command && command.renderIntent || metadata.renderIntent || ''),
+                    sourceKind: String(command && command.sourceKind || metadata.sourceKind || metadata.sourceHint || ''),
+                };
+                if (recoveryProof) details.recoveryProof = recoveryProof;
+                return details;
+            }
     
     function getPendingRenderDetails(entry) {
                 const pending = entry && entry.renderTransaction;
@@ -319,9 +360,14 @@
                     status: normalizedStatus,
                     handled: normalizedStatus !== 'ignored',
                     accepted: normalizedStatus === 'admitted'
+                        || normalizedStatus === 'committed'
                         || normalizedStatus === 'deferred'
+                        // Legacy internal alias; remove after tests and any
+                        // remaining helpers stop feeding accepted back in.
                         || normalizedStatus === 'accepted',
-                    terminal: normalizedStatus === 'accepted' || normalizedStatus === 'rejected',
+                    terminal: normalizedStatus === 'committed'
+                        || normalizedStatus === 'accepted'
+                        || normalizedStatus === 'rejected',
                     reason: String(reason || commit && commit.reason || state && state.reason || normalizedStatus),
                     phase: state && state.phase ? state.phase : (commit && commit.phase ? commit.phase : ''),
                     previousPhase: transition && transition.previousPhase ? transition.previousPhase : '',
@@ -351,13 +397,23 @@
                         queue: plan.queue || '',
                     });
                     recordDecision(entry, 'draw.deferred', describeDeferReason(plan.reason), details);
-                    queueRenderRetry(plan.targetWindow, plan.windowData, entry, plan.textKey, plan);
+                    if (!hasPendingRenderCommand(entry)) {
+                        const command = queueStoredRedrawRenderCommand(entry, plan, details);
+                        if (command && command.commandId) {
+                            return createRenderResult('deferred', plan.reason || 'window-redraw-deferred', Object.assign({}, details, {
+                                commandId: command.commandId,
+                                renderIntent: command.renderIntent || 'stored-redraw',
+                            }));
+                        }
+                        return createRenderResult('rejected', 'render-command-id-required', details);
+                    }
+                    scheduleRenderRetry(plan.targetWindow, plan.windowData, entry, plan.textKey, plan);
                     return createRenderResult('deferred', plan.reason || 'window-redraw-deferred', details);
                 }
-                dropRenderRetry(plan.windowData, entry, plan.textKey);
+                dropScheduledRenderRetry(plan.windowData, entry, plan.textKey);
                 const drawResult = drawTranslatedEntry(plan.targetWindow, plan.windowData, plan.contents, entry);
                 if (drawResult && typeof drawResult === 'object' && drawResult.status) return drawResult;
-                if (drawResult === true) return createRenderResult('accepted', 'rendered', {});
+                if (drawResult === true) return createRenderResult('committed', 'rendered', {});
                 return createRenderResult('missed', 'window-redraw-missed', plan.details || {});
             }
 
@@ -370,7 +426,7 @@
                 }
                 if (reason === 'window-redraw-target-missing' || reason === 'window-entry-replaced') {
                     const windowData = resolveWindowData(entry);
-                    dropRenderRetry(windowData, entry, details && details.textKey);
+                    dropScheduledRenderRetry(windowData, entry, details && details.textKey);
                     markRecordDisappeared(entry, reason, details);
                     return createRenderResult('rejected', reason, details);
                 }
@@ -394,10 +450,51 @@
                 if (reason === 'window-redraw-invalidated') return 'waiting for window redraw revalidation';
                 return reason || 'window redraw deferred';
             }
+
+    function hasPendingRenderCommand(entry) {
+                return !!(entry
+                    && entry.renderTransaction
+                    && entry.renderTransaction.commandId);
+            }
+
+    function queueStoredRedrawRenderCommand(entry, plan, details = null) {
+                if (!entry || !lifecycleService || typeof lifecycleService.queueStoredRenderCommand !== 'function') return null;
+                const text = firstRenderableStoredText(entry);
+                if (!text) return null;
+                return lifecycleService.queueStoredRenderCommand(entry, {
+                    strategy: RENDER_STRATEGY,
+                    text,
+                    translationReceived: text,
+                    generation: entry.surfaceRevision || 0,
+                    targetSurfaceId: entry.surfaceId || '',
+                    sourceKind: 'stored',
+                    renderIntent: 'stored-redraw',
+                    metadata: {
+                        renderRoute: 'stored-redraw',
+                        queue: plan && plan.queue ? String(plan.queue) : '',
+                        reason: plan && plan.reason ? String(plan.reason) : '',
+                        key: plan && plan.textKey ? String(plan.textKey) : (entry.key || ''),
+                        windowType: plan && plan.windowData && plan.windowData.windowType ? String(plan.windowData.windowType) : '',
+                        method: entry.type || '',
+                    },
+                });
+            }
+
+    function firstRenderableStoredText(entry) {
+                if (!entry) return '';
+                const providerText = typeof entry.providerText === 'string' ? entry.providerText : '';
+                if (providerText) return providerText;
+                const received = entry.renderTransaction && typeof entry.renderTransaction.translationReceived === 'string'
+                    ? entry.renderTransaction.translationReceived
+                    : '';
+                if (received) return received;
+                return typeof entry.renderedText === 'string' ? entry.renderedText : '';
+            }
     
         return { applyRenderCommand, markRequestSkipped, markRequestFailed, updateOrchestratorItem, beginPendingRenderCommand, markPendingRenderDeferred, completePendingRenderCommand, rejectPendingRender, clearPendingRenderCommand, getPendingRenderDetails, redrawTranslatedText };
     }
-    
-    defineRuntimeModule('adapters.windowTextRenderPending', { create: createRenderPendingController });
+            return { create: createRenderPendingController };
+        },
+    });
 
 })();

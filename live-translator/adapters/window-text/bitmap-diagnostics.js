@@ -2,27 +2,22 @@
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    const requireRuntimeModule = globalScope.LiveTranslatorRequire;
-    if (typeof defineRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/window-text/bitmap-diagnostics.js.');
-    }
-    if (typeof requireRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module require is unavailable before adapters/window-text/bitmap-diagnostics.js.');
-    }
+    LiveTranslatorDefine({
+        name: 'adapters.windowText.bitmapDiagnostics',
+        requires: {
+            measuredBounds: 'runtime.measuredBounds',
+            drawGraph: 'runtime.drawGraph',
+        },
+        factory({ measuredBounds, drawGraph }, { scope: globalScope }) {
 
-    const measuredBounds = requireRuntimeModule('runtime.measuredBounds');
-    const drawGraph = requireRuntimeModule('runtime.drawGraph');
 
     function createBitmapDiagnosticsController(context = {}) {
         const { draw: drawService, replay: replayService, snapshot: snapshotService } = context.services;
+        const { entryRecords } = context.facades;
         const preview = drawService.preview || ((text) => String(text ?? ''));
         const MAX_BACKGROUND_SNAPSHOT_PIXELS = snapshotService.maxBackgroundSnapshotPixels;
         const REDRAW_DIAGNOSTIC_ITEM_LIMIT = snapshotService.redrawDiagnosticItemLimit;
-        const getEntryStatus = (...args) => context.getEntryStatus(...args);
+        const getEntryStatus = (...args) => entryRecords.getEntryStatus(...args);
         const applyBitmapDrawState = drawService.applyBitmapDrawState;
 
     function mergeBounds(a, b) {
@@ -177,7 +172,7 @@
 
     function rememberBitmapSurfaceYOffsetSource(entry, source = '') {
                 if (entry) {
-                    try { entry._trBitmapSurfaceYOffsetCache = { source: String(source || '') }; } catch (_) {}
+                    try { entry.bitmapSurfaceYOffsetCache = { source: String(source || '') }; } catch (_) {}
                 }
             }
 
@@ -555,13 +550,13 @@
                     renderOps: Array.isArray(state.renderOps) ? state.renderOps.length : 0,
                     entries: state.entries && typeof state.entries.size === 'number' ? state.entries.size : 0,
                     nativeTextOps: state.nativeTextOps && typeof state.nativeTextOps.size === 'number' ? state.nativeTextOps.size : 0,
-                    fragments: Array.isArray(state.fragments) ? state.fragments.length : 0,
                 };
             }
 
         return { mergeBounds, isValidRect, roundDiagnosticNumber, cloneDiagnosticRect, cloneDiagnosticArea, calculateBitmapSurfaceTextYOffset, estimateBitmapSurfaceTextBounds, createClearRectFromArea, getReplayItemRect, mergeReplayRect, expandReplayDirtyRect, replayRectsOverlap, getBitmapCanvasContext, supportsBitmapReplayClip, getReplayClipArea, getBitmapSnapshotContext, getEntryContentsRevision, getSnapshotContentsRevision, getWindowDataContentsRevision, getEntrySnapshotPadding, getSnapshotArea, getSnapshotDiagnostics, measureSnapshotInkDiagnostics: measuredBounds.measureSnapshotInkDiagnostics, summarizeReplayItemsForDiagnostics, summarizeReplayStateForDiagnostics };
     }
-
-    defineRuntimeModule('adapters.windowTextBitmapDiagnostics', { create: createBitmapDiagnosticsController });
+            return { create: createBitmapDiagnosticsController };
+        },
+    });
 
 })();

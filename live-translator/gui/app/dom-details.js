@@ -1,5 +1,5 @@
 // Translator monitor dom details helpers.
-// These functions share state from gui/app/state.js and are loaded before app.js boots.
+// These functions share state from gui/app/state.js and are loaded before app/index.js boots.
 'use strict';
 
 function applyFoldedPanelDefault(panelId, stateKey, open, defaultKey) {
@@ -38,8 +38,8 @@ function syncFoldedPanelDefaults(policySnapshot = getGuiPolicySnapshot()) {
     applyFoldedPanelDefault(
         'diagnostics-panel',
         'diagnostics',
-        effectivePolicy.diagnostics.detailView,
-        `diagnostics:${effectivePolicy.diagnostics.mode}`
+        effectivePolicy.intel.surfaceEnabled,
+        `intel:${effectivePolicy.intel.surfaceEnabled ? 'visible' : 'hidden'}`
     );
 }
 

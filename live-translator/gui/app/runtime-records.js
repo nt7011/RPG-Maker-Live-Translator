@@ -1,5 +1,5 @@
 // Translator monitor runtime records helpers.
-// These functions share state from gui/app/state.js and are loaded before app.js boots.
+// These functions share state from gui/app/state.js and are loaded before app/index.js boots.
 'use strict';
 
 function summarizeHookResults(results) {
@@ -33,14 +33,14 @@ function normalizeHookFeedResult(result) {
 
 function readTextOrchestratorSnapshot(gameWindow, options = {}) {
     if (!gameWindow) return null;
-    const orchestrator = gameWindow.LiveTranslatorTextOrchestrator;
+    const orchestrator = gameWindow.LiveTranslatorTextOrchestratorIntel;
     if (orchestrator && typeof orchestrator.getSnapshot === 'function') {
         return orchestrator.getSnapshot(options);
     }
     if (orchestrator && typeof orchestrator.snapshot === 'function') {
         return orchestrator.snapshot(options);
     }
-    const published = gameWindow.LiveTranslatorTextOrchestratorSnapshot;
+    const published = gameWindow.LiveTranslatorTextOrchestratorIntelSnapshot;
     if (published && typeof published === 'object') return published;
     return null;
 }
@@ -71,9 +71,7 @@ function normalizeTextOrchestratorSnapshot(snapshot) {
         summary: snapshot.summary && typeof snapshot.summary === 'object'
             ? Object.assign({}, snapshot.summary, summary)
             : summary,
-        diagnosticsMode: snapshot.diagnosticsMode ? String(snapshot.diagnosticsMode) : '',
-        performanceMode: snapshot.performanceMode === true,
-        detailView: snapshot.detailView === true,
+        intelSurface: snapshot.intelSurface === true,
         updatedAt: snapshot.updatedAt || null,
     };
 }

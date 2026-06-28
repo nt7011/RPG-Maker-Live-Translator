@@ -10,7 +10,6 @@
         updateState: 'outdated',
         provider: 'local',
         lmStudioState: 'connected',
-        diagnosticsMode: 'full',
         concurrency: 5,
         modelAuthor: 'bartowski',
         modelName: 'gemma4-26b-modelname',
@@ -93,11 +92,6 @@
             '<option value="auto-many">Auto: many models</option>',
             '<option value="api-error">Chat API error</option>',
             '</select></label>',
-            '<label class="preview-field" for="preview-diagnostics-mode"><span>Diagnostics</span><select id="preview-diagnostics-mode">',
-            '<option value="full">Full</option>',
-            '<option value="performance">Performance</option>',
-            '<option value="none">Disabled</option>',
-            '</select></label>',
             '<label class="preview-field" for="preview-concurrency"><span>Concurrency</span><input id="preview-concurrency" type="number" min="0" max="12" step="1"></label>',
             '<label class="preview-field" for="preview-model-author"><span>REST author</span><input id="preview-model-author" type="text" autocomplete="off" spellcheck="false"></label>',
             '<label class="preview-field" for="preview-model-name"><span>REST model</span><input id="preview-model-name" type="text" autocomplete="off" spellcheck="false"></label>',
@@ -171,7 +165,6 @@
         setControlValue('preview-update-state', value.updateState);
         setControlValue('preview-provider', value.provider);
         setControlValue('preview-lmstudio-state', value.lmStudioState);
-        setControlValue('preview-diagnostics-mode', value.diagnosticsMode);
         setControlValue('preview-concurrency', value.concurrency);
         setControlValue('preview-model-author', value.modelAuthor);
         setControlValue('preview-model-name', value.modelName);
@@ -189,7 +182,6 @@
             updateState: getControlValue('preview-update-state'),
             provider: getControlValue('preview-provider'),
             lmStudioState: getControlValue('preview-lmstudio-state'),
-            diagnosticsMode: getControlValue('preview-diagnostics-mode'),
             concurrency: getControlValue('preview-concurrency'),
             modelAuthor: getControlValue('preview-model-author'),
             modelName: getControlValue('preview-model-name'),
@@ -382,7 +374,7 @@
             LiveTranslatorHookInstallSnapshot: hookSnapshot,
             LiveTranslatorHookInstallResults: hookSnapshot.results,
             LiveTranslatorHookInstallSummary: hookSnapshot.summary,
-            LiveTranslatorTextOrchestrator: {
+            LiveTranslatorTextOrchestratorIntel: {
                 getSnapshot(request) {
                     return createPreviewTextSnapshot(current, request);
                 },
@@ -390,20 +382,20 @@
                     return createPreviewTextSnapshot(current, request);
                 },
                 publish() {},
-                clearDiagnostics() {},
+                clearIntel() {},
             },
-            LiveTranslatorTranslationDiagnostics: {
+            LiveTranslatorTranslationIntel: {
                 getSnapshot(request) {
-                    return createPreviewDiagnosticsSnapshot(current, request);
+                    return createPreviewTranslationIntelSnapshot(current, request);
                 },
                 snapshot(request) {
-                    return createPreviewDiagnosticsSnapshot(current, request);
+                    return createPreviewTranslationIntelSnapshot(current, request);
                 },
                 publish() {},
-                clearDiagnostics() {},
+                clearIntel() {},
                 clearSnapshot() {},
             },
-            LiveTranslatorForesightDiagnostics: {
+            LiveTranslatorForesightIntel: {
                 getSnapshot(request) {
                     return createPreviewForesightSnapshot(current, request);
                 },
@@ -423,7 +415,7 @@
                     return createPreviewDrawCaptureSnapshot(current);
                 },
                 publish() {},
-                clearDiagnostics() {},
+                clearIntel() {},
                 clearSnapshot() {},
             },
             LiveTranslatorGuiState: {
@@ -439,8 +431,7 @@
             checkUpdates: false,
             enableForesight: value.foresight === true,
             showForesightSpoilers: value.showSpoilers === true,
-            diagnostics: {
-                mode: value.diagnosticsMode,
+            intel: {
                 captureWhenGuiClosed: true,
                 limits: {
                     foresightScans: 5,
@@ -450,11 +441,14 @@
                     pastJobs: 20,
                 },
             },
-            drawCaptureTrace: {
+            diagnostics: {
                 enabled: value.drawCapture === true,
-                recordCjk: true,
-                recordAll: true,
-                limit: 40,
+                drawCaptureTrace: {
+                    enabled: value.drawCapture === true,
+                    recordCjk: true,
+                    recordAll: true,
+                    limit: 40,
+                },
             },
         };
     }
@@ -488,13 +482,10 @@
     }
 
     function createPreviewTextSnapshot(value, request) {
-        const mode = request && request.mode ? String(request.mode) : value.diagnosticsMode;
         const records = createPreviewTextRecords(value);
         return {
             updatedAt: Date.now(),
-            diagnosticsMode: mode,
-            performanceMode: mode === 'performance',
-            detailView: mode === 'full',
+            intelSurface: true,
             active: records.active,
             detached: records.detached,
             archived: records.archived,
@@ -671,9 +662,7 @@
         };
     }
 
-    function createPreviewDiagnosticsSnapshot(value, request) {
-        const mode = request && request.mode ? String(request.mode) : value.diagnosticsMode;
-        if (mode === 'none') return null;
+    function createPreviewTranslationIntelSnapshot(value, request) {
         const now = Date.now();
         const capacity = value.lmStudioState === 'pending'
             ? 0
@@ -723,15 +712,13 @@
             },
             events: [
                 {
-                    id: 'preview-diagnostics-event',
+                    id: 'preview-intel-event',
                     at: now - 700,
                     type: 'scheduler.pump',
                     details: { capacity, running, queued },
                 },
             ],
-            diagnosticsMode: mode,
-            performanceMode: mode === 'performance',
-            detailView: mode === 'full',
+            intelSurface: true,
         };
     }
 
@@ -925,8 +912,6 @@
 
     function createPreviewForesightSnapshot(value, request) {
         if (value.foresight !== true) return null;
-        const mode = request && request.mode ? String(request.mode) : value.diagnosticsMode;
-        if (mode === 'none') return null;
         const now = Date.now();
         return {
             updatedAt: now,
@@ -956,9 +941,7 @@
                     commandActions: createPreviewForesightActions(value),
                 },
             ],
-            diagnosticsMode: mode,
-            performanceMode: mode === 'performance',
-            detailView: mode === 'full',
+            intelSurface: true,
         };
     }
 
@@ -1023,7 +1006,6 @@
             updateState: pickOption(source.updateState, ['outdated', 'latest', 'checking', 'error', 'disabled', 'missing'], DEFAULT_OPTIONS.updateState),
             provider: pickOption(source.provider, ['local', 'deepl', 'mocktranslator', 'none'], DEFAULT_OPTIONS.provider),
             lmStudioState: pickOption(source.lmStudioState, ['connected', 'pending', 'unverified-concurrency', 'no-response', 'cors', 'timeout', 'model-not-loaded', 'auto-many', 'api-error'], DEFAULT_OPTIONS.lmStudioState),
-            diagnosticsMode: pickOption(source.diagnosticsMode, ['full', 'performance', 'none'], DEFAULT_OPTIONS.diagnosticsMode),
             concurrency: clampInteger(source.concurrency, 0, 12, DEFAULT_OPTIONS.concurrency),
             modelAuthor: normalizePreviewText(source.modelAuthor, DEFAULT_OPTIONS.modelAuthor, 48),
             modelName: normalizePreviewText(source.modelName, DEFAULT_OPTIONS.modelName, 96),

@@ -1,27 +1,26 @@
 // Bitmap text adapter support: records.
-// Each controller receives one adapter instance scope from bitmap-text-adapter.js.
+// Each controller receives one adapter instance scope from bitmap-text.js.
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    const requireRuntimeModule = globalScope.LiveTranslatorRequire;
-    if (typeof defineRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/bitmap-text/records.js.');
-    }
-    if (typeof requireRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module require is unavailable before adapters/bitmap-text/records.js.');
-    }
-    const backdropProviderModule = requireRuntimeModule('runtime.backdropProvider');
-
+    LiveTranslatorDefine({
+        name: 'adapters.bitmapText.records',
+        requires: {
+            bitmapRenderPlannerModule: 'runtime.bitmap.renderPlanner',
+            copiedTargetProofSummary: 'runtime.bitmap.copiedTargetProofSummary',
+        },
+        factory({ bitmapRenderPlannerModule, copiedTargetProofSummary }) {
     function createController(scope = {}) {
-        const { ADAPTER_ID, ADAPTER_LABEL, SURFACE_TYPE, RENDER_STRATEGY, BITMAP_PRIORITY, DRAW_WRAPPER_TOKEN, MUTATION_WRAPPER_TOKEN, FRAME_FLUSH_TOKEN, SMALL_TEXT_TOKEN, NORMAL_CHAR_TOKEN, MAX_FRAGMENTS, MAX_REPLAY_OPS, GAP_MIN, GAP_RATIO } = scope;
+        const { ADAPTER_ID, ADAPTER_LABEL, SURFACE_TYPE, RENDER_STRATEGY, BITMAP_PRIORITY } = scope;
         const renderTransaction = scope.renderTransaction;
-        const { withBitmapReplay, collectReplayItems, replayBitmapItems, drawBitmapTextValue, calculateClearRect, redrawCopiedBitmapTargets, forgetCopiedBitmapTargets, markBitmapPixelsDirty } = scope.controllerFacades.replay;
-        const { sanitizeVisibleText, describeEntryEligibility, recordDrawTrace, bitmapTraceDetails, cloneTraceRect, rectFromDimensions, isValidRect, updateItem, isAdapterContractFailure, warn, stringify, errorMessage } = scope.controllerFacades.textUtils;
-        const backdropProvider = backdropProviderModule.create({ isValidRect });
+        const { materializeCopiedBitmapTargetRedraws, redrawCopiedBitmapTargets } = scope.controllerFacades.copiedTargets;
+        const { executeBitmapFallbackRender } = scope.controllerFacades.fallbackRenderer;
+        const { sanitizeVisibleText, describeEntryEligibility, recordDrawTrace, bitmapTraceDetails, cloneTraceRect, updateItem, isAdapterContractFailure, warn, stringify, errorMessage } = scope.controllerFacades.textUtils;
+        const bitmapRenderPlanner = scope.bitmapRenderPlanner
+            && typeof scope.bitmapRenderPlanner.createBitmapSourceEntryCopiedTargetRenderPlan === 'function'
+            && typeof scope.bitmapRenderPlanner.createBitmapSourceEntryCopiedTargetRecoveryPlan === 'function'
+            ? scope.bitmapRenderPlanner
+            : bitmapRenderPlannerModule.create();
 
         function observeEntry(entry, status) {
             if (!entry || !entry.recordId) return null;
@@ -49,7 +48,7 @@
                 metadata: {
                     ownerType: entry.ownerType,
                     methodName: entry.methodName,
-                    fragments: entry.fragments ? entry.fragments.length : 0,
+                    sourceRunRecords: countSourceRunRecords(entry),
                     drawOrder: entry.drawOrder || 0,
                 },
             };
@@ -58,6 +57,7 @@
                 ownership: entry.ownershipToken,
                 ownershipRequired: true,
             });
+            indexEntrySourceRun(entry);
             return observed;
         }
 
@@ -73,6 +73,10 @@
                 slotKey: entry.slotKey || source.slotKey || '',
                 generation: Number(entry.surfaceRevision) || Number(source.generation) || 0,
             }));
+        }
+
+        function countSourceRunRecords(entry) {
+            return Array.isArray(entry && entry.sourceRunRecords) ? entry.sourceRunRecords.length : 0;
         }
         
         function requestEntryTranslation(entry) {
@@ -97,7 +101,7 @@
                 slotKey: entry.slotKey || '',
                 status: 'pending',
                 ownerType: entry.ownerType || '',
-                fragments: entry.fragments ? entry.fragments.length : 0,
+                sourceRunRecords: countSourceRunRecords(entry),
                 bounds: cloneTraceRect(entry.bounds),
             }));
             try {
@@ -141,12 +145,28 @@
                 });
             }
         
+            const copiedTargetRenderPlan = bitmapRenderPlanner.createBitmapSourceEntryCopiedTargetRenderPlan({
+                entry,
+                text: restored,
+                collectProjectedTargets: materializeCopiedBitmapTargetRedraws,
+                detachedEntry: isCopiedTargetDetachedEntry(entry),
+            });
+            const copiedTargetRenderPlanDiagnostics = copiedTargetRenderPlan && copiedTargetRenderPlan.diagnostics || null;
             let redrawDiagnostics = null;
             if (!isCopiedTargetDetachedEntry(entry)) {
-                redrawDiagnostics = redrawBitmapEntry(entry, restored, command);
+                redrawDiagnostics = executeBitmapFallbackRender(entry, restored, command);
             }
             entry.renderedText = restored;
-            const copiedTargetRedraws = redrawCopiedBitmapTargets(entry, restored);
+            const copiedTargetCompositionProofs = [];
+            const copiedTargetRedraws = copiedTargetRenderPlan && copiedTargetRenderPlan.status === 'planned'
+                ? redrawCopiedBitmapTargets(entry, restored, Object.assign({}, copiedTargetRenderPlan.redrawOptions || {}, {
+                    compositionProofs: copiedTargetCompositionProofs,
+                }))
+                : 0;
+            const copiedTargetProof = copiedTargetProofSummary.createCopiedTargetProofSummary(
+                copiedTargetCompositionProofs,
+                copiedTargetRedraws
+            );
             if (isCopiedTargetDetachedEntry(entry) && copiedTargetRedraws <= 0) {
                 const reason = 'copied-bitmap-target-missing';
                 retireEntry(entry, reason, 'stale');
@@ -154,6 +174,8 @@
                     translationReceived: translated,
                     translationDrawn: '',
                     copiedTargetRedraws,
+                    copiedTargetProof,
+                    copiedTargetRenderPlan: copiedTargetRenderPlanDiagnostics,
                 });
             }
             updateItem(entry, {
@@ -165,16 +187,20 @@
                 translationDrawn: restored,
                 sourceHint: command.metadata && command.metadata.sourceHint,
                 copiedTargetRedraws,
+                copiedTargetProof,
                 detachedCopiedTarget: isCopiedTargetDetachedEntry(entry) === true,
+                copiedTargetRenderPlan: copiedTargetRenderPlanDiagnostics,
             });
-            return createBitmapRenderCommit('accepted', 'bitmap-redraw-applied', entry, command, route, {
+            return createBitmapRenderCommit('committed', 'bitmap-redraw-applied', entry, command, route, {
                 translationReceived: translated,
                 translationDrawn: restored,
                 sourceHint: command.metadata && command.metadata.sourceHint,
                 ownerType: entry.ownerType,
                 methodName: entry.methodName,
                 copiedTargetRedraws,
+                copiedTargetProof,
                 detachedCopiedTarget: isCopiedTargetDetachedEntry(entry) === true,
+                copiedTargetRenderPlan: copiedTargetRenderPlanDiagnostics,
                 redraw: redrawDiagnostics,
             });
         }
@@ -204,14 +230,17 @@
                 ? renderTransaction.createRenderCommit(payload)
                 : payload;
         }
-        
+
         function getRenderGeneration(entry) {
             return entry && entry.surfaceRevision ? Number(entry.surfaceRevision) : 0;
         }
         
         function isRenderTargetCurrent(entry) {
             if (!entry || entry.stale || !entry.bitmap || !entry.state) return false;
-            if (isCopiedTargetDetachedEntry(entry)) return hasCopiedBitmapTargets(entry);
+            if (isCopiedTargetDetachedEntry(entry)) {
+                const recoveryPlan = planBitmapCopiedTargetRecovery(entry);
+                return !!(recoveryPlan && recoveryPlan.status === 'planned');
+            }
             if (entry.state.entries.get(entry.key) !== entry) return false;
             return true;
         }
@@ -234,120 +263,6 @@
                 warn('[BitmapText] Failed to restore control-code placeholders.', error);
                 return translated;
             }
-        }
-        
-        function redrawBitmapEntry(entry, restored, command) {
-            const bitmap = entry.bitmap;
-            const state = entry.state;
-            const clearRect = calculateClearRect(bitmap, entry);
-            const clearBounds = clearRect
-                ? rectFromDimensions(clearRect.x, clearRect.y, clearRect.width, clearRect.height)
-                : null;
-            const order = entry.drawOrder || 0;
-            const replayBefore = clearBounds ? collectReplayItems(state, clearBounds, entry, (value) => value < order) : [];
-            const replayAfter = clearBounds ? collectReplayItems(state, clearBounds, entry, (value) => value > order) : [];
-            const backdropPlan = backdropProvider.chooseRestorePlan({
-                entry,
-                targetBitmap: bitmap,
-                replayBefore,
-                replayRect: clearBounds,
-                clearArea: clearRect,
-                patches: entry.backgroundPatches,
-                allowPatches: true,
-            });
-            const redrawDiagnostics = createBitmapRedrawDiagnostics(clearRect, clearBounds, replayBefore, replayAfter, backdropPlan, entry);
-            scope.bitmapServices.withActiveRedrawEntry(bitmap, entry, () => {
-                withBitmapReplay(bitmap, () => {
-                    if (clearRect && clearRect.width > 0 && clearRect.height > 0 && typeof bitmap.clearRect === 'function') {
-                        bitmap.clearRect(clearRect.x, clearRect.y, clearRect.width, clearRect.height);
-                    }
-                    if (backdropPlan.patches && backdropPlan.patches.apply === true) {
-                        backdropProvider.restorePatches(bitmap, entry.backgroundPatches, { targetRect: clearBounds });
-                    }
-                    if (backdropPlan.replay && backdropPlan.replay.applyAfterClear === true) {
-                        replayBitmapItems(bitmap, replayBefore);
-                    }
-                    drawBitmapTextValue(bitmap, entry, restored, { scaleTranslated: true });
-                    replayBitmapItems(bitmap, replayAfter);
-                }, 'bitmap-fallback-redraw');
-            });
-            // Bitmap fallback redraws mutate the source canvas directly under a
-            // replay guard; make the renderer upload those pixels this frame.
-            markBitmapPixelsDirty(bitmap);
-            if (scope.telemetry && typeof scope.telemetry.logDraw === 'function') {
-                scope.telemetry.logDraw('bitmap_redraw', restored, entry.drawParams.x, entry.drawParams.y, {
-                    ownerType: entry.ownerType,
-                    method: entry.methodName,
-                    sourceHint: command && command.metadata && command.metadata.sourceHint,
-                });
-            }
-            return redrawDiagnostics;
-        }
-
-        function createBitmapRedrawDiagnostics(clearRect, clearBounds, replayBefore, replayAfter, backdropPlan, entry) {
-            const patches = Array.isArray(entry && entry.backgroundPatches) ? entry.backgroundPatches : [];
-            const trustedPatches = patches.filter((patch) => patch && patch.trusted === true).length;
-            const backdrop = summarizeBitmapBackdropPlan(backdropPlan) || {};
-            return {
-                clearRect: formatArea(clearRect),
-                clearBounds: formatRect(clearBounds),
-                replayBefore: Array.isArray(replayBefore) ? replayBefore.length : 0,
-                replayAfter: Array.isArray(replayAfter) ? replayAfter.length : 0,
-                patchCount: patches.length,
-                trustedPatchCount: trustedPatches,
-                untrustedPatchCount: patches.length - trustedPatches,
-                backdropKind: backdrop.kind,
-                backdropSource: backdrop.source,
-                backdropClearMode: backdrop.clearMode,
-                backdropSteps: backdrop.steps,
-                backdropPatchesApply: backdrop.patchesApply,
-                backdropPatchCount: backdrop.patchCount,
-                backdropPatchesCoverTarget: backdrop.patchesCoverTarget,
-                backdropReplayApplyAfterClear: backdrop.replayApplyAfterClear,
-                backdropReplayItemCount: backdrop.replayItemCount,
-                backdropReplayCoversTarget: backdrop.replayCoversTarget,
-            };
-        }
-
-        function summarizeBitmapBackdropPlan(plan) {
-            if (!plan || typeof plan !== 'object') return null;
-            return {
-                kind: plan.kind || '',
-                source: plan.source || '',
-                clearMode: plan.clearMode || '',
-                steps: Array.isArray(plan.steps) ? plan.steps.join(',') : '',
-                patchesApply: plan.patches && plan.patches.apply === true,
-                patchCount: plan.patches ? Number(plan.patches.count) || 0 : 0,
-                patchesCoverTarget: plan.patches && plan.patches.coversTarget === true,
-                replayApplyAfterClear: plan.replay && plan.replay.applyAfterClear === true,
-                replayItemCount: plan.replay ? Number(plan.replay.itemCount) || 0 : 0,
-                replayCoversTarget: plan.replay && plan.replay.coversTarget === true,
-            };
-        }
-
-        function formatArea(area) {
-            if (!area) return '';
-            return [
-                `x=${formatNumber(area.x)}`,
-                `y=${formatNumber(area.y)}`,
-                `w=${formatNumber(area.width)}`,
-                `h=${formatNumber(area.height)}`,
-            ].join(',');
-        }
-
-        function formatRect(rect) {
-            if (!rect) return '';
-            return [
-                `x1=${formatNumber(rect.x1)}`,
-                `y1=${formatNumber(rect.y1)}`,
-                `x2=${formatNumber(rect.x2)}`,
-                `y2=${formatNumber(rect.y2)}`,
-            ].join(',');
-        }
-
-        function formatNumber(value) {
-            const number = Number(value);
-            return Number.isFinite(number) ? String(Math.round(number * 1000) / 1000) : '';
         }
         
         function markEntryTerminal(entry, status, reason) {
@@ -387,17 +302,188 @@
             if (current === 'detected' || current === 'completed' || current === 'skipped' || current === 'failed') return current;
             return fallback;
         }
+
+        // Projected copied-target restoration starts from ledger source-run
+        // identity, so the entry lookup index must follow record lifecycle.
+        function findEntryBySourceRun(input = {}) {
+            const lookup = createSourceRunLookup(input);
+            const keys = createSourceRunIndexKeys(lookup);
+            if (!keys.length) return null;
+            const index = getSourceRunEntryIndex(false);
+            if (!index) return null;
+            const visited = new Set();
+            for (let keyIndex = 0; keyIndex < keys.length; keyIndex += 1) {
+                const bucket = index.get(keys[keyIndex]);
+                if (!bucket || typeof bucket.forEach !== 'function') continue;
+                let found = null;
+                bucket.forEach((entry) => {
+                    if (found || !entry || visited.has(entry)) return;
+                    visited.add(entry);
+                    if (entry.stale) {
+                        forgetEntrySourceRun(entry);
+                        return;
+                    }
+                    if (lookup.sourceBitmap && entry.bitmap && entry.bitmap !== lookup.sourceBitmap) return;
+                    if (matchesEntrySourceRunLookup(entry, lookup)) found = entry;
+                });
+                if (found) return found;
+            }
+            return null;
+        }
+
+        function indexEntrySourceRun(entry) {
+            if (!entry || entry.stale) return;
+            forgetEntrySourceRun(entry);
+            const keys = createSourceRunIndexKeys(createEntrySourceRunIdentity(entry));
+            if (!keys.length) return;
+            const index = getSourceRunEntryIndex(true);
+            const keyStore = getSourceRunEntryKeyStore(true);
+            if (!index || !keyStore) return;
+            keys.forEach((key) => {
+                let bucket = index.get(key);
+                if (!bucket) {
+                    bucket = new Set();
+                    index.set(key, bucket);
+                }
+                bucket.add(entry);
+            });
+            keyStore.set(entry, keys);
+        }
+
+        function forgetEntrySourceRun(entry) {
+            if (!entry) return;
+            const index = getSourceRunEntryIndex(false);
+            const keyStore = getSourceRunEntryKeyStore(false);
+            if (!index || !keyStore) return;
+            const keys = keyStore.get(entry);
+            if (Array.isArray(keys)) {
+                keys.forEach((key) => {
+                    const bucket = index.get(key);
+                    if (!bucket || typeof bucket.delete !== 'function') return;
+                    bucket.delete(entry);
+                    if (bucket.size === 0) index.delete(key);
+                });
+            }
+            if (typeof keyStore.delete === 'function') keyStore.delete(entry);
+        }
+
+        function createEntrySourceRunIdentity(entry) {
+            const boundary = entry && entry.drawBoundary && typeof entry.drawBoundary === 'object'
+                ? entry.drawBoundary
+                : null;
+            return {
+                sourceBitmap: entry && entry.bitmap || null,
+                sourceSurfaceId: firstSourceRunString(
+                    entry && entry.sourceSurfaceId,
+                    boundary && boundary.surfaceId,
+                    entry && entry.surfaceId
+                ),
+                sourceRunId: firstSourceRunString(
+                    entry && entry.sourceRunId,
+                    boundary && boundary.runId
+                ),
+                sourceSlotKey: firstSourceRunString(
+                    entry && entry.sourceSlotKey,
+                    boundary && boundary.slotKey,
+                    entry && entry.slotKey
+                ),
+            };
+        }
+
+        function createSourceRunLookup(input = {}) {
+            const request = input && typeof input === 'object' ? input : {};
+            const projection = request.projection && typeof request.projection === 'object'
+                ? request.projection
+                : {};
+            const sourceTextRun = request.sourceTextRun && typeof request.sourceTextRun === 'object'
+                ? request.sourceTextRun
+                : (projection && projection.sourceTextRun && typeof projection.sourceTextRun === 'object'
+                    ? projection.sourceTextRun
+                    : {});
+            return {
+                sourceBitmap: request.sourceBitmap || projection.sourceBitmap || sourceTextRun.sourceBitmap || null,
+                sourceSurfaceId: firstSourceRunString(
+                    request.sourceSurfaceId,
+                    projection.sourceSurfaceId,
+                    sourceTextRun.surfaceId,
+                    sourceTextRun.sourceSurfaceId
+                ),
+                sourceRunId: firstSourceRunString(
+                    request.sourceRunId,
+                    projection.sourceRunId,
+                    sourceTextRun.runId,
+                    sourceTextRun.sourceRunId
+                ),
+                sourceSlotKey: firstSourceRunString(
+                    request.sourceSlotKey,
+                    projection.sourceSlotKey,
+                    sourceTextRun.slotKey,
+                    sourceTextRun.sourceSlotKey
+                ),
+            };
+        }
+
+        function createSourceRunIndexKeys(identity) {
+            const sourceSurfaceId = normalizeSourceRunString(identity && identity.sourceSurfaceId);
+            if (!sourceSurfaceId) return [];
+            const keys = [];
+            const sourceRunId = normalizeSourceRunString(identity && identity.sourceRunId);
+            const sourceSlotKey = normalizeSourceRunString(identity && identity.sourceSlotKey);
+            if (sourceRunId) keys.push(`run:${sourceSurfaceId}:${sourceRunId}`);
+            if (sourceSlotKey) keys.push(`slot:${sourceSurfaceId}:${sourceSlotKey}`);
+            return keys;
+        }
+
+        function matchesEntrySourceRunLookup(entry, lookup) {
+            const identity = createEntrySourceRunIdentity(entry);
+            if (lookup.sourceSurfaceId && identity.sourceSurfaceId !== lookup.sourceSurfaceId) return false;
+            if (lookup.sourceRunId && identity.sourceRunId && identity.sourceRunId === lookup.sourceRunId) return true;
+            return !!(lookup.sourceSlotKey && identity.sourceSlotKey && identity.sourceSlotKey === lookup.sourceSlotKey);
+        }
+
+        function getSourceRunEntryIndex(create) {
+            if (!scope.sourceRunEntriesByKey && create) scope.sourceRunEntriesByKey = new Map();
+            const index = scope.sourceRunEntriesByKey;
+            return index && typeof index.get === 'function' && typeof index.set === 'function'
+                ? index
+                : null;
+        }
+
+        function getSourceRunEntryKeyStore(create) {
+            if (!scope.sourceRunEntryKeys && create) scope.sourceRunEntryKeys = new WeakMap();
+            const keyStore = scope.sourceRunEntryKeys;
+            return keyStore && typeof keyStore.get === 'function' && typeof keyStore.set === 'function'
+                ? keyStore
+                : null;
+        }
+
+        function firstSourceRunString(...values) {
+            for (let index = 0; index < values.length; index += 1) {
+                const value = normalizeSourceRunString(values[index]);
+                if (value) return value;
+            }
+            return '';
+        }
+
+        function normalizeSourceRunString(value) {
+            const normalized = stringify(value);
+            return normalized ? normalized : '';
+        }
         
-        function retireEntry(entry, reason = 'bitmap-entry-stale', status = 'stale') {
+        function retireEntry(entry, reason = 'bitmap-entry-stale', status = 'stale', details = null) {
             if (!entry || entry.stale) return false;
-            forgetCopiedBitmapTargets(entry);
+            forgetEntrySourceRun(entry);
             entry.stale = true;
             if (entry.recordId && isEntryActive(entry)) {
+                const eventDetails = Object.assign({
+                    ownerType: entry.ownerType,
+                    methodName: entry.methodName,
+                }, details || {});
                 scope.adapterContract.cancelItemTranslation(entry, reason, { abortJob: true });
                 scope.adapterContract.retireItem(entry, status || 'stale', {
                     eventType: status === 'stale' ? 'item.stale' : `item.${status}`,
                     message: reason,
-                    details: { ownerType: entry.ownerType, methodName: entry.methodName },
+                    details: eventDetails,
                 });
             }
             if (entry.recordId) scope.entriesByItemId.delete(entry.recordId);
@@ -410,9 +496,19 @@
         }
 
         function detachEntryForCopiedTargets(entry, reason = 'bitmap-source-invalidated') {
-            if (!entry || entry.stale || !hasCopiedBitmapTargets(entry)) return false;
-            entry._trSourceDetachedForCopiedTargets = true;
-            entry._trCopiedSourceInvalidationReason = reason || 'bitmap-source-invalidated';
+            if (!entry || entry.stale) return false;
+            const recoveryPlan = planBitmapCopiedTargetRecovery(entry);
+            if (!recoveryPlan || recoveryPlan.status !== 'planned') return false;
+            const recoveryPlanDiagnostics = recoveryPlan.diagnostics || null;
+            const unresolvedCommands = getUnresolvedRenderCommandsForEntry(entry);
+            const renderRecovery = unresolvedCommands.length
+                ? createRenderCommandRecoveryDetails(
+                    unresolvedCommands,
+                    'retargeted-to-copied-surface',
+                    false
+                )
+                : null;
+            recordCopiedTargetDetachment(entry, reason || 'bitmap-source-invalidated', recoveryPlanDiagnostics);
             if (entry.state && entry.state.entries && entry.state.entries.get(entry.key) === entry) {
                 entry.state.entries.delete(entry.key);
             }
@@ -421,33 +517,130 @@
                 entry.ownershipToken = null;
             }
             if (entry.recordId && isEntryActive(entry) && scope.adapterContract && typeof scope.adapterContract.backgroundItem === 'function') {
-                scope.adapterContract.backgroundItem(entry, {
+                const backgroundDetails = {
                     reason: reason || 'bitmap-source-invalidated',
                     screenState: 'copied-bitmap-target',
-                    copiedTargets: countCopiedBitmapTargets(entry),
-                    sourceSurfaceId: entry.surfaceId || '',
+                    copiedTargets: Number(recoveryPlan.copiedTargets) || 0,
+                    copiedTargetRecoveryPlan: recoveryPlanDiagnostics,
+                    sourceSurfaceId: entry.sourceSurfaceId || entry.surfaceId || '',
+                    sourceRunId: entry.sourceRunId || '',
+                    sourceSlotKey: entry.sourceSlotKey || '',
+                    sourceSurfaceRevision: entry.sourceSurfaceRevision || 0,
                     ownerType: entry.ownerType || '',
                     methodName: entry.methodName || '',
-                });
+                };
+                if (renderRecovery) Object.assign(backgroundDetails, renderRecovery);
+                scope.adapterContract.backgroundItem(entry, backgroundDetails);
             }
             return true;
         }
 
+        function rejectUnresolvedRenderCommandsForInvalidation(entry, reason = 'bitmap-entry-invalidated') {
+            // Bitmap invalidation can tear down local entry state, but the
+            // orchestrator owns render command state and must receive the
+            // explicit terminal outcome before the local record is retired.
+            const unresolvedCommands = getUnresolvedRenderCommandsForEntry(entry);
+            if (!unresolvedCommands.length) return null;
+            const outcome = resolveBitmapInvalidationRenderOutcome(reason);
+            const recovery = createRenderCommandRecoveryDetails(unresolvedCommands, outcome, true);
+            if (scope.adapterContract && typeof scope.adapterContract.recordRenderRejected === 'function') {
+                unresolvedCommands.forEach((command) => {
+                    const commandId = getRenderCommandId(command);
+                    if (!commandId) return;
+                    scope.adapterContract.recordRenderRejected(entry, {
+                        commandId,
+                        strategy: String(command && command.strategy || RENDER_STRATEGY),
+                        commandGeneration: Number(command && (command.generation || command.commandGeneration)) || 0,
+                        reason: outcome,
+                        details: Object.assign({
+                            ownerType: entry && entry.ownerType || '',
+                            methodName: entry && entry.methodName || '',
+                            invalidationReason: reason || '',
+                        }, recovery),
+                    });
+                });
+            }
+            return recovery;
+        }
+
+        function getUnresolvedRenderCommandsForEntry(entry) {
+            if (!entry || !entry.recordId || !scope.adapterContract
+                || typeof scope.adapterContract.getUnresolvedRenderCommandsForItem !== 'function') {
+                return [];
+            }
+            const commands = scope.adapterContract.getUnresolvedRenderCommandsForItem(entry);
+            return Array.isArray(commands) ? commands.filter(Boolean) : [];
+        }
+
+        function createRenderCommandRecoveryDetails(commands, outcome, terminal) {
+            const summaries = commands.map(summarizeRenderCommandForRecovery);
+            return {
+                renderOutcome: outcome,
+                renderCommandRecovery: {
+                    outcome,
+                    terminal: terminal === true,
+                    commandIds: summaries.map((command) => command.commandId).filter(Boolean),
+                },
+                unresolvedRenderCommands: summaries,
+            };
+        }
+
+        function summarizeRenderCommandForRecovery(command) {
+            return {
+                commandId: getRenderCommandId(command),
+                status: String(command && command.status || ''),
+                strategy: String(command && command.strategy || ''),
+                generation: Number(command && (command.generation || command.commandGeneration)) || 0,
+                targetSurfaceId: String(command && command.targetSurfaceId || ''),
+            };
+        }
+
+        function getRenderCommandId(command) {
+            return String(command && (command.commandId || command.id) || '');
+        }
+
+        function resolveBitmapInvalidationRenderOutcome(reason) {
+            const normalized = String(reason || '');
+            if (normalized.indexOf('clear') >= 0 || normalized.indexOf('destroy') >= 0 || normalized.indexOf('resize') >= 0) {
+                return 'aborted-by-surface-invalidation';
+            }
+            return 'aborted-by-bitmap-invalidation';
+        }
+
         function isCopiedTargetDetachedEntry(entry) {
-            return !!(entry && entry._trSourceDetachedForCopiedTargets === true);
+            const detachment = getCopiedTargetDetachment(entry);
+            return !!(detachment && detachment.detached === true);
         }
 
-        function hasCopiedBitmapTargets(entry) {
-            return !!(entry
-                && Array.isArray(entry._trCopiedBitmapTargets)
-                && entry._trCopiedBitmapTargets.some((target) => target && target.targetBitmap));
+        function recordCopiedTargetDetachment(entry, reason, recoveryPlanDiagnostics) {
+            if (!entry) return;
+            const lifecycle = entry.renderLifecycle && typeof entry.renderLifecycle === 'object'
+                ? entry.renderLifecycle
+                : (entry.renderLifecycle = {});
+            lifecycle.copiedTargetDetachment = {
+                detached: true,
+                reason: reason || 'bitmap-source-invalidated',
+                at: Date.now(),
+                recoveryPlan: recoveryPlanDiagnostics || null,
+            };
         }
 
-        function countCopiedBitmapTargets(entry) {
-            if (!entry || !Array.isArray(entry._trCopiedBitmapTargets)) return 0;
-            return entry._trCopiedBitmapTargets.filter((target) => target && target.targetBitmap).length;
+        function getCopiedTargetDetachment(entry) {
+            const lifecycle = entry && entry.renderLifecycle && typeof entry.renderLifecycle === 'object'
+                ? entry.renderLifecycle
+                : null;
+            return lifecycle && lifecycle.copiedTargetDetachment && typeof lifecycle.copiedTargetDetachment === 'object'
+                ? lifecycle.copiedTargetDetachment
+                : null;
         }
-        
+
+        function planBitmapCopiedTargetRecovery(entry) {
+            return bitmapRenderPlanner.createBitmapSourceEntryCopiedTargetRecoveryPlan({
+                entry,
+                collectProjectedTargets: materializeCopiedBitmapTargetRedraws,
+            });
+        }
+
         function shouldKeepRecordAfterRenderRejection(decision = {}) {
             const reason = normalizeRenderRejectionReason(decision);
             if (reason !== 'generation-mismatch') return false;
@@ -467,8 +660,10 @@
             return reason || 'render-rejected';
         }
 
-        return { observeEntry, requestEntryTranslation, applyRenderCommand, getRenderGeneration, isRenderTargetCurrent, handleRenderRejected, restoreTranslatedEntryText, redrawBitmapEntry, markEntryTerminal, isEntryActive, getEntryStatus, isEntryRequestActive, isEntryCompleted, getEntryObservationStatus, retireEntry, detachEntryForCopiedTargets, shouldKeepRecordAfterRenderRejection, isRenderApplicationFailure, normalizeRenderRejectionReason };
+        return { observeEntry, requestEntryTranslation, applyRenderCommand, getRenderGeneration, isRenderTargetCurrent, handleRenderRejected, restoreTranslatedEntryText, markEntryTerminal, isEntryActive, getEntryStatus, isEntryRequestActive, isEntryCompleted, findEntryBySourceRun, getEntryObservationStatus, retireEntry, detachEntryForCopiedTargets, rejectUnresolvedRenderCommandsForInvalidation, getUnresolvedRenderCommandsForEntry, shouldKeepRecordAfterRenderRejection, isRenderApplicationFailure, normalizeRenderRejectionReason };
     }
 
-    defineRuntimeModule('adapters.bitmapTextRecords', { create: createController });
+            return { create: createController };
+        },
+    });
 })();

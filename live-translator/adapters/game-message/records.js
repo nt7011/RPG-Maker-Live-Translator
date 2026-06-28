@@ -3,18 +3,12 @@
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    const requireRuntimeModule = globalScope.LiveTranslatorRequire;
-    if (typeof defineRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/game-message/records.js.');
-    }
-    if (typeof requireRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module require is unavailable before adapters/game-message/records.js.');
-    }
-    const renderTransaction = requireRuntimeModule('runtime.renderTransaction');
+    LiveTranslatorDefine({
+        name: 'adapters.gameMessage.records',
+        requires: {
+            renderTransaction: 'runtime.renderTransaction',
+        },
+        factory({ renderTransaction }) {
 
     function createController(scope = {}) {
         const { MESSAGE_ADAPTER_ID, MESSAGE_RENDER_STRATEGY, MESSAGE_ACTIVE_PRIORITY, MESSAGE_BACKGROUND_PRIORITY, stripControls, adapterContract, messageRecordsById, renderTargets, detachedRecords, bitmapGlyphSources } = scope;
@@ -273,10 +267,10 @@
             return adapterContract.recordDecision(target, type, message, details);
         }
 
-        function recordRenderAccepted(record, decision = {}) {
+        function recordRenderCommitted(record, decision = {}) {
             const target = resolveMessageRecord(record);
-            if (!target || typeof adapterContract.recordRenderAccepted !== 'function') return null;
-            return adapterContract.recordRenderAccepted(target, decision);
+            if (!target || typeof adapterContract.recordRenderCommitted !== 'function') return null;
+            return adapterContract.recordRenderCommitted(target, decision);
         }
 
         function recordRenderDeferred(record, decision = {}) {
@@ -508,7 +502,7 @@
             observeMessageRecord,
             updateItem,
             recordDecision,
-            recordRenderAccepted,
+            recordRenderCommitted,
             recordRenderDeferred,
             recordRenderRejected,
             backgroundItem,
@@ -531,5 +525,7 @@
         };
     }
 
-    defineRuntimeModule('adapters.gameMessage.records', { create: createController });
+            return { create: createController };
+        },
+    });
 })();

@@ -3,13 +3,12 @@
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    if (typeof defineRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/sprite-text/bitmap-observation.js.');
-    }
+    LiveTranslatorDefine({
+        name: 'adapters.spriteText.bitmapObservation',
+        requires: {
+            sourceObservationContract: 'runtime.bitmap.sourceObservation',
+        },
+        factory({ sourceObservationContract }) {
 
     function createController(scope = {}) {
         const renderTransaction = scope.renderTransaction;
@@ -44,22 +43,28 @@
         } = scope.controllerFacades.utils;
 
         /**
-         * Record a Bitmap.drawText observation offered by bitmap-text-adapter.
+         * Record a Bitmap.drawText observation offered by bitmap-text.js.
          */
         function recordBitmapDrawText(payload = {}) {
             const bitmap = payload.bitmap || null;
-            const status = normalizeBitmapDrawRecordStatus(payload.ownershipStatus)
-                || getBitmapDrawRecordStatus(bitmap, payload);
-            if (status === 'ignored') return { status };
+            const decision = describeSourceSuppressedBitmapDrawDecision(bitmap)
+                || normalizeBitmapDrawRecordDecision(payload.ownershipStatus, payload.ownershipReason)
+                || getBitmapDrawRecordDecision(bitmap, payload);
+            const status = decision.status;
+            if (isTerminalBitmapDrawRecordStatus(status)) return createBitmapDrawRecordResult(decision);
             if (status === 'deferred' && payload && payload.ownerClaimOnly === true) {
-                return { status };
+                return createBitmapDrawRecordResult(decision);
             }
         
             const text = stringify(payload.text);
-            if (!sanitizeVisibleText(text)) return { status: 'ignored' };
+            if (!sanitizeVisibleText(text)) {
+                return createBitmapDrawRecordResult(createBitmapDrawRecordDecision('ignored', 'empty-visible-text'));
+            }
         
             const state = ensureBitmapState(bitmap);
-            if (!state) return { status: 'ignored' };
+            if (!state) {
+                return createBitmapDrawRecordResult(createBitmapDrawRecordDecision('ignored', 'missing-bitmap-state'));
+            }
             state.destroyed = false;
             state.revision += 1;
             state.order += 1;
@@ -71,7 +76,7 @@
             markBitmapOwnersDirty(bitmap, 'drawText');
             scope.perf.count('spriteText.bitmap.textOp');
             scope.perf.top('spriteText.bitmap.status', status);
-            return { status };
+            return createBitmapDrawRecordResult(decision);
         }
         
         /**
@@ -82,17 +87,65 @@
          * group glyph runs at the frame boundary.
          */
         function getBitmapDrawRecordStatus(bitmap, payload) {
-            if (!bitmap || isOverlayBitmap(bitmap)) return 'ignored';
-            if (scope.bitmapServices.getRenderGuardReason(bitmap)) return 'ignored';
-            if (isWindowOwnedBitmap(bitmap)) return 'ignored';
-            if (payload && payload.owner) return 'ignored';
-            return isBitmapOwned(bitmap) ? 'claimed' : 'deferred';
+            return getBitmapDrawRecordDecision(bitmap, payload).status;
+        }
+
+        function getBitmapDrawRecordDecision(bitmap, payload) {
+            if (!bitmap) return createBitmapDrawRecordDecision('ignored', 'missing-bitmap');
+            if (isOverlayBitmap(bitmap)) return createBitmapDrawRecordDecision('ignored', 'sprite-overlay-bitmap');
+            const sourceSuppressed = describeSourceSuppressedBitmapDrawDecision(bitmap);
+            if (sourceSuppressed) return sourceSuppressed;
+            if (isWindowOwnedBitmap(bitmap)) return createBitmapDrawRecordDecision('ignored', 'window-owned-bitmap');
+            if (payload && payload.owner) return createBitmapDrawRecordDecision('ignored', 'claimed-by-owner');
+            return createBitmapDrawRecordDecision(isBitmapOwned(bitmap) ? 'claimed' : 'deferred', '');
+        }
+
+        function describeSourceSuppressedBitmapDrawDecision(bitmap) {
+            if (!bitmap) return null;
+            const sourcePolicy = scope.bitmapServices.getSourceObservationPolicy(bitmap);
+            if (!sourcePolicy || sourcePolicy.suppressSourceObservation !== true) return null;
+            return createBitmapDrawRecordDecision(
+                'source-suppressed',
+                sourcePolicy.diagnosticReason || sourcePolicy.reason || 'source-observation-suppressed'
+            );
         }
         
         function normalizeBitmapDrawRecordStatus(status) {
-            const value = String(status || '');
-            if (value === 'claimed' || value === 'deferred') return value;
+            const value = String(status || '').replace(/_/g, '-');
+            if (value === 'claimed' || value === 'deferred' || value === 'ignored' || value === 'source-suppressed' || value === 'rejected') return value;
             return '';
+        }
+
+        function normalizeBitmapDrawRecordDecision(status, reason = '') {
+            const normalized = normalizeBitmapDrawRecordStatus(status);
+            return normalized ? createBitmapDrawRecordDecision(normalized, reason) : null;
+        }
+
+        function createBitmapDrawRecordDecision(status, reason = '') {
+            const normalized = normalizeBitmapDrawRecordStatus(status) || 'ignored';
+            const sourceObservationStatus = normalized === 'claimed' || normalized === 'deferred'
+                ? 'observed'
+                : (normalized === 'source-suppressed' ? 'suppressed' : (normalized === 'rejected' ? 'rejected' : 'ignored'));
+            return {
+                status: normalized,
+                reason: stringify(reason || ''),
+                sourceObservation: sourceObservationContract.createSourceObservation(sourceObservationStatus, reason),
+            };
+        }
+
+        function createBitmapDrawRecordResult(decision) {
+            const source = decision && typeof decision === 'object'
+                ? decision
+                : createBitmapDrawRecordDecision('ignored', 'invalid-decision');
+            return {
+                status: source.status,
+                reason: source.reason || '',
+                sourceObservation: source.sourceObservation || sourceObservationContract.createSourceObservation('ignored', source.reason),
+            };
+        }
+
+        function isTerminalBitmapDrawRecordStatus(status) {
+            return status === 'ignored' || status === 'source-suppressed' || status === 'rejected';
         }
         
         /**
@@ -204,14 +257,14 @@
         }
         
         /**
-         * Subscribe to bitmap mutation capabilities or install fallback wrappers.
+         * Subscribe to bitmap mutation capabilities from the shared bitmap service.
          */
         function installBitmapMutationObserver() {
             if (scope.bitmapServices.hasMutationPublisher()) {
                 scope.bitmapMutationObserver = scope.bitmapServices;
                 return true;
             }
-            installFallbackBitmapMutationWrappers();
+            if (scope.testOnlyMutationFallbackWrappers === true) installFallbackBitmapMutationWrappers();
             return false;
         }
         
@@ -226,7 +279,7 @@
         }
         
         /**
-         * Fallback mutation wrappers for tests or unusual load orders.
+         * Test-only mutation wrappers used by isolated sprite adapter tests.
          */
         function installFallbackBitmapMutationWrappers() {
             [
@@ -351,8 +404,10 @@
             }
         }
 
-        return { recordBitmapDrawText, getBitmapDrawRecordStatus, normalizeBitmapDrawRecordStatus, createTextOpFromPayload, recordBitmapMutation, installBitmapMutationObserver, handleObservedBitmapMutation, installFallbackBitmapMutationWrappers, recordPaintOp, deriveMutationRect };
+        return { recordBitmapDrawText, getBitmapDrawRecordStatus, getBitmapDrawRecordDecision, normalizeBitmapDrawRecordStatus, createTextOpFromPayload, recordBitmapMutation, installBitmapMutationObserver, handleObservedBitmapMutation, recordPaintOp, deriveMutationRect };
     }
 
-    defineRuntimeModule('adapters.spriteText.bitmapobservation', { createController });
+            return { createController };
+        },
+    });
 })();

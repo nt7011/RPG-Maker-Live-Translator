@@ -1,5 +1,5 @@
 // Pure helper functions for the Precacher UI controller.
-// These helpers avoid touching DOM or filesystem state so app.js can focus on workflow orchestration.
+// These helpers avoid touching DOM or filesystem state so app/index.js can focus on workflow orchestration.
 (() => {
     'use strict';
 

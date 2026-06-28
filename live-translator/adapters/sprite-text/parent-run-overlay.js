@@ -3,13 +3,9 @@
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    if (typeof defineRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/sprite-text/parent-run-overlay.js.');
-    }
+    LiveTranslatorDefine({
+        name: 'adapters.spriteText.parentRunOverlay',
+        factory() {
 
     function createController(scope = {}) {
         const { hasRenderedTranslation } = scope.controllerFacades.entries;
@@ -53,7 +49,7 @@
             if (!bitmap || bitmap._destroyed || run._trOverlaySignature !== signature) {
                 try {
                     bitmap = new Bitmap(layout.width, layout.height);
-                    bitmap._trSpriteTextOverlayBitmap = true;
+                    scope.overlayBitmaps.add(bitmap);
                     drawTextToBitmap(bitmap, {
                         drawState: run.drawState,
                         methodName: 'drawText',
@@ -88,13 +84,25 @@
                 overlay.renderable = renderable;
                 hideRunSources(run, renderable);
                 scope.activeParents.add(run.parent);
-                if (redrewBitmap) logOverlayDraw('sprite-run', source, [run]);
+                if (redrewBitmap) {
+                    finalizeParentRunOverlayBitmapDirty(bitmap, 'sprite-parent-run-overlay-redraw');
+                    logOverlayDraw('sprite-run', source, [run]);
+                }
                 return true;
             } catch (error) {
                 warn('[SpriteText] Failed to render glyph-run overlay.', error);
                 removeParentRun(run, 'render-error');
                 return false;
             }
+        }
+
+        function finalizeParentRunOverlayBitmapDirty(bitmap, reason) {
+            const bitmapServices = scope.bitmapServices;
+            if (!bitmapServices || typeof bitmapServices.markBitmapPixelsDirty !== 'function') return null;
+            return bitmapServices.markBitmapPixelsDirty(bitmap, {
+                source: 'sprite-parent-run-overlay',
+                reason: String(reason || 'sprite-parent-run-overlay-redraw'),
+            });
         }
 
         /**
@@ -282,5 +290,7 @@
         return { renderParentRunOverlay, computeParentRunOverlayLayout, createParentRunOverlaySignature, copyRunReferenceVisualState, attachParentRunOverlay, resolveParentRunOverlayParent, ensureParentRunOverlayCarrier, createParentRunOverlayCarrier, syncParentRunOverlayCarrier, releaseParentRunOverlayCarrier, parentHasLiveRunOverlay };
     }
 
-    defineRuntimeModule('adapters.spriteText.parentrunoverlay', { createController });
+            return { createController };
+        },
+    });
 })();

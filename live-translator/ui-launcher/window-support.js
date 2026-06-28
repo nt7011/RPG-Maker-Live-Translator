@@ -1,10 +1,22 @@
-// Window and geometry helpers for ui-launcher.js.
+// Window and geometry helpers for ui-launcher/index.js.
 //
 // The launcher decides which UI windows exist and when they open. This support
 // file owns the cross-runtime details: URL construction, NW/browser window
 // handles, window sizing geometry, and stale-handle detection.
 (() => {
     'use strict';
+
+    LiveTranslatorDefine({
+        name: 'uiLauncher.windowSupport',
+        factory() {
+            return {
+                createUiWindow,
+                isEditableTarget,
+                normalizePositiveInteger,
+                resolveSupportPath,
+            };
+        },
+    });
 
     function resolveSupportPath(script, scriptUrl) {
         try {
@@ -464,10 +476,4 @@
         return target.isContentEditable || tag === 'input' || tag === 'textarea' || tag === 'select';
     }
 
-    globalThis.LiveTranslatorUiLauncherSupport = {
-        createUiWindow,
-        isEditableTarget,
-        normalizePositiveInteger,
-        resolveSupportPath,
-    };
 })();

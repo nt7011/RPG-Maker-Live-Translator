@@ -3,13 +3,9 @@
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    if (typeof defineRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/sprite-text/bitmap-ownership.js.');
-    }
+    LiveTranslatorDefine({
+        name: 'adapters.spriteText.bitmapOwnership',
+        factory() {
 
     function createController(scope = {}) {
         const { removeSpriteOverlay } = scope.controllerFacades.overlaySprite;
@@ -75,7 +71,6 @@
                 scope.bitmapOwners.set(bitmap, owners);
             }
             owners.add(sprite);
-            try { bitmap._trSpriteTextOwned = true; } catch (_) {}
             claimSpriteBitmapSurface(sprite, bitmap);
             const existingState = scope.spriteStates.get(sprite);
             const relevant = isSpriteLifecycleRelevant(sprite, bitmap, existingState);
@@ -96,7 +91,6 @@
                 owners.delete(sprite);
                 if (!owners.size) {
                     try { scope.bitmapOwners.delete(bitmap); } catch (_) {}
-                    try { bitmap._trSpriteTextOwned = false; } catch (_) {}
                 }
             }
             releaseSpriteBitmapSurface(sprite, bitmap, 'bitmap-detach');
@@ -182,9 +176,11 @@
          */
         function bitmapHasTextInterest(bitmap) {
             if (!bitmap || isOverlayBitmap(bitmap) || isWindowOwnedBitmap(bitmap)) return false;
-            if (bitmap._trSpriteTextHasTextInterest) return true;
             const state = getBitmapState(bitmap);
-            return !!(state && !state.destroyed && Array.isArray(state.textOps) && state.textOps.length);
+            return !!(state && !state.destroyed && (
+                state.textInterest === true
+                || (Array.isArray(state.textOps) && state.textOps.length)
+            ));
         }
         
         /**
@@ -259,5 +255,7 @@
         return { installSpriteBitmapObserver, attachBitmapOwner, detachBitmapOwner, claimSpriteBitmapSurface, releaseSpriteBitmapSurface, isBitmapOwned, getBitmapOwners, isSpriteLifecycleRelevant, hasActiveSpriteTextState, bitmapHasTextInterest, markBitmapOwnersDirty, retireBitmapOwners, markSpriteDirty, markParentDirty };
     }
 
-    defineRuntimeModule('adapters.spriteText.bitmapownership', { createController });
+            return { createController };
+        },
+    });
 })();

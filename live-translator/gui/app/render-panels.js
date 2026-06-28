@@ -1,5 +1,5 @@
 // Translator monitor render panels helpers.
-// These functions share state from gui/app/state.js and are loaded before app.js boots.
+// These functions share state from gui/app/state.js and are loaded before app/index.js boots.
 'use strict';
 
 function refreshRuntimeFeed() {
@@ -35,9 +35,9 @@ function refreshRuntimeFeed() {
         state.detachedTexts = textFeed.detached;
         state.archivedTexts = textFeed.archived;
         state.textSummary = textFeed.summary;
-        state.diagnostics = normalizeDiagnosticsSnapshot(readTranslationDiagnosticsSnapshot(gameWindow, snapshotOptions));
+        state.diagnostics = normalizeDiagnosticsSnapshot(readTranslationIntelSnapshot(gameWindow, snapshotOptions));
         state.drawCaptureTrace = normalizeDrawCaptureTraceSnapshot(gameWindow.LiveTranslatorDrawCaptureTraceSnapshot);
-        state.foresight = normalizeForesightSnapshot(readForesightDiagnosticsSnapshot(gameWindow, snapshotOptions));
+        state.foresight = normalizeForesightSnapshot(readForesightIntelSnapshot(gameWindow, snapshotOptions));
         state.hookSummary = snapshot && snapshot.summary
             ? Object.assign({}, snapshot.summary)
             : (gameWindow.LiveTranslatorHookInstallSummary
@@ -61,18 +61,18 @@ function refreshRuntimeFeed() {
     }
 }
 
-function readTranslationDiagnosticsSnapshot(gameWindow, options = {}) {
-    const api = gameWindow && gameWindow.LiveTranslatorTranslationDiagnostics;
+function readTranslationIntelSnapshot(gameWindow, options = {}) {
+    const api = gameWindow && gameWindow.LiveTranslatorTranslationIntel;
     if (api && typeof api.getSnapshot === 'function') return api.getSnapshot(options);
     if (api && typeof api.snapshot === 'function') return api.snapshot(options);
-    return gameWindow ? gameWindow.LiveTranslatorTranslationDiagnosticsSnapshot : null;
+    return gameWindow ? gameWindow.LiveTranslatorTranslationIntelSnapshot : null;
 }
 
-function readForesightDiagnosticsSnapshot(gameWindow, options = {}) {
-    const api = gameWindow && gameWindow.LiveTranslatorForesightDiagnostics;
+function readForesightIntelSnapshot(gameWindow, options = {}) {
+    const api = gameWindow && gameWindow.LiveTranslatorForesightIntel;
     if (api && typeof api.getSnapshot === 'function') return api.getSnapshot(options);
     if (api && typeof api.snapshot === 'function') return api.snapshot(options);
-    return gameWindow ? gameWindow.LiveTranslatorForesightSnapshot : null;
+    return gameWindow ? gameWindow.LiveTranslatorForesightIntelSnapshot : null;
 }
 
 function renderStatus(policySnapshot = refreshGuiPolicySnapshot()) {
@@ -116,10 +116,10 @@ function createRuntimePanelRenderKeys(policySnapshot = getGuiPolicySnapshot()) {
     const effectivePolicy = getGuiEffectivePolicy(policySnapshot);
     return {
         status: createRuntimePanelRenderKey({
-            diagnostics: createDiagnosticsPanelKeySource(state.diagnostics),
+            diagnostics: createIntelPanelKeySource(state.diagnostics),
             drawCaptureTrace: createDrawCapturePanelKeySource(state.drawCaptureTrace),
             foresight: createForesightPanelKeySource(state.foresight),
-            diagnosticsPolicy: effectivePolicy.diagnostics,
+            intelPolicy: effectivePolicy.intel,
             drawCapturePolicy: effectivePolicy.drawCaptureTrace,
             foresightPolicy: effectivePolicy.foresight,
             cacheEntries: state.cacheEntries || '-',
@@ -135,7 +135,7 @@ function createRuntimePanelRenderKeys(policySnapshot = getGuiPolicySnapshot()) {
         }),
         textRecords: createRuntimePanelRenderKey({
             policy: {
-                detailView: effectivePolicy.textRecords.detailView,
+                detailsEnabled: effectivePolicy.textRecords.detailsEnabled,
                 inactiveDisplayLimit: effectivePolicy.textRecords.inactiveDisplayLimit,
                 showForesightSpoilers: effectivePolicy.textRecords.showForesightSpoilers,
             },
@@ -146,7 +146,7 @@ function createRuntimePanelRenderKeys(policySnapshot = getGuiPolicySnapshot()) {
     };
 }
 
-function createDiagnosticsPanelKeySource(diagnostics) {
+function createIntelPanelKeySource(diagnostics) {
     const source = diagnostics || {};
     const provider = source.provider || {};
     const jobs = source.jobs || {};
@@ -717,7 +717,7 @@ function renderDiagnosticJobList(bodyId, jobs, mode, policySnapshot = refreshGui
         const key = getDiagnosticJobDetailKey(mode, job);
         container.appendChild(createDiagnosticJobPill(job, mode, key, policySnapshot));
         const jobPolicy = getGuiDiagnosticJobPolicy(policySnapshot);
-        if (jobPolicy.detailView && jobPolicy.selectedDetailKey === key) {
+        if (jobPolicy.detailsEnabled && jobPolicy.selectedDetailKey === key) {
             container.appendChild(createDiagnosticJobExpanded(job, mode, key));
         }
     });

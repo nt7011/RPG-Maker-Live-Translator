@@ -1,5 +1,5 @@
 // Translator monitor diagnostic jobs helpers.
-// These functions share state from gui/app/state.js and are loaded before app.js boots.
+// These functions share state from gui/app/state.js and are loaded before app/index.js boots.
 'use strict';
 
 function formatPriority(job) {
@@ -190,6 +190,7 @@ function isCompletedTextEvent(type) {
         || type === 'item.translated'
         || type === 'item.cache_hit'
         || type === 'item.translation_reused'
+        || type === 'item.render_committed'
         || type === 'item.rendered';
 }
 
@@ -296,7 +297,7 @@ function formatTranslationRailState(railState) {
 function createDiagnosticJobPill(job, mode, detailKey, policySnapshot = refreshGuiPolicySnapshot()) {
     const button = document.createElement('button');
     const jobPolicy = getGuiDiagnosticJobPolicy(policySnapshot);
-    const detailEnabled = jobPolicy.detailView;
+    const detailEnabled = jobPolicy.detailsEnabled;
     button.type = 'button';
     button.className = `diagnostic-job-pill diagnostic-job-${normalizeDiagnosticStatusClass(job.status || mode)}`;
     if (detailEnabled && jobPolicy.selectedDetailKey === detailKey) button.className += ' diagnostic-job-active';
@@ -376,7 +377,7 @@ function createDiagnosticHistory(history) {
 
 function toggleDiagnosticJobDetail(detailKey) {
     const policySnapshot = refreshGuiPolicySnapshot();
-    if (!detailKey || !getGuiDiagnosticJobPolicy(policySnapshot).detailView) return;
+    if (!detailKey || !getGuiDiagnosticJobPolicy(policySnapshot).detailsEnabled) return;
     state.diagnosticDetailKey = state.diagnosticDetailKey === detailKey ? '' : detailKey;
     renderDiagnosticsPanel(refreshGuiPolicySnapshot());
 }

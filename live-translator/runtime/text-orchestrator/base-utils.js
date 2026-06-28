@@ -3,235 +3,231 @@
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    const requireRuntimeModule = globalScope.LiveTranslatorRequire;
-    if (typeof defineRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before runtime/text-orchestrator/base-utils.js.');
-    }
+    LiveTranslatorDefine({
+        name: 'runtime.textOrchestrator.baseUtils',
+        factory() {
+            const SERIALIZABLE_ROOT_KEY_LIMIT = 64;
+            const SERIALIZABLE_OBJECT_KEY_LIMIT = 32;
+            const SERIALIZABLE_ARRAY_LIMIT = 12;
+            const SERIALIZABLE_VALUE_DEPTH = 3;
 
-    const SERIALIZABLE_ROOT_KEY_LIMIT = 64;
-    const SERIALIZABLE_OBJECT_KEY_LIMIT = 32;
-    const SERIALIZABLE_ARRAY_LIMIT = 12;
-    const SERIALIZABLE_VALUE_DEPTH = 3;
-
-    function settingBoolean(value, fallback) {
-        if (value === undefined || value === null || value === '') return fallback === true;
-        if (typeof value === 'boolean') return value;
-        const normalized = String(value).trim().toLowerCase();
-        if (['true', '1', 'yes', 'on', 'enabled'].includes(normalized)) return true;
-        if (['false', '0', 'no', 'off', 'disabled'].includes(normalized)) return false;
-        return fallback === true;
-    }
-
-    function firstDefined(...values) {
-        for (const value of values) {
-            if (value !== undefined) return value;
-        }
-        return undefined;
-    }
-
-    /**
-     * Return the first string-like value while preserving empty strings.
-     */
-    function firstString(...values) {
-        for (const value of values) {
-            if (typeof value === 'string') return value;
-            if (value !== undefined && value !== null && typeof value !== 'object') return String(value);
-        }
-        return '';
-    }
-
-    /**
-     * Return the first non-empty string-like value.
-     */
-    function firstNonEmptyString(...values) {
-        for (const value of values) {
-            if (typeof value === 'string' && value) return value;
-            if (value !== undefined && value !== null && typeof value !== 'object') {
-                const text = String(value);
-                if (text) return text;
+            function settingBoolean(value, fallback) {
+                if (value === undefined || value === null || value === '') return fallback === true;
+                if (typeof value === 'boolean') return value;
+                const normalized = String(value).trim().toLowerCase();
+                if (['true', '1', 'yes', 'on', 'enabled'].includes(normalized)) return true;
+                if (['false', '0', 'no', 'off', 'disabled'].includes(normalized)) return false;
+                return fallback === true;
             }
-        }
-        return '';
-    }
 
-    /**
-     * Parse a finite number or return null for absent/invalid numeric input.
-     */
-    function finiteNumber(value) {
-        const numeric = Number(value);
-        return Number.isFinite(numeric) ? numeric : null;
-    }
+            function firstDefined(...values) {
+                for (const value of values) {
+                    if (value !== undefined) return value;
+                }
+                return undefined;
+            }
 
-    /**
-     * Normalize scheduler priority to the translation service range.
-     */
-    function clampPriority(value) {
-        const numeric = Number(value);
-        if (!Number.isFinite(numeric)) return 500;
-        return Math.max(0, Math.min(1000, Math.round(numeric)));
-    }
+            /**
+             * Return the first string-like value while preserving empty strings.
+             */
+            function firstString(...values) {
+                for (const value of values) {
+                    if (typeof value === 'string') return value;
+                    if (value !== undefined && value !== null && typeof value !== 'object') return String(value);
+                }
+                return '';
+            }
 
-    /**
-     * Parse optional boolean-like input used by hook payloads.
-     */
-    function optionalBoolean(value) {
-        if (value === undefined || value === null || value === '') return null;
-        if (typeof value === 'boolean') return value;
-        if (typeof value === 'number') return value !== 0;
-        const normalized = String(value).trim().toLowerCase();
-        if (['true', '1', 'yes', 'visible', 'on'].includes(normalized)) return true;
-        if (['false', '0', 'no', 'hidden', 'off'].includes(normalized)) return false;
-        return null;
-    }
+            /**
+             * Return the first non-empty string-like value.
+             */
+            function firstNonEmptyString(...values) {
+                for (const value of values) {
+                    if (typeof value === 'string' && value) return value;
+                    if (value !== undefined && value !== null && typeof value !== 'object') {
+                        const text = String(value);
+                        if (text) return text;
+                    }
+                }
+                return '';
+            }
 
-    /**
-     * Sanitize a human-readable id segment for generated item ids.
-     */
-    function safeIdPart(value) {
-        const text = String(value || '').trim().replace(/[^A-Za-z0-9_.-]+/g, '_');
-        return text || 'unknown';
-    }
+            /**
+             * Parse a finite number or return null for absent/invalid numeric input.
+             */
+            function finiteNumber(value) {
+                const numeric = Number(value);
+                return Number.isFinite(numeric) ? numeric : null;
+            }
 
-    function hashStringForId(value) {
-        const text = String(value || '');
-        let hash = 0;
-        for (let index = 0; index < text.length; index += 1) {
-            hash = ((hash << 5) - hash) + text.charCodeAt(index);
-            hash |= 0;
-        }
-        return Math.abs(hash).toString(36) || '0';
-    }
+            /**
+             * Normalize scheduler priority to the translation service range.
+             */
+            function clampPriority(value) {
+                const numeric = Number(value);
+                if (!Number.isFinite(numeric)) return 500;
+                return Math.max(0, Math.min(1000, Math.round(numeric)));
+            }
 
-    /**
-     * Read positive integer settings with a safe fallback.
-     */
-    function positiveInteger(value, fallback) {
-        const numeric = Number(value);
-        return Number.isInteger(numeric) && numeric > 0 ? numeric : fallback;
-    }
+            /**
+             * Parse optional boolean-like input used by hook payloads.
+             */
+            function optionalBoolean(value) {
+                if (value === undefined || value === null || value === '') return null;
+                if (typeof value === 'boolean') return value;
+                if (typeof value === 'number') return value !== 0;
+                const normalized = String(value).trim().toLowerCase();
+                if (['true', '1', 'yes', 'visible', 'on'].includes(normalized)) return true;
+                if (['false', '0', 'no', 'hidden', 'off'].includes(normalized)) return false;
+                return null;
+            }
 
-    /**
-     * Normalize rectangle-like bounds into { x1, y1, x2, y2 }.
-     *
-     * Hooks may report either corner coordinates or x/y/width/height.
-     */
-    function normalizeBounds(bounds) {
-        if (!bounds || typeof bounds !== 'object') return null;
-        const x1 = Number(bounds.x1);
-        const y1 = Number(bounds.y1);
-        const x2 = Number(bounds.x2);
-        const y2 = Number(bounds.y2);
-        if ([x1, y1, x2, y2].every(Number.isFinite)) return { x1, y1, x2, y2 };
-        const x = Number(bounds.x);
-        const y = Number(bounds.y);
-        const w = Number(bounds.w !== undefined ? bounds.w : bounds.width);
-        const h = Number(bounds.h !== undefined ? bounds.h : bounds.height);
-        if ([x, y, w, h].every(Number.isFinite)) return { x1: x, y1: y, x2: x + w, y2: y + h };
-        return null;
-    }
+            /**
+             * Sanitize a human-readable id segment for generated item ids.
+             */
+            function safeIdPart(value) {
+                const text = String(value || '').trim().replace(/[^A-Za-z0-9_.-]+/g, '_');
+                return text || 'unknown';
+            }
 
-    /**
-     * Copy a small object tree suitable for events and snapshots.
-     *
-     * This prevents game engine objects, circular references, or huge payloads
-     * from leaking into the published global snapshot.
-     */
-    function pickSerializableObject(value) {
-        if (!value || typeof value !== 'object') return {};
-        const output = {};
-        /*
-         * Redraw diagnostics legitimately use a few dozen top-level keys and a
-         * three-level object shape, for example details.diagnostics.sourceInk.
-         * Keep those intact while still bounding payload size.
-         */
-        Object.keys(value).slice(0, SERIALIZABLE_ROOT_KEY_LIMIT).forEach((key) => {
-            const picked = pickSerializableValue(value[key], SERIALIZABLE_VALUE_DEPTH);
-            if (picked !== undefined) output[key] = picked;
-        });
-        return output;
-    }
+            function hashStringForId(value) {
+                const text = String(value || '');
+                let hash = 0;
+                for (let index = 0; index < text.length; index += 1) {
+                    hash = ((hash << 5) - hash) + text.charCodeAt(index);
+                    hash |= 0;
+                }
+                return Math.abs(hash).toString(36) || '0';
+            }
 
-    /**
-     * Recursively trim one value to primitives, arrays, or plain objects.
-     */
-    function pickSerializableValue(value, depth) {
-        if (value == null || ['string', 'number', 'boolean'].includes(typeof value)) return value;
-        if (depth <= 0) return String(value);
-        if (Array.isArray(value)) return value.slice(0, SERIALIZABLE_ARRAY_LIMIT).map((item) => pickSerializableValue(item, depth - 1));
-        if (typeof value === 'object') {
-            const output = {};
-            Object.keys(value).slice(0, SERIALIZABLE_OBJECT_KEY_LIMIT).forEach((key) => {
-                const picked = pickSerializableValue(value[key], depth - 1);
-                if (picked !== undefined) output[key] = picked;
-            });
-            return output;
-        }
-        return undefined;
-    }
+            /**
+             * Read positive integer settings with a safe fallback.
+             */
+            function positiveInteger(value, fallback) {
+                const numeric = Number(value);
+                return Number.isInteger(numeric) && numeric > 0 ? numeric : fallback;
+            }
 
-    /**
-     * Compact text for diagnostics without exposing large strings in logs.
-     */
-    function defaultPreview(text, max = 48) {
-        const value = String(text ?? '').replace(/\s+/g, ' ').trim();
-        return value.length <= max ? value : `${value.slice(0, Math.max(0, max - 3))}...`;
-    }
+            /**
+             * Normalize rectangle-like bounds into { x1, y1, x2, y2 }.
+             *
+             * Hooks may report either corner coordinates or x/y/width/height.
+             */
+            function normalizeBounds(bounds) {
+                if (!bounds || typeof bounds !== 'object') return null;
+                const x1 = Number(bounds.x1);
+                const y1 = Number(bounds.y1);
+                const x2 = Number(bounds.x2);
+                const y2 = Number(bounds.y2);
+                if ([x1, y1, x2, y2].every(Number.isFinite)) return { x1, y1, x2, y2 };
+                const x = Number(bounds.x);
+                const y = Number(bounds.y);
+                const w = Number(bounds.w !== undefined ? bounds.w : bounds.width);
+                const h = Number(bounds.h !== undefined ? bounds.h : bounds.height);
+                if ([x, y, w, h].every(Number.isFinite)) return { x1: x, y1: y, x2: x + w, y2: y + h };
+                return null;
+            }
 
-    /**
-     * Build an explicit lifecycle result for non-render item operations.
-     *
-     * These results deliberately separate "handled" from "changed": a valid
-     * request can be handled without mutating anything, while missing ids or
-     * unavailable gateway methods should be observable without collapsing into
-     * a bare false/null.
-     */
-    function createLifecycleResult(status, options = {}) {
-        const source = options && typeof options === 'object' ? options : {};
-        const handled = source.handled === true;
-        const changed = source.changed === true;
-        const terminal = source.terminal === true || isTerminalStatus(status);
-        return Object.freeze(Object.assign({}, source, {
-            status: firstString(status, source.status, handled ? 'handled' : 'ignored'),
-            handled,
-            changed,
-            terminal,
-            recordId: firstString(source.recordId, source.id),
-            id: firstString(source.id, source.recordId),
-            reason: firstString(source.reason, status),
-        }));
-    }
+            /**
+             * Copy a small object tree suitable for events and snapshots.
+             *
+             * This prevents game engine objects, circular references, or huge payloads
+             * from leaking into the published global snapshot.
+             */
+            function pickSerializableObject(value) {
+                if (!value || typeof value !== 'object') return {};
+                const output = {};
+                /*
+                 * Redraw diagnostics legitimately use a few dozen top-level keys and a
+                 * three-level object shape, for example details.diagnostics.sourceInk.
+                 * Keep those intact while still bounding payload size.
+                 */
+                Object.keys(value).slice(0, SERIALIZABLE_ROOT_KEY_LIMIT).forEach((key) => {
+                    const picked = pickSerializableValue(value[key], SERIALIZABLE_VALUE_DEPTH);
+                    if (picked !== undefined) output[key] = picked;
+                });
+                return output;
+            }
 
-    function isTerminalStatus(status) {
-        const value = String(status || '').toLowerCase();
-        return value === 'retired'
-            || value === 'skipped'
-            || value === 'failed'
-            || value === 'canceled'
-            || value === 'missing-id'
-            || value === 'missing-record'
-            || value === 'unavailable'
-            || value === 'rejected';
-    }
+            /**
+             * Recursively trim one value to primitives, arrays, or plain objects.
+             */
+            function pickSerializableValue(value, depth) {
+                if (value == null || ['string', 'number', 'boolean'].includes(typeof value)) return value;
+                if (depth <= 0) return String(value);
+                if (Array.isArray(value)) return value.slice(0, SERIALIZABLE_ARRAY_LIMIT).map((item) => pickSerializableValue(item, depth - 1));
+                if (typeof value === 'object') {
+                    const output = {};
+                    Object.keys(value).slice(0, SERIALIZABLE_OBJECT_KEY_LIMIT).forEach((key) => {
+                        const picked = pickSerializableValue(value[key], depth - 1);
+                        if (picked !== undefined) output[key] = picked;
+                    });
+                    return output;
+                }
+                return undefined;
+            }
 
-    defineRuntimeModule('runtime.textOrchestratorBaseUtils', {
-        settingBoolean,
-        firstDefined,
-        firstString,
-        firstNonEmptyString,
-        finiteNumber,
-        clampPriority,
-        optionalBoolean,
-        safeIdPart,
-        hashStringForId,
-        positiveInteger,
-        normalizeBounds,
-        pickSerializableObject,
-        pickSerializableValue,
-        defaultPreview,
-        createLifecycleResult,
+            /**
+             * Compact text for diagnostics without exposing large strings in logs.
+             */
+            function defaultPreview(text, max = 48) {
+                const value = String(text ?? '').replace(/\s+/g, ' ').trim();
+                return value.length <= max ? value : `${value.slice(0, Math.max(0, max - 3))}...`;
+            }
+
+            /**
+             * Build an explicit lifecycle result for non-render item operations.
+             *
+             * These results deliberately separate "handled" from "changed": a valid
+             * request can be handled without mutating anything, while missing ids or
+             * unavailable gateway methods should be observable without collapsing into
+             * a bare false/null.
+             */
+            function createLifecycleResult(status, options = {}) {
+                const source = options && typeof options === 'object' ? options : {};
+                const handled = source.handled === true;
+                const changed = source.changed === true;
+                const terminal = source.terminal === true || isTerminalStatus(status);
+                return Object.freeze(Object.assign({}, source, {
+                    status: firstString(status, source.status, handled ? 'handled' : 'ignored'),
+                    handled,
+                    changed,
+                    terminal,
+                    recordId: firstString(source.recordId, source.id),
+                    id: firstString(source.id, source.recordId),
+                    reason: firstString(source.reason, status),
+                }));
+            }
+
+            function isTerminalStatus(status) {
+                const value = String(status || '').toLowerCase();
+                return value === 'retired'
+                    || value === 'skipped'
+                    || value === 'failed'
+                    || value === 'canceled'
+                    || value === 'missing-id'
+                    || value === 'missing-record'
+                    || value === 'unavailable'
+                    || value === 'rejected';
+            }
+
+            return {
+                settingBoolean,
+                firstDefined,
+                firstString,
+                firstNonEmptyString,
+                finiteNumber,
+                clampPriority,
+                optionalBoolean,
+                safeIdPart,
+                hashStringForId,
+                positiveInteger,
+                normalizeBounds,
+                pickSerializableObject,
+                pickSerializableValue,
+                defaultPreview,
+                createLifecycleResult,
+            };
+        },
     });
 })();

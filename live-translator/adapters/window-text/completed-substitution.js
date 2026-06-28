@@ -2,13 +2,9 @@
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    if (typeof defineRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/window-text/completed-substitution.js.');
-    }
+    LiveTranslatorDefine({
+        name: 'adapters.windowText.completedSubstitution',
+        factory() {
 
     function createCompletedSubstitutionController(context = {}) {
         const {
@@ -17,11 +13,11 @@
             toDrawTextExInputText,
             getWindowTextMetricPrefix,
             getWindowTextPerfMethod,
-            getWindowNativeDrawOwner,
+            getWindowNativeDrawAttribution,
             getRedrawContents,
             resolveWindowData,
             resolveTargetWindow,
-            dropRenderRetry,
+            dropScheduledRenderRetry,
             updateOrchestratorItem,
             recordDecision,
             recordDrawTrace,
@@ -88,15 +84,15 @@
                 }
                 logTelemetryDraw(translated, entry, eventName);
                 const result = invokeOriginal(substitutionText, {
-                    nativeDrawOwner: typeof getWindowNativeDrawOwner === 'function'
-                        ? getWindowNativeDrawOwner(entry, `${route}.translatedSource`)
+                    nativeDrawAttribution: typeof getWindowNativeDrawAttribution === 'function'
+                        ? getWindowNativeDrawAttribution(entry, `${route}.translatedSource`)
                         : '',
                     scaleText: true,
                     textFit,
                 });
                 captureCompletedSourceSnapshot(contents, entry);
                 completeNativeSourceDraw(entry, 'window-completed-substitution-translated-draw');
-                if (windowData && typeof dropRenderRetry === 'function') dropRenderRetry(windowData, entry);
+                if (windowData && typeof dropScheduledRenderRetry === 'function') dropScheduledRenderRetry(windowData, entry);
                 drew = true;
                 recordCompletedSubstitutionTrace(targetWindow, entry, substitutionText, eventName);
                 recordCompletedSubstitutionRendered(entry, translated, eventName);
@@ -252,6 +248,7 @@
             captureCompletedSourceSnapshot,
         };
     }
-
-    defineRuntimeModule('adapters.windowTextCompletedSubstitution', { create: createCompletedSubstitutionController });
+            return { create: createCompletedSubstitutionController };
+        },
+    });
 })();

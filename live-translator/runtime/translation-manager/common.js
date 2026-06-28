@@ -1,0 +1,121 @@
+// Translation manager support: common.
+// Owns logging, priorities, settings, and provider adapters; translation-manager.js composes it into the public runtime module.
+(() => {
+    'use strict';
+
+    LiveTranslatorDefine({
+        name: 'runtime.translationManager.common',
+        requires: {
+            constants: 'runtime.translationManager.constants',
+            translationIntel: 'runtime.translationIntel',
+        },
+        factory({ constants, translationIntel }) {
+            const { DEFAULT_PRIORITY, HOOK_PRIORITIES, MAX_PRIORITY, MIN_PRIORITY } = constants;
+
+            function noop() {}
+
+            function defaultPreview(text, max = 48) {
+                const value = String(text ?? '').replace(/\s+/g, ' ').trim();
+                return value.length <= max ? value : `${value.slice(0, Math.max(0, max - 3))}...`;
+            }
+
+            function bindLogger(logger = {}) {
+                return {
+                    debug: typeof logger.debug === 'function' ? logger.debug.bind(logger) : noop,
+                    info: typeof logger.info === 'function' ? logger.info.bind(logger) : noop,
+                    warn: typeof logger.warn === 'function' ? logger.warn.bind(logger) : noop,
+                    error: typeof logger.error === 'function' ? logger.error.bind(logger) : noop,
+                };
+            }
+
+            function resolveTranslationIntelFactory() {
+                if (translationIntel && typeof translationIntel.createTranslationIntel === 'function') {
+                    return translationIntel.createTranslationIntel;
+                }
+                throw new Error('[LiveTranslator] runtime.translationIntel did not export createTranslationIntel.');
+            }
+
+            function ensureTelemetry(telemetry) {
+                return telemetry && typeof telemetry.logTranslation === 'function'
+                    ? telemetry
+                    : { logTranslation: noop };
+            }
+
+            function clampPriority(value) {
+                const numeric = Number(value);
+                if (!Number.isFinite(numeric)) return DEFAULT_PRIORITY;
+                return Math.max(MIN_PRIORITY, Math.min(MAX_PRIORITY, Math.round(numeric)));
+            }
+
+            function defaultPriorityForHook(hook) {
+                const key = String(hook || '').trim();
+                if (Object.prototype.hasOwnProperty.call(HOOK_PRIORITIES, key)) return HOOK_PRIORITIES[key];
+                return DEFAULT_PRIORITY;
+            }
+
+            function getPositiveSetting(settings, names, fallback) {
+                const translation = settings && settings.translation && typeof settings.translation === 'object'
+                    ? settings.translation
+                    : {};
+                for (const name of names) {
+                    if (Object.prototype.hasOwnProperty.call(translation, name)) {
+                        const numeric = Number(translation[name]);
+                        if (Number.isFinite(numeric) && numeric > 0) return numeric;
+                    }
+                }
+                return fallback;
+            }
+
+            function createTextProcessorProvider(textProcessor, isLocalProvider) {
+                return {
+                    kind: isLocalProvider ? 'local' : 'legacy',
+                    async getCapacity() {
+                        return 1;
+                    },
+                    async translate(request = {}) {
+                        const text = String(request.text ?? '');
+                        if (request.stream && textProcessor && typeof textProcessor.translateTextStream === 'function') {
+                            return textProcessor.translateTextStream(text, request);
+                        }
+                        if (textProcessor && typeof textProcessor.translateText === 'function') {
+                            return textProcessor.translateText(text);
+                        }
+                        if (textProcessor && typeof textProcessor.translateMany === 'function') {
+                            const output = await textProcessor.translateMany([text]);
+                            return output && typeof output[0] === 'string' ? output[0] : '';
+                        }
+                        throw new Error('Translator provider unavailable.');
+                    },
+                };
+            }
+
+            function createNoneProvider() {
+                return {
+                    kind: 'none',
+                    async getCapacity() {
+                        return Number.MAX_SAFE_INTEGER;
+                    },
+                    async translate() {
+                        const error = new Error('No translation provider is configured.');
+                        try { error.code = 'PROVIDER_DISABLED'; } catch (_) {}
+                        try { error.retryable = false; } catch (_) {}
+                        throw error;
+                    },
+                };
+            }
+
+            return {
+                noop,
+                defaultPreview,
+                bindLogger,
+                resolveTranslationIntelFactory,
+                ensureTelemetry,
+                clampPriority,
+                defaultPriorityForHook,
+                getPositiveSetting,
+                createTextProcessorProvider,
+                createNoneProvider,
+            };
+        },
+    });
+})();

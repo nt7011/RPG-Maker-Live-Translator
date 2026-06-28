@@ -2,15 +2,6 @@
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    if (typeof defineRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/pixi-text/text-scale.js.');
-    }
-
     // Translated PIXI text scaling is isolated so render and setter paths share the same restore behavior.
     function createPixiTextScaleController(context = {}) {
         const { textScaleOthers, scaleFontSizeValue } = context;
@@ -105,8 +96,13 @@
         };
     }
     
-    defineRuntimeModule('adapters.pixiTextScale', {
-        create: createPixiTextScaleController,
+    LiveTranslatorDefine({
+        name: 'adapters.pixiText.textScale',
+        factory() {
+            return {
+                create: createPixiTextScaleController,
+            };
+        },
     });
 
 })();

@@ -63,10 +63,15 @@
             ? scope.LiveTranslatorModules
             : Object.create(null);
         scope.LiveTranslatorModules = modules;
+        const sideEffects = scope.LiveTranslatorSideEffects && typeof scope.LiveTranslatorSideEffects === 'object'
+            ? scope.LiveTranslatorSideEffects
+            : Object.create(null);
+        scope.LiveTranslatorSideEffects = sideEffects;
 
         const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
         const MODULE_NAMESPACE_KEY = '__liveTranslatorRuntimeNamespace';
         const MODULE_EXPORT_KEY = '__liveTranslatorRuntimeExport';
+        const DESCRIPTOR_ALIAS_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]*$/u;
         const parseName = (name) => {
             if (!name || typeof name !== 'string') {
                 throw new Error('[LiveTranslator] Invalid runtime module name.');
@@ -135,13 +140,14 @@
             }
             throw new Error(`[LiveTranslator] Runtime module namespace conflict: ${namespaceName}`);
         };
-        markNamespaceNode(modules);
-
-        scope.LiveTranslatorDefine = function defineRuntimeModule(name, value) {
+        const isRecord = (value) => !!(value && typeof value === 'object' && !Array.isArray(value));
+        const validateExport = (name, value) => {
             if (!value || (typeof value !== 'object' && typeof value !== 'function')) {
-                throw new Error(`[LiveTranslator] Invalid runtime module export: ${name}`);
+                throw new Error(`[LiveTranslator] Invalid runtime module export for ${name}. Expected an object or function.`);
             }
-
+        };
+        const registerRuntimeModule = (name, value) => {
+            validateExport(name, value);
             const parts = parseName(name);
             const moduleExport = freezeExport(value);
             let cursor = modules;
@@ -158,8 +164,7 @@
             cursor[leaf] = moduleExport;
             return moduleExport;
         };
-
-        scope.LiveTranslatorRequire = function requireRuntimeModule(name) {
+        const lookupRuntimeModule = (name) => {
             const parts = parseName(name);
             let cursor = modules;
             for (const part of parts) {
@@ -169,6 +174,92 @@
                 cursor = cursor[part];
             }
             return hasModuleExport(cursor) ? cursor[MODULE_EXPORT_KEY] : cursor;
+        };
+        const validateRequires = (descriptor, subjectType) => {
+            if (descriptor.requires === undefined) return {};
+            if (!isRecord(descriptor.requires)) {
+                throw new Error(`[LiveTranslator] Invalid requires for ${subjectType} ${descriptor.name}. Expected an object mapping aliases to module names.`);
+            }
+            for (const alias of Object.keys(descriptor.requires)) {
+                if (!DESCRIPTOR_ALIAS_PATTERN.test(alias)) {
+                    throw new Error(`[LiveTranslator] Invalid dependency alias "${alias}" for ${subjectType} ${descriptor.name}.`);
+                }
+                parseName(descriptor.requires[alias]);
+            }
+            return descriptor.requires;
+        };
+        const resolveDescriptorDependencies = (name, requires, subjectType) => {
+            const dependencies = {};
+            for (const alias of Object.keys(requires)) {
+                const moduleName = requires[alias];
+                try {
+                    dependencies[alias] = lookupRuntimeModule(moduleName);
+                } catch (error) {
+                    const message = error && error.message ? error.message : String(error);
+                    throw new Error(`[LiveTranslator] Failed to resolve dependency "${alias}" (${moduleName}) for ${subjectType} ${name}: ${message}`);
+                }
+            }
+            return dependencies;
+        };
+        const defineRuntimeModuleFromDescriptor = (descriptor) => {
+            if (!isRecord(descriptor)) {
+                throw new Error('[LiveTranslator] Invalid runtime module descriptor. Expected an object.');
+            }
+            const name = descriptor.name;
+            parseName(name);
+            const requires = validateRequires(descriptor, 'runtime module');
+            if (typeof descriptor.factory !== 'function') {
+                throw new Error(`[LiveTranslator] Invalid factory for runtime module ${name}. Expected a function.`);
+            }
+            const dependencies = resolveDescriptorDependencies(name, requires, 'runtime module');
+            const moduleExport = descriptor.factory(dependencies, {
+                name,
+                scope,
+            });
+            return registerRuntimeModule(name, moduleExport);
+        };
+        const runRuntimeSideEffectFromDescriptor = (descriptor) => {
+            if (!isRecord(descriptor)) {
+                throw new Error('[LiveTranslator] Invalid runtime side effect descriptor. Expected an object.');
+            }
+            const name = descriptor.name;
+            parseName(name);
+            if (hasOwn(sideEffects, name)) {
+                throw new Error(`[LiveTranslator] Duplicate runtime side effect: ${name}`);
+            }
+            const requires = validateRequires(descriptor, 'runtime side effect');
+            if (typeof descriptor.run !== 'function') {
+                throw new Error(`[LiveTranslator] Invalid run for runtime side effect ${name}. Expected a function.`);
+            }
+            const dependencies = resolveDescriptorDependencies(name, requires, 'runtime side effect');
+            sideEffects[name] = { status: 'running' };
+            const result = descriptor.run(dependencies, {
+                name,
+                scope,
+            });
+            if (result !== undefined) {
+                sideEffects[name] = { status: 'failed' };
+                throw new Error(`[LiveTranslator] Runtime side effect ${name} must not return a value.`);
+            }
+            sideEffects[name] = { status: 'ran' };
+            return undefined;
+        };
+
+        markNamespaceNode(modules);
+
+        scope.LiveTranslatorDefine = function defineRuntimeModule(name, value) {
+            if (arguments.length === 1 && isRecord(name)) {
+                return defineRuntimeModuleFromDescriptor(name);
+            }
+            return registerRuntimeModule(name, value);
+        };
+
+        scope.LiveTranslatorRequire = function requireRuntimeModule(name) {
+            return lookupRuntimeModule(name);
+        };
+
+        scope.LiveTranslatorRun = function runRuntimeSideEffect(descriptor) {
+            return runRuntimeSideEffectFromDescriptor(descriptor);
         };
     }
 
@@ -186,7 +277,7 @@
     function shouldLoadRuntimeScript(script, options = {}) {
         // Harnesses can load the translator pipeline without opening debug UI windows.
         if (options.disableUiLauncher === true) {
-            return script !== 'ui-launcher/window-support.js' && script !== 'ui-launcher.js';
+            return script !== 'ui-launcher/window-support.js' && script !== 'ui-launcher/index.js';
         }
         return true;
     }
@@ -240,17 +331,17 @@
     function getConfigModule() {
         const requireModule = getGlobalScope().LiveTranslatorRequire;
         if (typeof requireModule === 'function') {
-            const configModule = requireModule('config');
+            const configModule = requireModule('runtime.config');
             if (configModule && typeof configModule.applyAssets === 'function') return configModule;
         }
-        throw new Error('[LiveTranslatorLoader] config.js did not expose runtime module config.');
+        throw new Error('[LiveTranslatorLoader] runtime/config.js did not expose runtime module runtime.config.');
     }
 
     function createConfiguredLogger(settings) {
         const scope = getGlobalScope();
         const requireModule = scope.LiveTranslatorRequire;
         if (typeof requireModule === 'function') {
-            const createLoggerBundle = requireModule('createLoggerBundle');
+            const createLoggerBundle = requireModule('runtime.logger');
             const bundle = createLoggerBundle({
                 settings: settings || {},
                 paths: scope.LiveTranslatorPaths || {},
@@ -258,7 +349,7 @@
             });
             if (bundle && bundle.logger) return bundle.logger;
         }
-        throw new Error('[LiveTranslatorLoader] logger.js did not expose runtime module createLoggerBundle.');
+        throw new Error('[LiveTranslatorLoader] runtime/logger.js did not expose runtime module runtime.logger.');
     }
 
     function logAssetEvent(logger, level, ...args) {
@@ -398,8 +489,8 @@
         const scriptLoadOrder = Array.isArray(manifest.scriptLoadOrder)
             ? manifest.scriptLoadOrder.slice()
             : [];
-        if (scriptLoadOrder[0] !== 'logger.js' || scriptLoadOrder[1] !== 'config.js') {
-            throw new Error('[LiveTranslatorLoader] runtime.scriptLoadOrder must begin with logger.js and config.js.');
+        if (scriptLoadOrder[0] !== 'runtime/logger.js' || scriptLoadOrder[1] !== 'runtime/config.js') {
+            throw new Error('[LiveTranslatorLoader] runtime.scriptLoadOrder must begin with runtime/logger.js and runtime/config.js.');
         }
         const filteredLoadOrder = scriptLoadOrder.filter((script) => shouldLoadRuntimeScript(script, options));
         return {
