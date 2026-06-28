@@ -23,6 +23,8 @@
         'recordRenderCommitted',
         'recordRenderDeferred',
         'recordRenderRejected',
+        'recordRenderSuperseded',
+        'rebaseRenderCommand',
         'queueStoredRenderCommand',
         'notifyRenderCommandReady',
         'getUnresolvedRenderCommandsForItem',

@@ -103,6 +103,8 @@
                         'recordRenderCommitted',
                         'recordRenderDeferred',
                         'recordRenderRejected',
+                        'recordRenderSuperseded',
+                        'rebaseRenderCommand',
                         'recordRenderCommandDecision',
                         'notifyRenderCommandReady',
                         'rejectOpenRenderCommands',

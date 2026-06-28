@@ -92,6 +92,7 @@
 
                     const rejected = validateRenderCommand(source, target, lifecycleRecord, command, route);
                     if (rejected) {
+                        if (rejected.status === 'rebased') return true;
                         dispatchRenderRejected(source, target, rejected, route);
                         return false;
                     }
@@ -162,12 +163,25 @@
 
                 function validateRenderGeneration(source, record, command, route) {
                     const commandGeneration = Number(command.generation);
-                    if (!Number.isFinite(commandGeneration) || commandGeneration <= 0) return null;
+                    if (!Number.isFinite(commandGeneration) || commandGeneration <= 0) {
+                        return createRenderDecision('rejected', 'missing-generation', command, route, {
+                            commandGeneration: numberOrZero(command && command.generation),
+                        });
+                    }
                     const targetGeneration = resolveRenderGeneration(source, record, command, route);
                     if (!Number.isFinite(targetGeneration)) {
                         return createRenderDecision('rejected', 'missing-generation', command, route, {
                             commandGeneration,
                         });
+                    }
+                    if (targetGeneration === commandGeneration) return null;
+                    if (commandGeneration < targetGeneration) {
+                        const rebased = resolveRenderCommandRebase(source, record, command, route, {
+                            commandGeneration,
+                            targetGeneration,
+                        });
+                        if (rebased && rebased.status === 'rebased') return rebased;
+                        if (rebased && rebased.status === 'rejected') return rebased;
                     }
                     if (targetGeneration !== commandGeneration) {
                         return createRenderDecision('rejected', 'generation-mismatch', command, route, {
@@ -176,6 +190,57 @@
                         });
                     }
                     return null;
+                }
+
+                function resolveRenderCommandRebase(source, record, command, route, proofContext) {
+                    if (!hasBackingMethod('rebaseRenderCommand')) return null;
+                    if (typeof source.resolveRenderCommandRebase !== 'function') return null;
+                    const context = createRenderCommandRebaseProofContext(command, route, proofContext);
+                    let proof = null;
+                    try {
+                        proof = callAdapterCallback('subscribeRecords.resolveRenderCommandRebase', () => {
+                            return source.resolveRenderCommandRebase(record, command, route, context);
+                        });
+                    } catch (error) {
+                        return createRenderDecision(
+                            'rejected',
+                            'adapter-rebase-error',
+                            command,
+                            route,
+                            describeCallbackError(error)
+                        );
+                    }
+                    if (isDeniedRenderCommandRebase(proof)) {
+                        return createRenderDecision('rejected', 'generation-mismatch', command, route, {
+                            commandGeneration: context.commandGeneration,
+                            targetGeneration: context.targetGeneration,
+                            rebaseDeniedReason: nonEmptyString(proof && proof.reason, 'render-command-rebase-denied'),
+                            rebaseDeniedDetails: copyPlainObject(proof && proof.details, {}),
+                        });
+                    }
+                    const request = normalizeRenderCommandRebaseRequest(proof, command, route, context);
+                    if (!request) return null;
+                    const itemId = nonEmptyString(route && route.itemId, route && route.recordId, command && command.itemId);
+                    if (!itemId) return null;
+                    const result = callGateway('rebaseRenderCommand', () => {
+                        return gateway.rebaseRenderCommand(itemId, request);
+                    });
+                    if (!result || result.rebased !== true) return null;
+                    const normalized = freezePlainObject({
+                        status: 'rebased',
+                        reason: nonEmptyString(result.reason, request.reason, 'render-command-rebased'),
+                        recordId: itemId,
+                        itemId,
+                        commandId: request.commandId,
+                        replacementCommandId: nonEmptyString(result.replacementCommandId),
+                        details: freezePlainObject(copyPlainObject(result, {})),
+                    });
+                    if (typeof source.onRenderRebased === 'function') {
+                        callAdapterCallback('subscribeRecords.render_rebased', () => {
+                            source.onRenderRebased(record, normalized, route);
+                        });
+                    }
+                    return normalized;
                 }
 
                 function resolveLifecycleRecord(source, target, command, route) {
@@ -357,6 +422,128 @@
                     decision.terminal = sourceObject.terminal === true;
                 }
                 return freezePlainObject(decision);
+            }
+
+            function createRenderCommandRebaseProofContext(command, route, proofContext = {}) {
+                const source = proofContext && typeof proofContext === 'object' ? proofContext : {};
+                const commandGeneration = numberOrZero(source.commandGeneration) || numberOrZero(route && route.commandGeneration) || numberOrZero(command && command.generation);
+                const targetGeneration = numberOrZero(source.targetGeneration);
+                return freezePlainObject({
+                    reason: 'generation-mismatch',
+                    commandId: nonEmptyString(command && command.commandId, command && command.id, route && route.commandId),
+                    recordId: nonEmptyString(route && route.recordId, command && command.itemId),
+                    itemId: nonEmptyString(route && route.itemId, route && route.recordId, command && command.itemId),
+                    adapterId: nonEmptyString(route && route.adapterId),
+                    strategy: nonEmptyString(route && route.strategy, command && command.strategy),
+                    targetSurfaceId: nonEmptyString(route && route.targetSurfaceId, command && command.targetSurfaceId),
+                    renderIntent: nonEmptyString(route && route.renderIntent, command && command.renderIntent),
+                    sourceKind: nonEmptyString(route && route.sourceKind, command && command.sourceKind),
+                    commandGeneration,
+                    targetGeneration,
+                    oldGeneration: commandGeneration,
+                    newGeneration: targetGeneration,
+                });
+            }
+
+            function normalizeRenderCommandRebaseRequest(proof, command, route, context) {
+                if (!isAcceptedRenderCommandRebase(proof)) return null;
+                const source = proof && typeof proof === 'object' ? proof : {};
+                const replacementSource = source.replacementCommand && typeof source.replacementCommand === 'object'
+                    ? source.replacementCommand
+                    : {};
+                const commandMetadata = command && command.metadata && typeof command.metadata === 'object'
+                    ? command.metadata
+                    : {};
+                const currentSlotProof = copyPlainObject(
+                    source.currentSlotProof
+                    || source.proof
+                    || source.currentProof
+                    || source.details && source.details.currentSlotProof
+                    || replacementSource.currentSlotProof,
+                    null
+                );
+                const oldGeneration = numberOrZero(source.oldGeneration)
+                    || numberOrZero(source.commandGeneration)
+                    || numberOrZero(context && context.commandGeneration);
+                const newGeneration = numberOrZero(source.newGeneration)
+                    || numberOrZero(source.targetGeneration)
+                    || numberOrZero(source.generation)
+                    || numberOrZero(replacementSource.generation)
+                    || numberOrZero(context && context.targetGeneration);
+                const metadata = Object.assign(
+                    {},
+                    copyPlainObject(commandMetadata, {}),
+                    copyPlainObject(source.metadata, {}),
+                    copyPlainObject(replacementSource.metadata, {}),
+                    {
+                        rebasedFromCommandId: nonEmptyString(command && command.commandId, command && command.id, route && route.commandId),
+                        oldGeneration,
+                        newGeneration,
+                    }
+                );
+                if (currentSlotProof) metadata.currentSlotProof = currentSlotProof;
+                const details = Object.assign({}, copyPlainObject(source.details, {}), {
+                    commandGeneration: oldGeneration,
+                    targetGeneration: newGeneration,
+                });
+                if (currentSlotProof) details.currentSlotProof = currentSlotProof;
+                return freezePlainObject({
+                    reason: nonEmptyString(source.reason, 'render-command-rebased'),
+                    commandId: nonEmptyString(command && command.commandId, command && command.id, route && route.commandId),
+                    oldGeneration,
+                    newGeneration,
+                    commandGeneration: oldGeneration,
+                    targetGeneration: newGeneration,
+                    currentSlotProof: freezePlainObject(currentSlotProof),
+                    details: freezePlainObject(details),
+                    replacementCommand: freezePlainObject(Object.assign({}, replacementSource, {
+                        strategy: nonEmptyString(replacementSource.strategy, source.strategy, route && route.strategy, command && command.strategy),
+                        text: getRebaseReplacementText(source, replacementSource, command),
+                        generation: newGeneration,
+                        targetSurfaceId: nonEmptyString(
+                            replacementSource.targetSurfaceId,
+                            replacementSource.surfaceId,
+                            source.targetSurfaceId,
+                            source.surfaceId,
+                            route && route.targetSurfaceId,
+                            command && command.targetSurfaceId
+                        ),
+                        renderIntent: nonEmptyString(replacementSource.renderIntent, replacementSource.intent, source.renderIntent, source.intent, route && route.renderIntent, command && command.renderIntent),
+                        sourceKind: nonEmptyString(replacementSource.sourceKind, replacementSource.source, source.sourceKind, source.source, route && route.sourceKind, command && command.sourceKind),
+                        recoveryProof: freezePlainObject(copyPlainObject(replacementSource.recoveryProof || source.recoveryProof || command && command.recoveryProof, null)),
+                        bounds: copyPlainObject(replacementSource.bounds || source.bounds || command && command.bounds, null),
+                        metadata: freezePlainObject(metadata),
+                    })),
+                });
+            }
+
+            function isAcceptedRenderCommandRebase(value) {
+                if (!value || typeof value !== 'object') return false;
+                const status = String(value.status || value.result || value.decision || '').toLowerCase();
+                return value.accepted === true
+                    || value.rebased === true
+                    || status === 'accepted'
+                    || status === 'rebased';
+            }
+
+            function isDeniedRenderCommandRebase(value) {
+                if (!value || typeof value !== 'object') return false;
+                const status = String(value.status || value.result || value.decision || '').toLowerCase();
+                return value.accepted === false
+                    || status === 'denied'
+                    || status === 'rejected';
+            }
+
+            function getRebaseReplacementText(source, replacementSource, command) {
+                if (replacementSource && Object.prototype.hasOwnProperty.call(replacementSource, 'text')) {
+                    return typeof replacementSource.text === 'string'
+                        ? replacementSource.text
+                        : nonEmptyString(replacementSource.text);
+                }
+                if (source && Object.prototype.hasOwnProperty.call(source, 'text')) {
+                    return typeof source.text === 'string' ? source.text : nonEmptyString(source.text);
+                }
+                return typeof command.text === 'string' ? command.text : nonEmptyString(command && command.text);
             }
 
             function normalizeRenderCallbackDecision(value, command, route) {

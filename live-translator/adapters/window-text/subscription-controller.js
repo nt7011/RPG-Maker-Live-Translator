@@ -24,6 +24,7 @@
                     renderStrategy: RENDER_STRATEGY,
                     getRenderGeneration: getRenderGeneration,
                     isRenderTargetCurrent: isRenderTargetCurrent,
+                    resolveRenderCommandRebase: resolveRenderCommandRebase,
                     resolveRecord: resolveSubscriptionRecord,
                     onRenderQueued: applyRenderCommand,
                     onRenderRejected: handleRenderRejected,
@@ -287,6 +288,162 @@
                 const windowData = resolveWindowData(entry);
                 return !!(windowData && getCurrentEntry(windowData, entry) === entry);
             }
+
+    function resolveRenderCommandRebase(entry, command, route, proofContext) {
+                const denied = denyRenderCommandRebaseIfInvalid(entry, command, route, proofContext);
+                if (denied) return denied;
+                const context = proofContext && typeof proofContext === 'object' ? proofContext : {};
+                const windowData = resolveWindowData(entry);
+                const targetWindow = entry.ownerWindow || null;
+                const currentGeneration = Number(entry.surfaceRevision) || 0;
+                const commandGeneration = Number(context.commandGeneration || route && route.commandGeneration) || 0;
+                const targetGeneration = Number(context.targetGeneration) || currentGeneration;
+                const storedText = firstNonEmptyString(
+                    command && command.text,
+                    entry.providerText,
+                    entry.renderTransaction && entry.renderTransaction.translationReceived,
+                    entry.renderedText
+                );
+                const restored = restoreTranslatedWindowText(entry, storedText);
+                const rendered = sanitizeDrawTextOutput(restored, entry.type);
+                const currentSlotProof = createCurrentSlotRebaseProof(entry, windowData, targetWindow, route, {
+                    commandGeneration,
+                    targetGeneration,
+                    currentGeneration,
+                    storedText,
+                    restoredText: restored,
+                    renderedText: rendered,
+                });
+                return {
+                    accepted: true,
+                    reason: 'render-command-rebased',
+                    currentSlotProof,
+                    replacementCommand: {
+                        strategy: RENDER_STRATEGY,
+                        text: storedText,
+                        translationReceived: storedText,
+                        generation: currentGeneration,
+                        targetSurfaceId: entry.surfaceId || getSurfaceId(windowData) || '',
+                        sourceKind: firstNonEmptyString(route && route.sourceKind, 'stored'),
+                        renderIntent: firstNonEmptyString(route && route.renderIntent, 'stored-redraw'),
+                        metadata: {
+                            renderRoute: 'generation-rebase',
+                            reason: 'generation-mismatch',
+                            key: entry.key || getTextEntryKey(windowData, entry) || '',
+                            method: entry.type || '',
+                            windowType: getWindowTypeName(targetWindow, windowData),
+                            commandGeneration,
+                            targetGeneration,
+                            currentGeneration,
+                            currentSlotProof,
+                        },
+                    },
+                };
+            }
+
+    function denyRenderCommandRebaseIfInvalid(entry, command, route, proofContext) {
+                const context = proofContext && typeof proofContext === 'object' ? proofContext : {};
+                if (!entry) return createRenderCommandRebaseDenial('missing-entry');
+                if (entryLifecycleState.isStale(entry)) return createRenderCommandRebaseDenial('inactive-record');
+                if (lifecycleService && typeof lifecycleService.isRecordActive === 'function'
+                    && lifecycleService.isRecordActive(entry) !== true) {
+                    return createRenderCommandRebaseDenial('inactive-record');
+                }
+                const windowData = resolveWindowData(entry);
+                const targetWindow = entry.ownerWindow || null;
+                if (!windowData || windowData._trUnregistered) return createRenderCommandRebaseDenial('current-window-invalid');
+                if (!targetWindow || targetWindow._destroyed || targetWindow.destroyed) return createRenderCommandRebaseDenial('current-window-invalid');
+                const currentEntry = getCurrentEntry(windowData, entry);
+                if (currentEntry !== entry) return createRenderCommandRebaseDenial('window-entry-replaced');
+                const generatedKey = getTextEntryKey(windowData, entry);
+                if (!entry.key || !generatedKey || entry.key !== generatedKey) {
+                    return createRenderCommandRebaseDenial('current-slot-proof-invalid');
+                }
+                const metadata = command && command.metadata && typeof command.metadata === 'object' ? command.metadata : {};
+                if (metadata.key && String(metadata.key) !== String(entry.key)) {
+                    return createRenderCommandRebaseDenial('current-slot-proof-invalid');
+                }
+                if (metadata.method && String(metadata.method) !== String(entry.type || '')) {
+                    return createRenderCommandRebaseDenial('current-slot-proof-invalid');
+                }
+                const windowType = getWindowTypeName(targetWindow, windowData);
+                if (metadata.windowType && String(metadata.windowType) !== String(windowType || '')) {
+                    return createRenderCommandRebaseDenial('current-slot-proof-invalid');
+                }
+                const commandSource = firstNonEmptyString(metadata.normalizedSource, metadata.translationSource, metadata.sourceText).trim();
+                const entrySource = firstNonEmptyString(entry.normalizedSource, entry.translationSource, entry.convertedText, entry.rawText).trim();
+                if (!entrySource || (commandSource && commandSource !== entrySource)) {
+                    return createRenderCommandRebaseDenial('source-text-changed');
+                }
+                const currentSurfaceId = entry.surfaceId || getSurfaceId(windowData) || '';
+                const targetSurfaceId = firstNonEmptyString(route && route.targetSurfaceId, route && route.surfaceId);
+                if (targetSurfaceId
+                    && currentSurfaceId
+                    && targetSurfaceId !== currentSurfaceId
+                    && targetSurfaceId !== String(entry.identitySurfaceId || '')) {
+                    return createRenderCommandRebaseDenial('current-surface-invalid');
+                }
+                const contents = targetWindow.contents || null;
+                if (!contents
+                    || entry.contentsBitmap !== contents
+                    || windowData.contentsBitmap !== contents) {
+                    return createRenderCommandRebaseDenial('contents-proof-invalid');
+                }
+                const currentGeneration = Number(entry.surfaceRevision) || 0;
+                const commandGeneration = Number(context.commandGeneration || route && route.commandGeneration) || 0;
+                const targetGeneration = Number(context.targetGeneration) || currentGeneration;
+                if (!currentGeneration || !commandGeneration || commandGeneration >= currentGeneration) {
+                    return createRenderCommandRebaseDenial('generation-rebase-not-lower');
+                }
+                if (targetGeneration && targetGeneration !== currentGeneration) {
+                    return createRenderCommandRebaseDenial('target-generation-changed');
+                }
+                const storedText = firstNonEmptyString(
+                    command && command.text,
+                    entry.providerText,
+                    entry.renderTransaction && entry.renderTransaction.translationReceived,
+                    entry.renderedText
+                );
+                if (!storedText) return createRenderCommandRebaseDenial('stored-translation-missing');
+                const restored = restoreTranslatedWindowText(entry, storedText);
+                const rendered = sanitizeDrawTextOutput(restored, entry.type);
+                if (!rendered) return createRenderCommandRebaseDenial('restored-text-empty');
+                if (rendered.trim() === String(entry.convertedText || '').trim()) {
+                    return createRenderCommandRebaseDenial('translated-text-matched-original');
+                }
+                return null;
+            }
+
+    function createCurrentSlotRebaseProof(entry, windowData, targetWindow, route, proof = {}) {
+                return {
+                    recordActive: true,
+                    currentEntryMatches: true,
+                    key: entry.key || '',
+                    slotKey: entry.slotKey || '',
+                    method: entry.type || '',
+                    windowType: getWindowTypeName(targetWindow, windowData),
+                    surfaceId: entry.surfaceId || getSurfaceId(windowData) || '',
+                    identitySurfaceId: entry.identitySurfaceId || '',
+                    targetSurfaceId: firstNonEmptyString(route && route.targetSurfaceId, route && route.surfaceId),
+                    commandGeneration: Number(proof.commandGeneration) || 0,
+                    targetGeneration: Number(proof.targetGeneration) || 0,
+                    currentGeneration: Number(proof.currentGeneration) || 0,
+                    contentsRevision: Number(entry.contentsRevision) || 0,
+                    windowContentsRevision: Number(windowData && windowData.contentsRevision) || 0,
+                    contentsSameAsEntry: !!(targetWindow && targetWindow.contents && entry.contentsBitmap === targetWindow.contents),
+                    windowContentsCurrent: !!(targetWindow && targetWindow.contents && windowData && windowData.contentsBitmap === targetWindow.contents),
+                    sourceTextCurrent: true,
+                    renderableStoredText: !!(proof.renderedText && String(proof.renderedText).trim()),
+                };
+            }
+
+    function createRenderCommandRebaseDenial(reason, details = null) {
+                return {
+                    accepted: false,
+                    reason: String(reason || 'render-command-rebase-denied'),
+                    details: details && typeof details === 'object' ? details : {},
+                };
+            }
     
     function handleRenderRejected(entry, decision) {
                 if (!entry || !decision || decision.reason !== 'target-not-current') return;
@@ -298,7 +455,7 @@
                 });
             }
     
-        return { installOrchestratorSubscription, getRenderGeneration, isRenderTargetCurrent, handleRenderRejected };
+        return { installOrchestratorSubscription, getRenderGeneration, isRenderTargetCurrent, resolveRenderCommandRebase, handleRenderRejected };
     }
             return { create: createSubscriptionControllerController };
         },

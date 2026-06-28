@@ -110,8 +110,52 @@
                     return recordRenderCommandDecision('rejected', id, decision);
                 }
 
+                function recordRenderSuperseded(id, decision = {}) {
+                    const source = decision && typeof decision === 'object' ? decision : {};
+                    const key = normalizeId(id || source.itemId || source.recordId);
+                    const item = getItemById(key);
+                    if (!item) return null;
+                    const command = findRenderCommand(item.id, firstString(source.commandId, source.id, source.rebasedFromCommandId));
+                    const details = normalizeRenderCommandSupersededDecision(source, item, command);
+                    updateRenderCommandStatus(command, 'superseded', details);
+                    return recordEvent('item.render_superseded', item, {
+                        message: details.reason,
+                        details,
+                    });
+                }
+
+                function rebaseRenderCommand(id, rebase = {}) {
+                    const source = rebase && typeof rebase === 'object' ? rebase : {};
+                    const key = normalizeId(id || source.itemId || source.recordId);
+                    const item = getItemById(key);
+                    if (!item) return createRenderCommandRebaseResult('missing-item', null, null, null, 'render-item-missing', false, true);
+                    const oldCommand = findRenderCommand(item.id, firstString(source.commandId, source.id, source.rebasedFromCommandId));
+                    if (!oldCommand) {
+                        return createRenderCommandRebaseResult('missing-command', item, null, null, 'render-command-missing', false, true);
+                    }
+                    if (!isRenderCommandUnresolved(oldCommand)) {
+                        return createRenderCommandRebaseResult('terminal-command', item, oldCommand, null, 'render-command-terminal', false, true);
+                    }
+                    const replacement = normalizeRenderCommandRebaseReplacement(source, item, oldCommand);
+                    if (!replacement.command.strategy || !replacement.command.text || !replacement.command.generation) {
+                        return createRenderCommandRebaseResult('invalid-replacement', item, oldCommand, null, 'render-rebase-replacement-invalid', false, true);
+                    }
+                    const superseded = recordRenderSuperseded(item.id, {
+                        commandId: oldCommand.commandId || oldCommand.id,
+                        reason: firstString(source.reason, 'render-command-rebased'),
+                        commandGeneration: replacement.oldGeneration,
+                        targetGeneration: replacement.newGeneration,
+                        details: replacement.supersedeDetails,
+                    });
+                    const queued = queueRenderCommand(item.id, replacement.command);
+                    return createRenderCommandRebaseResult('rebased', item, oldCommand, queued, firstString(source.reason, 'render-command-rebased'), true, false, superseded);
+                }
+
                 function recordRenderCommandDecision(status, id, decision = {}) {
                     const normalizedStatus = normalizeRenderCommandStatus(status);
+                    if (normalizedStatus === 'superseded') {
+                        return recordRenderSuperseded(id, decision);
+                    }
                     const source = decision && typeof decision === 'object' ? decision : {};
                     const key = normalizeId(id || source.itemId || source.recordId);
                     const item = getItemById(key);
@@ -288,7 +332,101 @@
                     return normalized;
                 }
 
+                function normalizeRenderCommandSupersededDecision(decision, item, command = null) {
+                    const source = decision && typeof decision === 'object' ? decision : {};
+                    const details = source.details && typeof source.details === 'object' ? source.details : {};
+                    return {
+                        status: 'superseded',
+                        reason: firstString(source.reason, 'render-command-rebased'),
+                        commandId: firstString(source.commandId, source.id, command && command.commandId, command && command.id),
+                        strategy: firstString(source.strategy, command && command.strategy, item && item.renderStrategy),
+                        commandGeneration: finiteNumber(source.commandGeneration) || finiteNumber(source.oldGeneration) || (command && command.generation) || 0,
+                        targetGeneration: finiteNumber(source.targetGeneration) || finiteNumber(source.newGeneration) || 0,
+                        queuedAt: command && command.queuedAt ? command.queuedAt : 0,
+                        targetSurfaceId: firstString(source.targetSurfaceId, command && command.targetSurfaceId),
+                        adapterId: item && (item.sourceAdapter || item.hook) || '',
+                        details: pickSerializableObject(details),
+                        terminal: true,
+                    };
+                }
+
+                function normalizeRenderCommandRebaseReplacement(source, item, oldCommand) {
+                    const replacement = source.replacementCommand && typeof source.replacementCommand === 'object'
+                        ? source.replacementCommand
+                        : {};
+                    const currentSlotProof = normalizeRenderRecoveryProof(
+                        source.currentSlotProof
+                        || source.proof
+                        || source.proofContext
+                        || replacement.currentSlotProof
+                    );
+                    const oldGeneration = finiteNumber(source.oldGeneration)
+                        || finiteNumber(source.commandGeneration)
+                        || finiteNumber(oldCommand && oldCommand.generation)
+                        || 0;
+                    const newGeneration = finiteNumber(source.newGeneration)
+                        || finiteNumber(source.targetGeneration)
+                        || finiteNumber(source.generation)
+                        || finiteNumber(replacement.generation)
+                        || (item && item.generation)
+                        || 0;
+                    const replacementMetadata = Object.assign(
+                        {},
+                        pickSerializableObject(oldCommand && oldCommand.metadata || {}),
+                        pickSerializableObject(source.metadata || {}),
+                        pickSerializableObject(replacement.metadata || {}),
+                        {
+                            rebasedFromCommandId: firstString(oldCommand && oldCommand.commandId, oldCommand && oldCommand.id),
+                            oldGeneration,
+                            newGeneration,
+                        }
+                    );
+                    if (currentSlotProof) replacementMetadata.currentSlotProof = currentSlotProof;
+                    const command = {
+                        commandId: firstString(replacement.commandId, replacement.id),
+                        strategy: firstString(replacement.strategy, source.strategy, oldCommand && oldCommand.strategy, item && item.renderStrategy),
+                        text: firstString(
+                            replacement.text,
+                            replacement.translation,
+                            replacement.translationReceived,
+                            source.text,
+                            source.translation,
+                            source.translationReceived,
+                            oldCommand && oldCommand.text
+                        ),
+                        generation: newGeneration,
+                        targetSurfaceId: firstString(
+                            replacement.targetSurfaceId,
+                            replacement.surfaceId,
+                            source.targetSurfaceId,
+                            source.surfaceId,
+                            oldCommand && oldCommand.targetSurfaceId,
+                            item && item.surfaceId
+                        ),
+                        renderIntent: firstString(replacement.renderIntent, replacement.intent, source.renderIntent, source.intent, oldCommand && oldCommand.renderIntent),
+                        sourceKind: firstString(replacement.sourceKind, replacement.source, source.sourceKind, source.source, oldCommand && oldCommand.sourceKind),
+                        recoveryProof: normalizeRenderRecoveryProof(replacement.recoveryProof || source.recoveryProof || oldCommand && oldCommand.recoveryProof),
+                        bounds: normalizeBounds(replacement.bounds) || normalizeBounds(source.bounds) || normalizeBounds(oldCommand && oldCommand.bounds),
+                        metadata: replacementMetadata,
+                    };
+                    const supersedeDetails = Object.assign({}, pickSerializableObject(source.details || {}), {
+                        rebasedFromCommandId: firstString(oldCommand && oldCommand.commandId, oldCommand && oldCommand.id),
+                        replacementCommandId: firstString(command.commandId),
+                        oldGeneration,
+                        newGeneration,
+                    });
+                    if (currentSlotProof) supersedeDetails.currentSlotProof = currentSlotProof;
+                    return {
+                        oldGeneration,
+                        newGeneration,
+                        currentSlotProof,
+                        command,
+                        supersedeDetails,
+                    };
+                }
+
                 function createRenderCommandDecisionCommit(status, decision, item, command, details = {}) {
+                    if (status === 'superseded') return null;
                     if (!renderTransaction || typeof renderTransaction.createRenderCommit !== 'function') return null;
                     const source = decision && typeof decision === 'object' ? decision : {};
                     const existingCommit = source.renderCommit && typeof source.renderCommit === 'object'
@@ -395,6 +533,8 @@
                     } else if (status === 'ready') {
                         command.readyAt = now;
                         command.terminal = false;
+                    } else if (status === 'superseded') {
+                        command.supersededAt = now;
                     } else {
                         command.rejectedAt = now;
                     }
@@ -478,6 +618,27 @@
                     });
                 }
 
+                function createRenderCommandRebaseResult(status, item, oldCommand, replacementCommand, reason, changed, terminal, event = null) {
+                    const commandId = oldCommand ? firstString(oldCommand.commandId, oldCommand.id) : '';
+                    const itemId = item && item.id ? item.id : (oldCommand && oldCommand.itemId ? oldCommand.itemId : '');
+                    const replacementCommandId = replacementCommand ? firstString(replacementCommand.commandId, replacementCommand.id) : '';
+                    return Object.freeze({
+                        status,
+                        handled: changed === true || status === 'terminal-command',
+                        changed: changed === true,
+                        terminal: terminal === true,
+                        rebased: status === 'rebased',
+                        itemId,
+                        recordId: itemId,
+                        commandId,
+                        replacementCommandId,
+                        reason: firstString(reason, status),
+                        command: oldCommand ? cloneRenderCommand(oldCommand) : null,
+                        replacementCommand: replacementCommand ? cloneRenderCommand(replacementCommand) : null,
+                        event,
+                    });
+                }
+
                 function cloneRenderCommand(command) {
                     return command ? pickSerializableObject(command) : null;
                 }
@@ -488,6 +649,8 @@
                     recordRenderCommitted,
                     recordRenderDeferred,
                     recordRenderRejected,
+                    recordRenderSuperseded,
+                    rebaseRenderCommand,
                     recordRenderCommandDecision,
                     notifyRenderCommandReady,
                     rejectOpenRenderCommands,
