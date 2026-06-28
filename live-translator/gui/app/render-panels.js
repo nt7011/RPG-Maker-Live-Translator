@@ -91,7 +91,7 @@ function renderRuntimePanelsForFeed(policySnapshot = refreshGuiPolicySnapshot(),
         rememberRuntimePanelKey('status', keys.status);
     }
     if (force || hasRuntimePanelKeyChanged('hooks', keys.hooks)) {
-        renderHookResults();
+        renderHookResults(policySnapshot);
         rememberRuntimePanelKey('hooks', keys.hooks);
     }
     if (force || hasRuntimePanelKeyChanged('textRecords', keys.textRecords)) {
@@ -114,6 +114,7 @@ function rememberRuntimePanelKey(name, key) {
 
 function createRuntimePanelRenderKeys(policySnapshot = getGuiPolicySnapshot()) {
     const effectivePolicy = getGuiEffectivePolicy(policySnapshot);
+    const visibleHookResults = getVisibleHookResults(policySnapshot);
     return {
         status: createRuntimePanelRenderKey({
             diagnostics: createIntelPanelKeySource(state.diagnostics),
@@ -125,10 +126,13 @@ function createRuntimePanelRenderKeys(policySnapshot = getGuiPolicySnapshot()) {
             cacheEntries: state.cacheEntries || '-',
         }),
         hooks: createRuntimePanelRenderKey({
-            summary: state.hookSummary || null,
-            results: (Array.isArray(state.hookResults) ? state.hookResults : []).map((item) => [
+            summary: getVisibleHookSummary(policySnapshot),
+            diagnosticsEnabled: effectivePolicy.diagnostics.enabled === true,
+            results: visibleHookResults.map((item) => [
                 item && item.name,
                 item && item.displayName,
+                item && item.category,
+                item && item.module,
                 item && item.status,
                 item && item.reason,
             ]),
@@ -476,7 +480,18 @@ function renderDrawCaptureTracePanel(policySnapshot = refreshGuiPolicySnapshot()
     const copyButton = refs['draw-capture-copy'];
     const tracePolicy = getGuiDrawCapturePolicy(policySnapshot);
     const enabled = tracePolicy.enabled;
-    if (panel) panel.hidden = !tracePolicy.panelVisible;
+    if (panel) {
+        panel.hidden = !tracePolicy.panelVisible;
+        if (!tracePolicy.panelVisible) panel.open = false;
+    }
+    if (!tracePolicy.panelVisible) {
+        if (copyButton) {
+            copyButton.disabled = true;
+            copyButton.title = '';
+        }
+        if (container) container.innerHTML = '';
+        return;
+    }
     if (copyButton) {
         const canCopy = tracePolicy.copyEnabled;
         copyButton.disabled = !canCopy;

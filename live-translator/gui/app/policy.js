@@ -231,7 +231,7 @@ function deriveGuiEffectivePolicy(configured, runtime, view) {
         },
         drawCaptureTrace: {
             enabled: traceEnabled,
-            panelVisible: configured.drawCaptureTrace.enabled,
+            panelVisible: configured.diagnostics.enabled && configured.drawCaptureTrace.enabled,
             copyEnabled: traceEnabled && traceEvents.length > 0,
             disabledReason: getGuiDrawCaptureDisabledReason(configured, traceRuntimeEnabled),
             eventDisplayLimit: 28,

@@ -411,11 +411,116 @@ function renderVersionPanel() {
     const status = refs['version-status-message'];
     if (status) {
         const statusText = formatVersionStatusText();
+        const actionAvailable = isVersionUpdateActionAvailable(statusText);
         status.hidden = !statusText;
-        setToneText(status, 'header-complaint version-status-message', toneForVersionStatus(), statusText || '');
-        status.title = state.updateCheckError || statusText || '';
+        setToneText(
+            status,
+            `header-complaint version-status-message${actionAvailable ? ' version-update-button' : ''}`,
+            toneForVersionStatus(),
+            statusText || ''
+        );
+        syncVersionUpdateActionElement(status, actionAvailable, statusText);
+        status.title = state.updateCheckError
+            || (actionAvailable ? 'Open rmlt.pages.dev in the default browser' : statusText || '');
     }
     updateHeaderComplaintsVisibility();
+}
+
+function bindVersionUpdateAction() {
+    const status = refs['version-status-message'];
+    if (!status || status.__liveTranslatorVersionUpdateActionBound === true) return;
+    status.__liveTranslatorVersionUpdateActionBound = true;
+    status.addEventListener('click', handleVersionUpdateActionClick);
+    status.addEventListener('keydown', handleVersionUpdateActionKeydown);
+}
+
+function isVersionUpdateActionAvailable(statusText = formatVersionStatusText()) {
+    return state.updateCheckStatus === 'update' && !!state.latestVersion && !!statusText;
+}
+
+function syncVersionUpdateActionElement(element, enabled, statusText) {
+    if (!element) return;
+    if (enabled) {
+        setVersionUpdateActionAttribute(element, 'role', 'button');
+        setVersionUpdateActionAttribute(element, 'tabindex', '0');
+        setVersionUpdateActionAttribute(element, 'aria-label', `Open update page: ${statusText}`);
+        return;
+    }
+    removeVersionUpdateActionAttribute(element, 'role');
+    removeVersionUpdateActionAttribute(element, 'tabindex');
+    removeVersionUpdateActionAttribute(element, 'aria-label');
+}
+
+function setVersionUpdateActionAttribute(element, name, value) {
+    if (typeof element.setAttribute === 'function') {
+        element.setAttribute(name, value);
+    } else {
+        element[name] = value;
+    }
+}
+
+function removeVersionUpdateActionAttribute(element, name) {
+    if (typeof element.removeAttribute === 'function') {
+        element.removeAttribute(name);
+    } else {
+        delete element[name];
+    }
+}
+
+function handleVersionUpdateActionClick(event) {
+    if (!isVersionUpdateActionAvailable()) return false;
+    consumeVersionUpdateActionEvent(event);
+    return openGuiUpdatePage();
+}
+
+function handleVersionUpdateActionKeydown(event) {
+    if (!event || (event.key !== 'Enter' && event.key !== ' ')) return false;
+    if (!isVersionUpdateActionAvailable()) return false;
+    consumeVersionUpdateActionEvent(event);
+    return openGuiUpdatePage();
+}
+
+function consumeVersionUpdateActionEvent(event) {
+    if (!event) return;
+    if (typeof event.preventDefault === 'function') event.preventDefault();
+    if (typeof event.stopPropagation === 'function') event.stopPropagation();
+}
+
+function openGuiUpdatePage() {
+    const updatePageUrl = getGuiConfiguredPolicy().updates.updatePageUrl;
+    const shell = getGuiDefaultBrowserShell();
+    if (!shell) {
+        addLog('warn', 'Update page could not be opened: NW Shell API unavailable.');
+        return false;
+    }
+
+    try {
+        shell.openExternal(updatePageUrl);
+        return true;
+    } catch (err) {
+        addLog('warn', `Update page could not be opened: ${formatError(err)}`);
+        return false;
+    }
+}
+
+function getGuiDefaultBrowserShell() {
+    const globalShell = globalThis.nw
+        && globalThis.nw.Shell
+        && typeof globalThis.nw.Shell.openExternal === 'function'
+        ? globalThis.nw.Shell
+        : null;
+    if (globalShell) return globalShell;
+
+    const req = getNodeRequire();
+    if (!req) return null;
+    try {
+        const gui = req('nw.gui');
+        return gui && gui.Shell && typeof gui.Shell.openExternal === 'function'
+            ? gui.Shell
+            : null;
+    } catch (_) {
+        return null;
+    }
 }
 
 function formatVersionIndicatorVersion() {

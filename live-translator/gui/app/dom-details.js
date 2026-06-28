@@ -35,12 +35,13 @@ function syncFoldedPanelDefaults(policySnapshot = getGuiPolicySnapshot()) {
     applyFoldedPanelDefault('active-text-panel', 'activeText', true, 'active:default');
     applyFoldedPanelDefault('detached-text-panel', 'detachedText', true, 'detached:default');
     applyFoldedPanelDefault('archived-text-panel', 'archivedText', true, 'archived:default');
-    applyFoldedPanelDefault(
-        'diagnostics-panel',
-        'diagnostics',
-        effectivePolicy.intel.surfaceEnabled,
-        `intel:${effectivePolicy.intel.surfaceEnabled ? 'visible' : 'hidden'}`
-    );
+    if (typeof syncDiagnosticsPanelDefault === 'function') {
+        syncDiagnosticsPanelDefault(
+            typeof createDiagnosticsSummaryModel === 'function'
+                ? createDiagnosticsSummaryModel(policySnapshot)
+                : undefined
+        );
+    }
 }
 
 function createLine(value, kind) {

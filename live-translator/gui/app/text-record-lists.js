@@ -9,11 +9,12 @@ function toneForHookStatus(status) {
     return 'neutral';
 }
 
-function renderHookResults() {
+function renderHookResults(policySnapshot = getGuiPolicySnapshot()) {
     const body = refs['hook-results'];
     if (!body) return;
 
-    const summary = state.hookSummary || summarizeHookResults(state.hookResults);
+    const visibleHookResults = getVisibleHookResults(policySnapshot);
+    const summary = summarizeHookResults(visibleHookResults);
     const tone = summary.failed > 0 ? 'bad' : (summary.skipped > 0 ? 'warn' : 'ok');
     setSummaryStatus(
         'hook-summary',
@@ -24,13 +25,13 @@ function renderHookResults() {
     );
     renderDiagnosticsSummary();
 
-    if (!state.hookResults.length) {
+    if (!visibleHookResults.length) {
         body.innerHTML = '<tr><td colspan="3" class="empty">No hook installation records.</td></tr>';
         return;
     }
 
     body.innerHTML = '';
-    for (const item of state.hookResults) {
+    for (const item of visibleHookResults) {
         const row = document.createElement('tr');
         row.appendChild(createCell(item.displayName || item.name || '-'));
         row.appendChild(createStatusCell(item.status || '-'));

@@ -422,6 +422,7 @@ function bindEvents() {
     if (refs['draw-capture-copy']) {
         refs['draw-capture-copy'].addEventListener('click', () => copyDrawCaptureTrace(refs['draw-capture-copy']));
     }
+    if (typeof bindVersionUpdateAction === 'function') bindVersionUpdateAction();
     bindDisabledForesightPanelGuard();
     if (refs['foresight-message-filter-toggle']) {
         refs['foresight-message-filter-toggle'].checked = getGuiViewState(refreshGuiPolicySnapshot()).foresight.messagesOnly;
@@ -565,21 +566,40 @@ function getDisclosurePanelForSummary(summary) {
 }
 
 function renderDiagnosticsSummary() {
-    const policySnapshot = getGuiPolicySnapshot();
+    const model = createDiagnosticsSummaryModel();
+    setSummaryStatus('diagnostics-summary', model.tone, model.text);
+    syncDiagnosticsPanelDefault(model);
+}
+
+function createDiagnosticsSummaryModel(policySnapshot = getGuiPolicySnapshot()) {
     const contextPolicy = getGuiEffectivePolicy(policySnapshot).runtimeContext;
-    const hookSummary = state.hookSummary || summarizeHookResults(state.hookResults);
-    const hooksReady = hookSummary.total > 0
-        && hookSummary.failed === 0
-        && hookSummary.skipped === 0
-        && hookSummary.installed === hookSummary.total;
+    const hookSummary = getVisibleHookSummary(policySnapshot);
     const logCount = Array.isArray(state.logLines) ? state.logLines.length : 0;
-    const hasBad = contextPolicy.ready !== true || hookSummary.failed > 0;
-    const hasWarn = hookSummary.skipped > 0 || hookSummary.total === 0;
+    return deriveDiagnosticsSummaryModel(contextPolicy, hookSummary, logCount);
+}
+
+function deriveDiagnosticsSummaryModel(contextPolicy, hookSummary, logCount) {
+    const context = contextPolicy && typeof contextPolicy === 'object' ? contextPolicy : {};
+    const summary = hookSummary && typeof hookSummary === 'object'
+        ? hookSummary
+        : summarizeHookResults([]);
+    const hasBad = context.ready !== true || Number(summary.failed) > 0;
+    const hasWarn = Number(summary.skipped) > 0 || Number(summary.total) === 0;
     const tone = hasBad ? 'bad' : (hasWarn ? 'warn' : 'ok');
     const text = hasBad || hasWarn
         ? 'needs attention'
-        : (logCount ? `ready, ${formatNumber(logCount)} logs` : 'ready');
-    setSummaryStatus('diagnostics-summary', tone, text);
+        : (Number(logCount) ? `ready, ${formatNumber(logCount)} logs` : 'ready');
+    return {
+        tone,
+        text,
+        openDefault: tone !== 'ok',
+        defaultKey: `diagnostics:${tone}`,
+    };
+}
+
+function syncDiagnosticsPanelDefault(model = createDiagnosticsSummaryModel()) {
+    if (typeof applyFoldedPanelDefault !== 'function') return;
+    applyFoldedPanelDefault('diagnostics-panel', 'diagnostics', model.openDefault, model.defaultKey);
 }
 
 function boot() {

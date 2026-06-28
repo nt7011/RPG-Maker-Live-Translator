@@ -17,6 +17,7 @@
                 https = value;
                 return previous;
             },
+            openGuiUpdatePage,
             normalizeTextOrchestratorSnapshot,
             normalizeForesightSnapshot,
             normalizeDrawCaptureTraceSnapshot,
@@ -26,6 +27,8 @@
             getGuiViewState,
             getGuiEffectivePolicy,
             refreshGuiPolicySnapshot,
+            deriveDiagnosticsSummaryModel,
+            filterVisibleHookResults,
             getGuiDiagnosticsSnapshotRequest,
             isGuiTextRecordSpoilerCensored,
             syncRuntimeDiagnosticsForGuiState,

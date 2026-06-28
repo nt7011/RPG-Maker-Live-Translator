@@ -934,7 +934,23 @@ main {
     display: inline-flex;
     align-items: center;
     min-height: 30px;
+    border: 1px solid transparent;
     white-space: nowrap;
+}
+
+.version-status-message.version-update-button {
+    border-color: currentColor;
+    box-shadow: inset 0 0 0 1px currentColor;
+    cursor: pointer;
+}
+
+.version-status-message.version-update-button:hover {
+    filter: var(--gui-hover-filter);
+}
+
+.version-status-message.version-update-button:focus-visible {
+    outline: 2px solid var(--gui-accent);
+    outline-offset: 2px;
 }
 
 button {

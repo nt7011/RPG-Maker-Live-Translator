@@ -18,6 +18,26 @@ function summarizeHookResults(results) {
     return summary;
 }
 
+function isDiagnosticHookResult(result) {
+    return String(result && result.category || '').trim().toLowerCase() === 'diagnostics';
+}
+
+function filterVisibleHookResults(results, policySnapshot = getGuiPolicySnapshot()) {
+    const list = Array.isArray(results) ? results : [];
+    const diagnosticsEnabled = getGuiEffectivePolicy(policySnapshot).diagnostics.enabled === true;
+    return diagnosticsEnabled
+        ? list.slice()
+        : list.filter((result) => !isDiagnosticHookResult(result));
+}
+
+function getVisibleHookResults(policySnapshot = getGuiPolicySnapshot()) {
+    return filterVisibleHookResults(state.hookResults, policySnapshot);
+}
+
+function getVisibleHookSummary(policySnapshot = getGuiPolicySnapshot()) {
+    return summarizeHookResults(getVisibleHookResults(policySnapshot));
+}
+
 function normalizeHookFeedResult(result) {
     const source = result && typeof result === 'object' ? result : {};
     return {
