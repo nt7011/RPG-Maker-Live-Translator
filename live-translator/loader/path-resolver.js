@@ -37,13 +37,22 @@
         return pathModule.normalize(localPath);
     }
 
-    function resolveLocalPathFromUrl(url, pathModule) {
+    function normalizeGameRelativeUrlPath(pathname, pathModule, gameRoot) {
+        if (!gameRoot) return '';
+        let relativePath = decodeURIComponent(String(pathname || ''));
+        relativePath = relativePath.replace(/^\/+/u, '');
+        if (!relativePath) return pathModule.normalize(gameRoot);
+        relativePath = relativePath.replace(/\//gu, pathModule.sep);
+        return pathModule.resolve(gameRoot, relativePath);
+    }
+
+    function resolveLocalPathFromUrl(url, pathModule, gameRoot = '') {
         if (!url || !pathModule) return '';
         try {
             const baseUrl = typeof window !== 'undefined' && window.location ? window.location.href : undefined;
             const parsed = new URL(url, baseUrl);
-            if (parsed.protocol !== 'file:') return '';
-            return normalizeFileUrlPath(parsed.pathname, pathModule);
+            if (parsed.protocol === 'file:') return normalizeFileUrlPath(parsed.pathname, pathModule);
+            return normalizeGameRelativeUrlPath(parsed.pathname, pathModule, gameRoot);
         } catch (_) {
             return '';
         }
@@ -59,30 +68,12 @@
         return '';
     }
 
-    function deriveGameRootFromSupportPath(supportPath, pathModule) {
-        if (!supportPath || !pathModule) return '';
-        const normalized = pathModule.normalize(supportPath);
-        const parts = normalized.split(/[\\/]+/u);
-        const lower = parts.map((part) => String(part).toLowerCase());
-        const liveTranslatorIndex = lower.lastIndexOf('live-translator');
-        if (liveTranslatorIndex < 0) return '';
-        const pluginsIndex = liveTranslatorIndex - 1;
-        const jsIndex = liveTranslatorIndex - 2;
-        if (lower[pluginsIndex] !== 'plugins' || lower[jsIndex] !== 'js') return '';
-        if (lower[liveTranslatorIndex - 3] === 'www') {
-            return parts.slice(0, liveTranslatorIndex - 3).join(pathModule.sep);
-        }
-        return parts.slice(0, liveTranslatorIndex - 2).join(pathModule.sep);
-    }
-
     function createRuntimePaths(options = {}) {
         const { loaderScript, supportDir } = options;
         const nodeApi = getNodeApi();
         const pathModule = nodeApi && nodeApi.path;
-        const supportPath = pathModule ? resolveLocalPathFromUrl(supportDir, pathModule) : '';
-        const gameRoot = getProcessCwd()
-            || deriveGameRootFromSupportPath(supportPath, pathModule)
-            || '';
+        const gameRoot = getProcessCwd();
+        const supportPath = pathModule ? resolveLocalPathFromUrl(supportDir, pathModule, gameRoot) : '';
         const joinSupport = (fileName) => {
             if (pathModule && supportPath) return pathModule.join(supportPath, fileName);
             if (pathModule && gameRoot) return pathModule.join(gameRoot, fileName);
@@ -102,7 +93,6 @@
 
     defineLoaderModule('pathResolver', {
         createRuntimePaths,
-        deriveGameRootFromSupportPath,
         getProcessCwd,
         resolveLocalPathFromUrl,
     });

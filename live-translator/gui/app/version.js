@@ -10,10 +10,22 @@ var LATEST_FIELD_NAME = 'latest';
 var LATEST_BETA_INTERNAL_FIELD_NAME = 'latestBeta';
 var RECOMMENDED_FIELD_NAME = 'recommended';
 var RECOMMENDED_BETA_REMOTE_FIELD_NAME = 'recommended-beta';
+var LOCAL_VERSION_PATTERN = /^local[A-Za-z0-9._-]*$/u;
 
 function normalizeVersionString(value) {
     const parsed = parseUpdateVersion(value);
-    return parsed ? parsed.version : '';
+    return parsed ? parsed.version : normalizeLocalVersionString(value);
+}
+
+function normalizeLocalVersionString(value) {
+    if (typeof value !== 'string') return '';
+    const version = String(value).trim();
+    if (!version || version.length > 64) return '';
+    return LOCAL_VERSION_PATTERN.test(version) ? version : '';
+}
+
+function isLocalVersionString(value) {
+    return !!normalizeLocalVersionString(value);
 }
 
 function parseUpdateVersion(value) {
@@ -326,6 +338,17 @@ function setVersionStatus(status, message, error = '') {
 }
 
 function getVersionCheckResult(installedVersion, latestVersion) {
+    const localVersion = normalizeLocalVersionString(installedVersion);
+    if (localVersion) {
+        return {
+            status: 'local',
+            message: 'Local development build',
+            logMessage: '',
+            targetVersion: '',
+            currentVersion: localVersion,
+        };
+    }
+
     const installed = parseUpdateVersion(installedVersion);
     let latestVersions;
     let effectiveInstalled = installed;
@@ -367,6 +390,7 @@ function getVersionCheckResult(installedVersion, latestVersion) {
 }
 
 function toneForVersionStatus() {
+    if (state.updateCheckStatus === 'local') return 'ok';
     if (state.updateCheckStatus === 'latest') return 'ok';
     if (state.updateCheckStatus === 'update'
         || state.updateCheckStatus === 'error'
@@ -395,6 +419,7 @@ function renderVersionPanel() {
 }
 
 function formatVersionIndicatorVersion() {
+    if (state.updateCheckStatus === 'local') return state.installedVersion || 'local';
     if (state.updateCheckStatus === 'disabled' || state.checkUpdates === false) return '0.0.0b0';
     if (state.installedVersionDisplay
         && state.installedVersionDisplaySource === state.installedVersion) {
@@ -409,6 +434,7 @@ function setInstalledVersionDisplay(displayVersion, sourceVersion = state.instal
 }
 
 function formatVersionHeaderState() {
+    if (state.updateCheckStatus === 'local') return 'local';
     if (state.updateCheckStatus === 'latest') return 'latest';
     if (state.updateCheckStatus === 'update') return 'outdated';
     if (state.updateCheckStatus === 'checking') return 'Checking';
@@ -463,6 +489,12 @@ function refreshVersionSettings() {
         return;
     }
 
+    if (isLocalVersionString(state.installedVersion)) {
+        setVersionStatus('local', 'Local development build');
+        renderVersionPanel();
+        return;
+    }
+
     if (!state.checkUpdates) {
         setVersionStatus('disabled', 'Update checks disabled');
         renderVersionPanel();
@@ -475,6 +507,7 @@ function refreshVersionSettings() {
 
 async function runUpdateCheck() {
     if (state.updateCheckInFlight || !state.checkUpdates) return;
+    if (isLocalVersionString(state.installedVersion)) return;
 
     const previousUpdateStatus = state.updateCheckStatus;
     const previousLatestVersion = state.latestVersion;
@@ -511,6 +544,7 @@ async function runUpdateCheck() {
 function startUpdateChecker() {
     refreshVersionSettings();
     if (!state.checkUpdates) return;
+    if (isLocalVersionString(state.installedVersion)) return;
     runUpdateCheck();
     state.updateCheckTimer = setInterval(runUpdateCheck, getGuiConfiguredPolicy().updates.intervalMs);
 }

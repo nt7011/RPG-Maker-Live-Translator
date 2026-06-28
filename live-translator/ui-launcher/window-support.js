@@ -13,32 +13,9 @@
                 createUiWindow,
                 isEditableTarget,
                 normalizePositiveInteger,
-                resolveSupportPath,
             };
         },
     });
-
-    function resolveSupportPath(script, scriptUrl) {
-        try {
-            const req = typeof require === 'function' ? require : null;
-            if (!req) return '';
-            const path = req('path');
-            const rawSrc = script && typeof script.getAttribute === 'function'
-                ? (script.getAttribute('src') || scriptUrl)
-                : scriptUrl;
-            if (!rawSrc) return '';
-
-            const launcherUrl = new URL(rawSrc, window.location.href);
-            let resolvedPath = decodeURIComponent(new URL('.', launcherUrl.href).pathname || '');
-            resolvedPath = resolvedPath.replace(/^\/+/u, '');
-            resolvedPath = resolvedPath.replace(/\//gu, path.sep);
-
-            if (/^[A-Za-z]:[\\/]/u.test(resolvedPath)) return path.normalize(resolvedPath);
-            return path.resolve(process.cwd(), resolvedPath);
-        } catch (_) {
-            return '';
-        }
-    }
 
     function createUiUrl(file, query = {}, context = {}) {
         const supportUrl = context.supportUrl || '';

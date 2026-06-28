@@ -19,7 +19,7 @@
                 ? globalThis.LiveTranslatorPaths
                 : {};
             const supportUrl = runtimePaths.supportUrl || (scriptUrl ? new URL('.', scriptUrl).href : '');
-            const supportPath = runtimePaths.supportPath || support.resolveSupportPath(script, scriptUrl);
+            const supportPath = runtimePaths.supportPath || '';
             const guiState = globalThis.LiveTranslatorGuiState && typeof globalThis.LiveTranslatorGuiState === 'object'
                 ? globalThis.LiveTranslatorGuiState
                 : { translatorOpen: false, updatedAt: Date.now() };
