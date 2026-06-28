@@ -3,18 +3,12 @@
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    if (typeof defineRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/game-message/render.js.');
-    }
-    const requireRuntimeModule = globalScope.LiveTranslatorRequire;
-    if (typeof requireRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module require is unavailable before adapters/game-message/render.js.');
-    }
-    const displayStateModule = requireRuntimeModule('runtime.displayState');
+    LiveTranslatorDefine({
+        name: 'adapters.gameMessage.render',
+        requires: {
+            displayStateModule: 'runtime.displayState',
+        },
+        factory({ displayStateModule }, { scope: globalScope }) {
 
     function createController(scope = {}) {
         const { logger, dbg, preview, stripControls, adapterContract, detachedRecords } = scope;
@@ -26,7 +20,7 @@
         const { isSessionCurrent, isCurrentTranslation, getMessageRenderSession, getPendingMessageRedrawSession, clearMessageRequestSession, getMessageStreamPreviewText, isMessageStreamPreviewCurrent, stopMessageStreamPreview, clearPendingStreamPreviewSession } = scope.controllerFacades.session;
 
         /**
-         * Apply a completed translation render command accepted by the contract gate.
+         * Apply a completed translation render command committed by the contract gate.
          */
         function applyRenderCommand(target, command = {}, route = {}) {
             const windowInstance = target.windowInstance;
@@ -74,7 +68,7 @@
                 renderDecision: pendingRenderDecision,
             });
             // Render commands are instructions, not proof that the native
-            // window accepted pixels. Report item.rendered only after an
+            // window committed pixels. Report item.rendered only after an
             // immediate draw succeeds; deferred draws report it from
             // applyPendingMessageRedraw.
             if (drawn) {
@@ -315,5 +309,7 @@
         };
     }
 
-    defineRuntimeModule('adapters.gameMessage.render', { create: createController });
+            return { create: createController };
+        },
+    });
 })();

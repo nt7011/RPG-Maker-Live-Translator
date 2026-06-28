@@ -3,13 +3,9 @@
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    if (typeof defineRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/sprite-text/parent-run-lifecycle.js.');
-    }
+    LiveTranslatorDefine({
+        name: 'adapters.spriteText.parentRunLifecycle',
+        factory() {
 
     function createController(scope = {}) {
         const { refreshGlyphCandidateLayout } = scope.controllerFacades.glyphCandidates;
@@ -359,5 +355,7 @@
         return { hideRunSources, applyRunSourceSuppression, restoreRunSources, removeParentRun, syncParentRun, shouldRenderParentRunOverlay, refreshParentRunRenderable, computeParentRunRenderable, claimGlyphGroupForRun, getParentRunMap, ensureParentRunState, getParentRunSlotMap, registerParentRunSlot, findParentRunSlotMatch, clearParentRunSlot, isActiveParentRunSlot, areParentRunSlotsCompatible, isParentRunTextExtension, createParentRunSlotKey, parentRunLayerKey };
     }
 
-    defineRuntimeModule('adapters.spriteText.parentrunlifecycle', { createController });
+            return { createController };
+        },
+    });
 })();

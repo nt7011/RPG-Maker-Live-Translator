@@ -3,13 +3,9 @@
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    if (typeof defineRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/sprite-text/entries.js.');
-    }
+    LiveTranslatorDefine({
+        name: 'adapters.spriteText.entries',
+        factory() {
 
     function createController(scope = {}) {
         const renderTransaction = scope.renderTransaction;
@@ -525,5 +521,7 @@
         return { buildTextGroups, canContinueTextGroup, createTextGroup, createOrUpdateEntry, shouldDeferSpriteEntry, observeEntry, observeEntryWhenVisibleOrActive, requestEntryTranslation, retireSpriteEntry, restoreEntrySource, applyRenderCommand, getRenderGeneration, isRenderTargetCurrent, handleRenderRejected, completeEntryFromCommand, isEntryCommandCurrent, markRecordTerminal, shouldKeepRecordAfterRenderRejection, isRenderApplicationFailure, normalizeRenderRejectionReason, isRecordActive, getRecordStatus, isRecordRequestActive, hasRenderedTranslation, getSpriteObservationStatus };
     }
 
-    defineRuntimeModule('adapters.spriteText.entries', { createController });
+            return { createController };
+        },
+    });
 })();

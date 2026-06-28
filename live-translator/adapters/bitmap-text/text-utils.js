@@ -1,18 +1,14 @@
 // Bitmap text adapter support: text utils.
-// Each controller receives one adapter instance scope from bitmap-text-adapter.js.
+// Each controller receives one adapter instance scope from bitmap-text.js.
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    if (typeof defineRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/bitmap-text/text-utils.js.');
-    }
+    LiveTranslatorDefine({
+        name: 'adapters.bitmapText.textUtils',
+        factory() {
 
     function createController(scope = {}) {
-        const { ADAPTER_ID, ADAPTER_LABEL, SURFACE_TYPE, RENDER_STRATEGY, BITMAP_PRIORITY, DRAW_WRAPPER_TOKEN, MUTATION_WRAPPER_TOKEN, FRAME_FLUSH_TOKEN, SMALL_TEXT_TOKEN, NORMAL_CHAR_TOKEN, MAX_FRAGMENTS, MAX_REPLAY_OPS, GAP_MIN, GAP_RATIO } = scope;
+        const { ADAPTER_ID, ADAPTER_LABEL, SURFACE_TYPE, RENDER_STRATEGY, BITMAP_PRIORITY, DRAW_WRAPPER_TOKEN, MUTATION_WRAPPER_TOKEN, FRAME_FLUSH_TOKEN, SMALL_TEXT_TOKEN, NORMAL_CHAR_TOKEN, GAP_MIN, GAP_RATIO } = scope;
         const { getEntryStatus, retireEntry } = scope.controllerFacades.records;
         const { getBitmapState } = scope.controllerFacades.replay;
 
@@ -86,6 +82,53 @@
                 skipReason: entry.skipReason,
             });
         }
+
+        function normalizeBitmapDrawCallArgs(args) {
+            return [
+                stringify(args && args[0]),
+                args && args[1],
+                args && args[2],
+                args && args[3],
+                args && args[4],
+                normalizeCanvasTextAlign(args && args[5]),
+            ];
+        }
+
+        function createBitmapDrawContext(bitmap, methodName, args) {
+            const sourceArgs = Array.isArray(args) ? args : [];
+            const callArgs = normalizeBitmapDrawCallArgs(sourceArgs);
+            const text = callArgs[0];
+            const rawX = sourceArgs[1];
+            const rawY = sourceArgs[2];
+            const rawMaxWidth = sourceArgs[3];
+            const rawLineHeight = sourceArgs[4];
+            const align = callArgs[5];
+            const x = finiteNumber(rawX, 0);
+            const y = finiteNumber(rawY, 0);
+            const lineHeight = positiveNumber(rawLineHeight, bitmap && bitmap.fontSize, 24);
+            const maxWidth = finiteNumber(rawMaxWidth, 0);
+            const normalizedMethodName = stringify(methodName || 'drawText') || 'drawText';
+            return {
+                methodName: normalizedMethodName,
+                text,
+                callArgs,
+                x,
+                y,
+                maxWidth,
+                lineHeight,
+                align,
+                traceInput: {
+                    methodName: normalizedMethodName,
+                    text,
+                    x,
+                    y,
+                    ownerType: '',
+                    maxWidth,
+                    lineHeight,
+                    align,
+                },
+            };
+        }
         
         function isDrawCaptureTraceEnabled() {
             if (!scope.drawCaptureTrace || typeof scope.drawCaptureTrace.record !== 'function') return false;
@@ -114,7 +157,7 @@
             const owner = readBitmapOwner(bitmap);
             const guardState = scope.bitmapServices.getRenderGuardState(bitmap);
             const contentsOwnership = describeBitmapContentsOwnership(bitmap);
-            const ownerType = extra && extra.ownerType ? String(extra.ownerType) : describeOwnerType(owner, bitmap);
+            const ownerType = extra && extra.ownerType ? String(extra.ownerType) : describeOwnerType(owner, bitmap, contentsOwnership);
             const visibleText = sanitizeVisibleText(rawText);
             const state = getBitmapState(bitmap);
             return Object.assign({
@@ -127,7 +170,7 @@
                 x: roundTraceNumber(x),
                 y: roundTraceNumber(y),
                 ownerType,
-                windowType: owner && owner.constructor && owner.constructor.name ? String(owner.constructor.name) : '',
+                windowType: describeWindowType(contentsOwnership),
                 bitmapStateId: state && state.id ? state.id : '',
                 bitmap: bitmap ? {
                     width: roundTraceNumber(bitmap.width),
@@ -136,7 +179,6 @@
                     preferWindowPipeline: guardState ? Number(guardState.windowPipelineDepth) > 0 : false,
                     windowPipelineDepth: guardState ? Number(guardState.windowPipelineDepth) || 0 : 0,
                     windowPipelineSource: guardState ? String(guardState.windowPipelineSource || '') : '',
-                    windowRefreshDepth: Number(bitmap._trWindowRefreshDepth) || 0,
                     bitmapSkipDepth: guardState ? Number(guardState.bitmapSkipDepth) || 0 : 0,
                     bitmapReplayDepth: guardState ? Number(guardState.bitmapReplayDepth) || 0 : 0,
                     spriteTextReplayDepth: guardState ? Number(guardState.spriteTextReplayDepth) || 0 : 0,
@@ -195,26 +237,6 @@
             return null;
         }
         
-        function windowEntryBelongsToBitmap(entry, bitmap, owner, data) {
-            const ownership = scope.surfaceOwnership;
-            if (ownership && typeof ownership.windowEntryBelongsToContents === 'function') {
-                return ownership.windowEntryBelongsToContents(entry, bitmap, owner, data);
-            }
-            return false;
-        }
-        
-        function deriveWindowEntryRect(entry) {
-            if (!entry) return null;
-            if (entry.renderedBounds && isValidRect(entry.renderedBounds)) return entry.renderedBounds;
-            if (entry.bounds && isValidRect(entry.bounds)) return entry.bounds;
-            const x = finiteNumber(entry.position && entry.position.x, 0);
-            const y = finiteNumber(entry.position && entry.position.y, 0);
-            const params = entry.originalParams || {};
-            const width = positiveNumber(params.maxWidth, String(entry.visibleText || entry.rawText || '').length * 12, 1);
-            const height = positiveNumber(params.lineHeight, 24);
-            return rectFromDimensions(x, y, width, height);
-        }
-        
         function deriveEntryRect(entry) {
             if (!entry) return null;
             if (entry.bounds && isValidRect(entry.bounds)) return entry.bounds;
@@ -224,12 +246,6 @@
                 entry.drawParams && entry.drawParams.maxWidth,
                 entry.drawParams && entry.drawParams.lineHeight
             );
-        }
-        
-        function fragmentRect(fragment) {
-            if (!fragment) return null;
-            const x = finiteNumber(fragment.boundsX, finiteNumber(fragment.x, 0));
-            return rectFromDimensions(x, fragment.y, Math.max(1, fragment.width || fragment.maxWidth || 1), Math.max(1, fragment.lineHeight || 1));
         }
         
         function rectFromDimensions(x, y, width, height) {
@@ -276,70 +292,26 @@
             return ['left', 'right', 'center', 'start', 'end'].indexOf(value) >= 0 ? value : 'left';
         }
         
-        function describeOwnerType(owner, bitmap) {
-            if (owner && owner.constructor && owner.constructor.name) return owner.constructor.name;
-            if (bitmap && bitmap.constructor && bitmap.constructor.name) return bitmap.constructor.name;
-            return 'Bitmap';
-        }
-        
-        function shouldKeepWindowEntryTranslation(entry, reason) {
-            if (!entry) return false;
-            if (reason !== 'clear-contents' && reason !== 'clearRect-contents') return false;
-            return !!(scope.windowLifecycle
-                && typeof scope.windowLifecycle.isEntryTranslationPending === 'function'
-                && scope.windowLifecycle.isEntryTranslationPending(entry));
-        }
-        
-        function getWindowOwnerScreenState(owner, data) {
-            if (!owner) return 'removed';
-            if (owner.visible === false) return 'hidden';
-            const openness = Number(owner.openness);
-            const hasOpenArea = Number.isFinite(openness)
-                ? openness > 0
-                : (typeof owner.isOpen === 'function' ? owner.isOpen() : true);
-            const contentsOpacity = Number(owner.contentsOpacity);
-            const textOpacityVisible = !Number.isFinite(contentsOpacity) || contentsOpacity > 0;
-            const isOpenState = data && Object.prototype.hasOwnProperty.call(data, 'isOpen')
-                ? data.isOpen !== false
-                : true;
-            if (!hasOpenArea || !isOpenState) return 'closed';
-            if (!textOpacityVisible) return 'transparent';
-            return 'visible';
-        }
-        
-        function retireWindowEntry(entry, reason, details = null, options = {}) {
-            if (!entry || !entry.recordId) return;
-            const surfaceInvalidated = reason === 'clear-contents' || reason === 'clearRect-contents';
-            const eventDetails = Object.assign({}, details || {});
-            const cancelTranslation = !!(options && options.cancelTranslation === true);
-            if (surfaceInvalidated) {
-                // A clear invalidates the observed surface slot, but an in-flight
-                // translation may still be reusable by the next identical draw.
-                // Keep that distinction visible in diagnostics.
-                eventDetails.surfaceInvalidated = true;
-                eventDetails.translationPreserved = !cancelTranslation;
-            }
-            if (scope.windowLifecycle && typeof scope.windowLifecycle.retireEntry === 'function') {
-                scope.windowLifecycle.retireEntry(entry, reason || 'window-entry-stale', eventDetails, {
-                    cancelTranslation,
-                    eventType: surfaceInvalidated ? 'item.surface_invalidated' : 'item.disappeared',
-                });
-            }
-            forgetWindowEntryRecord(entry, reason, eventDetails);
+        function describeOwnerType(owner, bitmap, ownership = null) {
+            const descriptor = ownership || describeBitmapContentsOwnership(bitmap);
+            const windowType = describeWindowType(descriptor);
+            if (windowType) return windowType;
+            if (descriptor && descriptor.surfaceType) return descriptor.surfaceType;
+            if (descriptor && descriptor.role) return descriptor.role;
+            if (owner) return 'owned-bitmap';
+            return 'bitmap';
         }
 
-        function forgetWindowEntryRecord(entry, reason, details = null) {
-            if (!entry || !entry.recordId || typeof scope.getWindowTextHelpers !== 'function') return false;
-            const helpers = safeCall(() => scope.getWindowTextHelpers());
-            if (!helpers || typeof helpers.forgetEntryRecord !== 'function') return false;
-            return safeCall(() => helpers.forgetEntryRecord(entry, reason, details) === true) === true;
+        function describeWindowType(ownership) {
+            const windowData = ownership && ownership.windowData;
+            return windowData && windowData.windowType ? String(windowData.windowType) : '';
         }
         
         function logTextDetected(entry) {
             if (!scope.telemetry || typeof scope.telemetry.logTextDetected !== 'function' || !entry) return;
             safeCall(() => scope.telemetry.logTextDetected(ADAPTER_ID, entry.visibleText, entry.drawParams.x, entry.drawParams.y, {
                 ownerType: entry.ownerType,
-                fragments: entry.fragments ? entry.fragments.length : 0,
+                sourceRunRecords: Array.isArray(entry.sourceRunRecords) ? entry.sourceRunRecords.length : 0,
             }));
         }
         
@@ -392,8 +364,10 @@
             return error && error.message ? error.message : String(error || 'translation error');
         }
 
-        return { estimateTextWidth, computeFontSignature, sanitizeVisibleText, sanitizePerChar, isStandaloneGlyphText, sanitizeBitmapDrawText, safePrepareText, describeEntryEligibility, isDrawCaptureTraceEnabled, recordDrawTrace, bitmapTraceDetails, cloneTraceRect, roundTraceNumber, readBitmapOwner, resolveBitmapWindowSurface, hasDedicatedOwnerHook, describeBitmapContentsOwnership, windowEntryBelongsToBitmap, deriveWindowEntryRect, deriveEntryRect, fragmentRect, rectFromDimensions, isValidRect, rectHasArea, rectOrNull, rectanglesOverlap, normalizeCanvasTextAlign, describeOwnerType, shouldKeepWindowEntryTranslation, getWindowOwnerScreenState, retireWindowEntry, logTextDetected, updateItem, safeCall, isAdapterContractFailure, warn, stringify, finiteNumber, positiveNumber, pruneArray, errorMessage };
+        return { estimateTextWidth, computeFontSignature, sanitizeVisibleText, sanitizePerChar, isStandaloneGlyphText, sanitizeBitmapDrawText, safePrepareText, describeEntryEligibility, normalizeBitmapDrawCallArgs, createBitmapDrawContext, isDrawCaptureTraceEnabled, recordDrawTrace, bitmapTraceDetails, cloneTraceRect, roundTraceNumber, readBitmapOwner, resolveBitmapWindowSurface, hasDedicatedOwnerHook, describeBitmapContentsOwnership, deriveEntryRect, rectFromDimensions, isValidRect, rectHasArea, rectOrNull, rectanglesOverlap, normalizeCanvasTextAlign, describeOwnerType, logTextDetected, updateItem, safeCall, isAdapterContractFailure, warn, stringify, finiteNumber, positiveNumber, pruneArray, errorMessage };
     }
 
-    defineRuntimeModule('adapters.bitmapTextTextUtils', { create: createController });
+            return { create: createController };
+        },
+    });
 })();

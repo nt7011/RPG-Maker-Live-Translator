@@ -3,66 +3,59 @@
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-
-    if (!globalScope.LiveTranslatorModules) {
-        globalScope.LiveTranslatorModules = {};
-    }
-    if (!globalScope.LiveTranslatorModules.runtime) {
-        globalScope.LiveTranslatorModules.runtime = {};
-    }
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    const requireRuntimeModule = globalScope.LiveTranslatorRequire;
-    if (typeof defineRuntimeModule !== 'function' || typeof requireRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before runtime/logger-context.js.');
-    }
-
-    function resolveLoggerBundleFactory() {
-        return requireRuntimeModule('createLoggerBundle');
-    }
-
-    function createPreview(loggerPreview) {
-        if (typeof loggerPreview === 'function') return loggerPreview;
-        return (text, max = 48) => {
-            const s = String(text ?? '').replace(/\s+/g, ' ').trim();
-            if (s.length <= max) return s;
-            return s.slice(0, Math.max(0, max - 1)) + '...';
-        };
-    }
-
-    defineRuntimeModule('runtime.loggerContext', {
-        createLoggerContext(options = {}) {
-            const settings = options.settings || {};
-            const loggerBundleFactory = resolveLoggerBundleFactory();
-            const loggingBundle = loggerBundleFactory({
-                settings,
-                paths: options.paths || globalScope.LiveTranslatorPaths || {},
-                maxLogsPerFrame: 1000,
-                shouldBypassThrottle: () => options.isLocalProvider === true,
-            });
-
-            const preview = createPreview(loggingBundle.preview);
-            const telemetry = loggingBundle.createTelemetryChannel({ preview });
-            const context = {
-                loggingBundle,
-                logger: loggingBundle.logger,
-                dbg: loggingBundle.dbg,
-                diag: loggingBundle.diag,
-                getFastTimestamp: loggingBundle.getFastTimestamp,
-                isLoggingEnabled: loggingBundle.isLoggingEnabled,
-                preview,
-                telemetry,
-            };
-
-            if (typeof window !== 'undefined') {
-                window.translationLogger = context.logger;
-                window.translationTelemetry = telemetry;
-                window.translationDiagnostics = telemetry;
+    LiveTranslatorDefine({
+        name: 'runtime.loggerContext',
+        requires: {
+            createLoggerBundle: 'runtime.logger',
+        },
+        factory({ createLoggerBundle }, { scope: runtimeScope }) {
+            function resolveLoggerBundleFactory() {
+                return createLoggerBundle;
             }
 
-            return context;
+            function createPreview(loggerPreview) {
+                if (typeof loggerPreview === 'function') return loggerPreview;
+                return (text, max = 48) => {
+                    const s = String(text ?? '').replace(/\s+/g, ' ').trim();
+                    if (s.length <= max) return s;
+                    return s.slice(0, Math.max(0, max - 1)) + '...';
+                };
+            }
+
+            return {
+                createLoggerContext(options = {}) {
+                    const settings = options.settings || {};
+                    const loggerBundleFactory = resolveLoggerBundleFactory();
+                    const loggingBundle = loggerBundleFactory({
+                        settings,
+                        paths: options.paths || runtimeScope && runtimeScope.LiveTranslatorPaths || {},
+                        maxLogsPerFrame: 1000,
+                        shouldBypassThrottle: () => options.isLocalProvider === true,
+                    });
+
+                    const preview = createPreview(loggingBundle.preview);
+                    const telemetry = loggingBundle.createTelemetryChannel({ preview });
+                    const context = {
+                        loggingBundle,
+                        logger: loggingBundle.logger,
+                        dbg: loggingBundle.dbg,
+                        diag: loggingBundle.diag,
+                        getFastTimestamp: loggingBundle.getFastTimestamp,
+                        isLoggingEnabled: loggingBundle.isLoggingEnabled,
+                        preview,
+                        telemetry,
+                    };
+
+                    const runtimeWindow = runtimeScope && runtimeScope.window || null;
+                    if (runtimeWindow) {
+                        runtimeWindow.translationLogger = context.logger;
+                        runtimeWindow.translationTelemetry = telemetry;
+                        runtimeWindow.translationDiagnostics = telemetry;
+                    }
+
+                    return context;
+                },
+            };
         },
     });
 })();

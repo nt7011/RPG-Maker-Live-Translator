@@ -3,127 +3,109 @@
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    if (typeof defineRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before runtime/text-orchestrator/events.js.');
-    }
+    LiveTranslatorDefine({
+        name: 'runtime.textOrchestrator.events',
+        factory() {
+            function createController(scope = {}) {
+                const { pickSerializableObject, cloneEventDetails, logger, eventLimit, events, listeners, itemTrailStore } = scope;
+                const { schedulePublish } = scope.controllerFacades.diagnostics;
 
-    function createController(scope = {}) {
-        const { pickSerializableObject, cloneDiagnosticEvent, logger, eventLimit, itemEventLimit, events, listeners } = scope;
-        const { schedulePublish } = scope.controllerFacades.diagnostics;
-
-        /**
-         * Append a lifecycle/diagnostic event and notify listeners.
-         *
-         * Events are intentionally small and serializable. Details are trimmed
-         * through pickSerializableObject so arbitrary game objects cannot leak
-         * into snapshots or break publishing.
-         */
-        function recordEvent(type, item, optionsForEvent = {}) {
-            if (!item) return null;
-            const eventType = String(type || 'event');
-            const diagnosticsPolicy = getEventDiagnosticsPolicy();
-            const includeDetails = diagnosticsPolicy.detailView === true;
-            const routeDetails = pickSerializableObject(optionsForEvent.details || {});
-            const event = {
-                at: Date.now(),
-                seq: ++scope.sequence,
-                type: eventType,
-                itemId: item.id,
-                surfaceId: item.surfaceId || '',
-                adapterId: item.sourceAdapter || item.hook || '',
-                status: item.status || '',
-                message: String(optionsForEvent.message || ''),
-                details: routeDetails,
-            };
-            if (includeDetails) {
-                if (!isDuplicateSkippedEvent(item, event)) {
-                    events.push(event);
-                    while (events.length > eventLimit) events.shift();
-                    appendItemEvent(item, event);
-                }
-                scope.detailDiagnosticsActive = true;
-            }
-            notify(event);
-            if (diagnosticsPolicy.surface === true) schedulePublish();
-            return event;
-        }
-
-        /**
-         * Keep a small per-item event trail so diagnostics do not depend only
-         * on the global event ring, which can be pruned by busy scenes.
-         */
-        function appendItemEvent(item, event) {
-            if (!item || !event) return;
-            const history = Array.isArray(item.history) ? item.history : [];
-            history.push(cloneDiagnosticEvent(event));
-            while (history.length > itemEventLimit) history.shift();
-            item.history = history;
-        }
-
-        function isDuplicateSkippedEvent(item, event) {
-            if (!item || !event || event.type !== 'item.skipped') return false;
-            const history = Array.isArray(item.history) ? item.history : [];
-            const previous = history.length ? history[history.length - 1] : null;
-            if (!previous || previous.type !== event.type) return false;
-            return previous.status === event.status;
-        }
-
-        /**
-         * Subscribe to orchestrator events.
-         *
-         * Render adapters use this to receive item.render_queued commands. The
-         * returned function removes the listener; listener exceptions are
-         * isolated by notify.
-         */
-        function subscribe(listener) {
-            if (typeof listener !== 'function') return () => {};
-            listeners.add(listener);
-            return () => {
-                try { listeners.delete(listener); } catch (_) {}
-            };
-        }
-
-        /**
-         * Fan out an event to all listeners without letting one listener break
-         * the orchestrator or other adapters.
-         */
-        function notify(event) {
-            if (!listeners.size) return;
-            Array.from(listeners).forEach((listener) => {
-                try { listener(event); } catch (error) {
-                    if (logger && typeof logger.warn === 'function') {
-                        logger.warn('[TextOrchestrator] listener failed', error);
+                function recordEvent(type, item, optionsForEvent = {}) {
+                    if (!item) return null;
+                    const eventType = String(type || 'event');
+                    const intelPolicy = getEventIntelPolicy();
+                    const includeDetails = intelPolicy.captureEvents === true;
+                    const routeDetails = typeof cloneEventDetails === 'function'
+                        ? cloneEventDetails(optionsForEvent.details || {})
+                        : pickSerializableObject(optionsForEvent.details || {});
+                    const event = {
+                        at: Date.now(),
+                        seq: ++scope.sequence,
+                        type: eventType,
+                        itemId: item.id,
+                        surfaceId: item.surfaceId || '',
+                        adapterId: item.sourceAdapter || item.hook || '',
+                        status: item.status || '',
+                        message: String(optionsForEvent.message || ''),
+                        details: routeDetails,
+                    };
+                    if (includeDetails) {
+                        if (!isDuplicateSkippedEvent(item, event)) {
+                            events.push(event);
+                            while (events.length > eventLimit) events.shift();
+                            appendItemEvent(item, event);
+                        }
+                        scope.detailIntelActive = true;
                     }
+                    notify(event);
+                    if (intelPolicy.surface === true) schedulePublish();
+                    return event;
                 }
-            });
-        }
 
-        function getEventDiagnosticsPolicy() {
-            if (typeof scope.getDiagnosticsSnapshotPolicy === 'function') {
-                const policy = scope.getDiagnosticsSnapshotPolicy() || {};
-                const surface = policy.surface !== false;
-                const detailView = surface && policy.detailView === true;
-                return { surface, detailView };
+                function appendItemEvent(item, event) {
+                    if (!item || !event || !itemTrailStore) return false;
+                    return itemTrailStore.appendItemEvent(item, event);
+                }
+
+                function isDuplicateSkippedEvent(item, event) {
+                    if (!item || !event || event.type !== 'item.skipped') return false;
+                    return !!(itemTrailStore && itemTrailStore.isDuplicateSkippedEvent(item, event));
+                }
+
+                /**
+                 * Subscribe to orchestrator events.
+                 *
+                 * Render adapters use this to receive item.render_queued commands. The
+                 * returned function removes the listener; listener exceptions are
+                 * isolated by notify.
+                 */
+                function subscribe(listener) {
+                    if (typeof listener !== 'function') return () => {};
+                    listeners.add(listener);
+                    return () => {
+                        try { listeners.delete(listener); } catch (_) {}
+                    };
+                }
+
+                /**
+                 * Fan out an event to all listeners without letting one listener break
+                 * the orchestrator or other adapters.
+                 */
+                function notify(event) {
+                    if (!listeners.size) return;
+                    Array.from(listeners).forEach((listener) => {
+                        try { listener(event); } catch (error) {
+                            if (logger && typeof logger.warn === 'function') {
+                                logger.warn('[TextOrchestrator] listener failed', error);
+                            }
+                        }
+                    });
+                }
+
+                function getEventIntelPolicy() {
+                    if (typeof scope.getIntelSnapshotPolicy === 'function') {
+                        const policy = scope.getIntelSnapshotPolicy() || {};
+                        const surface = policy.surface === true;
+                        return {
+                            surface,
+                            captureEvents: surface && policy.captureEvents === true,
+                        };
+                    }
+                    const surface = typeof scope.isIntelSurfaceEnabled === 'function'
+                        && scope.isIntelSurfaceEnabled() === true;
+                    return { surface, captureEvents: false };
+                }
+
+                return {
+                    recordEvent,
+                    appendItemEvent,
+                    isDuplicateSkippedEvent,
+                    subscribe,
+                    notify,
+                };
             }
-            const surface = typeof scope.isDiagnosticSurfaceEnabled !== 'function'
-                || scope.isDiagnosticSurfaceEnabled() === true;
-            const detailView = surface && (typeof scope.isDiagnosticDetailViewEnabled !== 'function'
-                || scope.isDiagnosticDetailViewEnabled() === true);
-            return { surface, detailView };
-        }
 
-        return {
-            recordEvent,
-            appendItemEvent,
-            isDuplicateSkippedEvent,
-            subscribe,
-            notify,
-        };
-    }
-
-    defineRuntimeModule('runtime.textOrchestratorEvents', { create: createController });
+            return { create: createController };
+        },
+    });
 })();

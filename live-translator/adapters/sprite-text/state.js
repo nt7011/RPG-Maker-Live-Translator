@@ -3,13 +3,9 @@
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    if (typeof defineRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/sprite-text/state.js.');
-    }
+    LiveTranslatorDefine({
+        name: 'adapters.spriteText.state',
+        factory() {
 
     function createController(scope = {}) {
         const { handleObservedBitmapMutation } = scope.controllerFacades.bitmapObservation;
@@ -63,6 +59,7 @@
                     paintOps: [],
                     overlayCache: null,
                     unsupportedPaint: false,
+                    textInterest: false,
                     destroyed: false,
                     mutationUnsubscribe: null,
                 };
@@ -89,8 +86,8 @@
             if (!bitmap || isOverlayBitmap(bitmap)) return false;
             if (scope.bitmapServices.getRenderGuardReason(bitmap)) return false;
             if (isWindowOwnedBitmap(bitmap)) return false;
-            if (methodName === 'destroy') return !!(bitmap._trSpriteTextHasTextInterest || isBitmapOwned(bitmap));
-            return !!bitmap._trSpriteTextHasTextInterest;
+            if (methodName === 'destroy') return hasActiveBitmapTextInterest(bitmap) || isBitmapOwned(bitmap);
+            return hasActiveBitmapTextInterest(bitmap);
         }
         
         /**
@@ -98,7 +95,7 @@
          */
         function activateBitmapTextInterest(bitmap, state = getBitmapState(bitmap)) {
             if (!bitmap || !state || state.destroyed) return false;
-            try { bitmap._trSpriteTextHasTextInterest = true; } catch (_) {}
+            state.textInterest = true;
             if (!state.mutationUnsubscribe && scope.bitmapMutationObserver && typeof scope.bitmapMutationObserver.watchBitmap === 'function') {
                 state.mutationUnsubscribe = scope.bitmapMutationObserver.watchBitmap(bitmap, handleObservedBitmapMutation);
             }
@@ -110,7 +107,7 @@
          */
         function deactivateBitmapTextInterest(bitmap, state = getBitmapState(bitmap)) {
             if (!bitmap) return;
-            try { bitmap._trSpriteTextHasTextInterest = false; } catch (_) {}
+            if (state) state.textInterest = false;
             invalidateBitmapOverlayCache(state);
             if (state && typeof state.mutationUnsubscribe === 'function') {
                 try { state.mutationUnsubscribe(); } catch (_) {}
@@ -144,7 +141,12 @@
          * Return true for translated overlay bitmaps created by this adapter.
          */
         function isOverlayBitmap(bitmap) {
-            return !!(bitmap && bitmap._trSpriteTextOverlayBitmap);
+            if (!bitmap || !scope.overlayBitmaps || typeof scope.overlayBitmaps.has !== 'function') return false;
+            try { return scope.overlayBitmaps.has(bitmap) === true; } catch (_) { return false; }
+        }
+
+        function hasActiveBitmapTextInterest(bitmap, state = getBitmapState(bitmap)) {
+            return !!(state && !state.destroyed && state.textInterest === true);
         }
         
         /**
@@ -233,5 +235,7 @@
         return { ensureSpriteState, ensureBitmapState, getBitmapState, shouldObserveBitmapMutation, activateBitmapTextInterest, deactivateBitmapTextInterest, refreshBitmapTextInterest, isWindowOwnedBitmap, isOverlayBitmap, restoreTranslatedText, safePrepareText, applyEligibilityToSpriteRecord, describeSpriteRecordEligibility, logTextDetected, logOverlayDraw, updateItem };
     }
 
-    defineRuntimeModule('adapters.spriteText.state', { createController });
+            return { createController };
+        },
+    });
 })();

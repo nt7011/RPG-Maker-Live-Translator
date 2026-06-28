@@ -1,5 +1,5 @@
-// Translator monitor runtime diagnostics helpers.
-// These functions share state from gui/app/state.js and are loaded before app.js boots.
+// Translator monitor runtime Intel helpers.
+// These functions share state from gui/app/state.js and are loaded before app/index.js boots.
 'use strict';
 
 function normalizeDiagnosticsSnapshot(snapshot) {
@@ -24,9 +24,7 @@ function normalizeDiagnosticsSnapshot(snapshot) {
             : [],
         counters: source.counters && typeof source.counters === 'object' ? Object.assign({}, source.counters) : {},
         events: Array.isArray(source.events) ? source.events.map(normalizeDiagnosticEvent) : [],
-        diagnosticsMode: source.diagnosticsMode ? String(source.diagnosticsMode) : (source.detailView === true ? 'full' : 'performance'),
-        performanceMode: source.performanceMode === true,
-        detailView: source.detailView === true,
+        intelSurface: source.intelSurface === true,
     };
 }
 
@@ -82,9 +80,7 @@ function normalizeForesightSnapshot(snapshot) {
         recent: Array.isArray(snapshot.recent)
             ? snapshot.recent.map(normalizeForesightScan)
             : [],
-        diagnosticsMode: snapshot.diagnosticsMode ? String(snapshot.diagnosticsMode) : (snapshot.detailView === true ? 'full' : 'performance'),
-        performanceMode: snapshot.performanceMode === true,
-        detailView: snapshot.detailView === true,
+        intelSurface: snapshot.intelSurface === true,
     };
 }
 

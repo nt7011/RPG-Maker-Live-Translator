@@ -3,18 +3,15 @@
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    if (typeof defineRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/sprite-text/frame.js.');
-    }
-    const requireRuntimeModule = globalScope.LiveTranslatorRequire;
-    if (typeof requireRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module require is unavailable before adapters/sprite-text/frame.js.');
-    }
-    const lifecycleReasons = requireRuntimeModule('runtime.lifecycleReasons').reasons;
+    LiveTranslatorDefine({
+        name: 'adapters.spriteText.frame',
+        requires: {
+            lifecycleReasonsModule: 'runtime.lifecycleReasons',
+            hookWrapper: 'runtime.hookWrapper',
+        },
+        factory({ lifecycleReasonsModule, hookWrapper }) {
+            const lifecycleReasons = lifecycleReasonsModule.reasons;
+            const { hasHookInChain } = hookWrapper;
 
     function createController(scope = {}) {
         const { attachBitmapOwner, detachBitmapOwner, hasActiveSpriteTextState, isBitmapOwned, markParentDirty, markSpriteDirty } = scope.controllerFacades.bitmapOwnership;
@@ -84,22 +81,20 @@
          * Generic wrapper for container child methods.
          */
         function wrapChildMethod(target, methodName, after, snapshotBefore = false) {
-            if (!target || typeof target[methodName] !== 'function') return false;
-            const current = target[methodName];
-            if (hasHookInChain(current, '__trSpriteTextChildObserver', scope.CHILD_OBSERVER_TOKEN)) return true;
-            const original = current;
-            const wrapped = function(...args) {
-                const beforeChildren = snapshotBefore && Array.isArray(this.children) ? this.children.slice() : [];
-                const result = original.apply(this, args);
-                try { after.call(this, result, args, beforeChildren); } catch (error) {
-                    warn('[SpriteText] Child observer failed.', error);
-                }
-                return result;
-            };
-            wrapped.__trOriginal = original;
-            wrapped.__trSpriteTextChildObserver = scope.CHILD_OBSERVER_TOKEN;
-            target[methodName] = wrapped;
-            return true;
+            return hookWrapper.installMethodWrapper(target, methodName, {
+                property: '__trSpriteTextChildObserver',
+                token: scope.CHILD_OBSERVER_TOKEN,
+                createWrapper(original) {
+                    return function(...args) {
+                        const beforeChildren = snapshotBefore && Array.isArray(this.children) ? this.children.slice() : [];
+                        const result = original.apply(this, args);
+                        try { after.call(this, result, args, beforeChildren); } catch (error) {
+                            warn('[SpriteText] Child observer failed.', error);
+                        }
+                        return result;
+                    };
+                },
+            });
         }
         
         /**
@@ -203,33 +198,18 @@
          * Wrap one frame method and flush before or after native work.
          */
         function installFrameHook(target, methodName, label, flushBefore) {
-            if (!target || typeof target[methodName] !== 'function') return false;
-            if (hasHookInChain(target[methodName], '__trSpriteTextFrameHook', scope.FRAME_TOKEN)) return true;
-            const original = target[methodName];
-            const wrapped = function(...args) {
-                if (flushBefore) flushFrame(label);
-                const result = original.apply(this, args);
-                if (!flushBefore) flushFrame(label);
-                return result;
-            };
-            wrapped.__trOriginal = original;
-            wrapped.__trSpriteTextFrameHook = scope.FRAME_TOKEN;
-            target[methodName] = wrapped;
-            return true;
-        }
-        
-        /**
-         * Detect this hook even after later wrappers are added around it.
-         */
-        function hasHookInChain(fn, property, token) {
-            const seen = [];
-            let current = typeof fn === 'function' ? fn : null;
-            while (current && seen.indexOf(current) < 0) {
-                if (current[property] === token) return true;
-                seen.push(current);
-                current = typeof current.__trOriginal === 'function' ? current.__trOriginal : null;
-            }
-            return false;
+            return hookWrapper.installMethodWrapper(target, methodName, {
+                property: '__trSpriteTextFrameHook',
+                token: scope.FRAME_TOKEN,
+                createWrapper(original) {
+                    return function(...args) {
+                        if (flushBefore) flushFrame(label);
+                        const result = original.apply(this, args);
+                        if (!flushBefore) flushFrame(label);
+                        return result;
+                    };
+                },
+            });
         }
         
         /**
@@ -280,8 +260,8 @@
                     parents.forEach(processParentGlyphRuns);
                 });
         
-                scope.measurePerf('spriteText.bitmapFallback.ms', () => {
-                    flushBitmapFallbackAfterSprite(frameKey, hasDirtyWork || sprites.length > 0 || parents.length > 0);
+                scope.measurePerf('spriteText.pendingDrawUnits.ms', () => {
+                    flushPendingDrawUnitsAfterSprite(frameKey, hasDirtyWork || sprites.length > 0 || parents.length > 0);
                 });
             } catch (error) {
                 if (isAdapterContractFailure(error)) throw error;
@@ -316,25 +296,14 @@
             return adopted;
         }
 
-        function scheduleFallbackFrameFlush(reason = 'fallback-frame') {
-            return scope.bitmapServices.scheduleDeferredFlush({
-                token: 'sprite-text:fallback-frame',
-                source: scope.ADAPTER_ID || 'sprite',
-                reason: reason || 'fallback-frame',
-                callback(flushReason) {
-                    flushFrame(flushReason || 'fallback-frame');
-                },
-            });
-        }
-
         function flushPendingBitmapOwnerClaims(reason) {
-            if (!scope.bitmapServices || typeof scope.bitmapServices.flushOwnerDrawBatches !== 'function') return 0;
+            if (!scope.bitmapServices || typeof scope.bitmapServices.flushOwnerDrawUnits !== 'function') return 0;
             try {
-                if (typeof scope.bitmapServices.hasPendingDrawBatches === 'function'
-                    && !scope.bitmapServices.hasPendingDrawBatches()) {
+                if (typeof scope.bitmapServices.hasPendingDrawUnits === 'function'
+                    && !scope.bitmapServices.hasPendingDrawUnits()) {
                     return 0;
                 }
-                return scope.bitmapServices.flushOwnerDrawBatches(reason || 'owner-claim') || 0;
+                return scope.bitmapServices.flushOwnerDrawUnits(reason || 'owner-claim') || 0;
             } catch (error) {
                 warn('[SpriteText] Bitmap owner-claim preflush failed.', error);
                 return 0;
@@ -342,13 +311,16 @@
         }
         
         /**
-         * Let bitmap fallback flush once per engine frame after sprite claims.
+         * Let pending bitmap draw units flush once per engine frame after sprite claims.
          */
-        function flushBitmapFallbackAfterSprite(frameKey, hadSpriteWork) {
-            if (frameKey !== null && scope.lastBitmapFallbackFrameKey === frameKey && !hadSpriteWork) return;
+        function flushPendingDrawUnitsAfterSprite(frameKey, hadSpriteWork) {
+            if (frameKey !== null && scope.lastPendingDrawUnitFlushFrameKey === frameKey && !hadSpriteWork) return;
             try {
-                if (scope.bitmapServices.flushBitmapFallback('after-sprite-text')) {
-                    if (frameKey !== null) scope.lastBitmapFallbackFrameKey = frameKey;
+                if (scope.bitmapServices.flushPendingDrawUnits('after-sprite-text', null, {
+                    phase: 'sprite-frame',
+                    source: 'sprite-frame-hook',
+                }) > 0) {
+                    if (frameKey !== null) scope.lastPendingDrawUnitFlushFrameKey = frameKey;
                 }
             } catch (_) {}
         }
@@ -498,8 +470,10 @@
             removeSpriteOverlay(spriteState, reason);
         }
 
-        return { installChildObservers, installChildObserverOn, wrapChildMethod, observeChildAdded, observeChildRemoved, visitDisplayTree, installFrameHooks, hasFrameHooksActive, ensureFrameHooks, scheduleFallbackFrameFlush, installFrameHook, hasHookInChain, flushFrame, adoptCurrentSceneSprites, adoptSpriteTree, flushPendingBitmapOwnerClaims, flushBitmapFallbackAfterSprite, syncTrackedVisibility, syncActiveOverlays, processSpriteSurface, retireAllSpriteEntries };
+        return { installChildObservers, installChildObserverOn, wrapChildMethod, observeChildAdded, observeChildRemoved, visitDisplayTree, installFrameHooks, hasFrameHooksActive, ensureFrameHooks, installFrameHook, hasHookInChain, flushFrame, adoptCurrentSceneSprites, adoptSpriteTree, flushPendingBitmapOwnerClaims, flushPendingDrawUnitsAfterSprite, syncTrackedVisibility, syncActiveOverlays, processSpriteSurface, retireAllSpriteEntries };
     }
 
-    defineRuntimeModule('adapters.spriteText.frame', { createController });
+            return { createController };
+        },
+    });
 })();

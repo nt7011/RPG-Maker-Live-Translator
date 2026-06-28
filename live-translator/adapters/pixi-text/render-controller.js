@@ -2,15 +2,6 @@
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    if (typeof defineRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/pixi-text/render-controller.js.');
-    }
-
     // Render command handling stays behind the adapter contract gate and never observes new native text.
     function createPixiRenderController(context = {}) {
         const {
@@ -195,8 +186,13 @@
         };
     }
     
-    defineRuntimeModule('adapters.pixiTextRenderController', {
-        create: createPixiRenderController,
+    LiveTranslatorDefine({
+        name: 'adapters.pixiText.renderController',
+        factory() {
+            return {
+                create: createPixiRenderController,
+            };
+        },
     });
 
 })();

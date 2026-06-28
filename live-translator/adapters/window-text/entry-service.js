@@ -2,18 +2,13 @@
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    if (typeof defineRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/window-text/entry-service.js.');
-    }
-    const requireRuntimeModule = globalScope.LiveTranslatorRequire;
-    if (typeof requireRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module require is unavailable before adapters/window-text/entry-service.js.');
-    }
-    const displayStateModule = requireRuntimeModule('runtime.displayState');
+    LiveTranslatorDefine({
+        name: 'adapters.windowText.entryService',
+        requires: {
+            displayStateModule: 'runtime.displayState',
+            surfaceRoleState: 'runtime.windowSurfaceRoleState',
+        },
+        factory({ displayStateModule, surfaceRoleState }, { scope: globalScope }) {
 
     function createEntryServiceController(context = {}) {
     const { stripControls, entriesByRecordId, ADAPTER_ID, ADAPTER_LABEL, RENDER_STRATEGY, WINDOW_PRIORITY_VISIBLE, entryLifecycleState } = context;
@@ -23,7 +18,7 @@
     const { markRequestFailed } = requestLifecycle;
     const { updateOrchestratorItem } = renderCompletion;
     const { restoreTranslatedWindowText } = textConversion;
-    const { describeEntryEligibility, getSurfaceId, getIdentitySurfaceId, createSlotKey, getWindowTypeName, getWindowCtorName } = textMetrics;
+    const { describeEntryEligibility, getSurfaceId, getIdentitySurfaceId, createSlotKey, getWindowTypeName } = textMetrics;
     const displayState = displayStateModule.createDisplayStateService(globalScope);
     const drawCaptureTrace = drawService.drawCaptureTrace;
 
@@ -73,6 +68,7 @@
                 if (observed && observed.id) {
                     syncEntryFromObservedItem(entry, observed);
                 }
+                indexEntrySourceRun(entry);
                 return observed;
             }
 
@@ -128,6 +124,354 @@
     function isEntryCompleted(entry) {
                 return !!(entry && entry.renderedText && getEntryStatus(entry) === 'completed');
             }
+
+    // Projected copied-target restoration starts from ledger source-run
+    // identity, so the entry lookup index follows observation lifecycle here.
+    function findEntryBySourceRun(input = {}) {
+                const lookup = createSourceRunLookup(input);
+                const keys = createSourceRunIndexKeys(lookup);
+                if (!keys.length) return null;
+                const index = getSourceRunEntryIndex(false);
+                if (!index) return null;
+                const visited = new Set();
+                for (let keyIndex = 0; keyIndex < keys.length; keyIndex += 1) {
+                    const bucket = index.get(keys[keyIndex]);
+                    if (!bucket || typeof bucket.forEach !== 'function') continue;
+                    let found = null;
+                    bucket.forEach((entry) => {
+                        if (found || !entry || visited.has(entry)) return;
+                        visited.add(entry);
+                        if (entryLifecycleState.isStale(entry)) {
+                            forgetEntrySourceRun(entry);
+                            return;
+                        }
+                        if (!matchesEntrySourceRunLookup(entry, lookup)) return;
+                        if (lookup.sourceBitmap
+                            && !entryUsesSourceBitmap(entry, lookup.sourceBitmap)
+                            && !entryAllowsReboundSourceRunLookup(entry, lookup)) {
+                            return;
+                        }
+                        found = entry;
+                    });
+                    if (found) return found;
+                }
+                return null;
+            }
+
+    function findEntriesBySourceRegion(input = {}) {
+                const source = input && typeof input === 'object' ? input : {};
+                const sourceBitmap = source.sourceBitmap || source.bitmap || null;
+                if (!sourceBitmap) return [];
+                const bucket = getSourceBitmapEntrySet(sourceBitmap, false);
+                if (!bucket || typeof bucket.forEach !== 'function') return [];
+                const sourceRect = cloneSourceRunRect(source.sourceRect || source.rect || source.bounds || null);
+                const entries = [];
+                bucket.forEach((entry) => {
+                    if (!entry) return;
+                    if (entryLifecycleState.isStale(entry)) {
+                        forgetEntrySourceRun(entry);
+                        return;
+                    }
+                    if (!entryUsesSourceBitmap(entry, sourceBitmap)) return;
+                    if (sourceRect && !rectsOverlapSourceRun(sourceRect, entry.bounds)) return;
+                    entries.push(entry);
+                });
+                return entries;
+            }
+
+    function indexEntrySourceRun(entry) {
+                if (!entry || entryLifecycleState.isStale(entry)) return false;
+                forgetEntrySourceRun(entry);
+                const identity = createEntrySourceRunIdentity(entry);
+                const indexedSourceBitmap = indexEntrySourceBitmap(entry, identity.sourceBitmap);
+                const keys = createSourceRunIndexKeys(identity);
+                if (!keys.length) return indexedSourceBitmap;
+                const index = getSourceRunEntryIndex(true);
+                const keyStore = getSourceRunEntryKeyStore(true);
+                if (!index || !keyStore) return indexedSourceBitmap;
+                keys.forEach((key) => {
+                    let bucket = index.get(key);
+                    if (!bucket) {
+                        bucket = new Set();
+                        index.set(key, bucket);
+                    }
+                    bucket.add(entry);
+                });
+                keyStore.set(entry, keys);
+                return true;
+            }
+
+    function forgetEntrySourceRun(entry) {
+                if (!entry) return false;
+                const removedSourceBitmap = forgetEntrySourceBitmap(entry);
+                const index = getSourceRunEntryIndex(false);
+                const keyStore = getSourceRunEntryKeyStore(false);
+                if (!index || !keyStore) return removedSourceBitmap;
+                const keys = keyStore.get(entry);
+                if (!Array.isArray(keys)) {
+                    if (typeof keyStore.delete === 'function') keyStore.delete(entry);
+                    return removedSourceBitmap;
+                }
+                keys.forEach((key) => {
+                    const bucket = index.get(key);
+                    if (!bucket || typeof bucket.delete !== 'function') return;
+                    bucket.delete(entry);
+                    if (bucket.size === 0) index.delete(key);
+                });
+                if (typeof keyStore.delete === 'function') keyStore.delete(entry);
+                return true;
+            }
+
+    function indexEntrySourceBitmap(entry, sourceBitmap) {
+                if (!entry || !sourceBitmap) return false;
+                const index = getSourceBitmapEntryIndex(true);
+                const keyStore = getSourceBitmapEntryKeyStore(true);
+                if (!index || !keyStore) return false;
+                let bucket = index.get(sourceBitmap);
+                if (!bucket) {
+                    bucket = new Set();
+                    index.set(sourceBitmap, bucket);
+                }
+                bucket.add(entry);
+                keyStore.set(entry, sourceBitmap);
+                return true;
+            }
+
+    function forgetEntrySourceBitmap(entry) {
+                if (!entry) return false;
+                const index = getSourceBitmapEntryIndex(false);
+                const keyStore = getSourceBitmapEntryKeyStore(false);
+                if (!index || !keyStore) return false;
+                const sourceBitmap = keyStore.get(entry);
+                if (!sourceBitmap) {
+                    if (typeof keyStore.delete === 'function') keyStore.delete(entry);
+                    return false;
+                }
+                const bucket = index.get(sourceBitmap);
+                if (bucket && typeof bucket.delete === 'function') {
+                    bucket.delete(entry);
+                    if (bucket.size === 0) index.delete(sourceBitmap);
+                }
+                if (typeof keyStore.delete === 'function') keyStore.delete(entry);
+                return true;
+            }
+
+    function createEntrySourceRunIdentity(entry) {
+                const origin = entry && entry.drawOrigin && typeof entry.drawOrigin === 'object'
+                    ? entry.drawOrigin
+                    : {};
+                const boundary = origin.drawBoundary && typeof origin.drawBoundary === 'object'
+                    ? origin.drawBoundary
+                    : {};
+                const sourceDraw = entry
+                    && entry.renderLifecycle
+                    && entry.renderLifecycle.sourceDraw
+                    && typeof entry.renderLifecycle.sourceDraw === 'object'
+                    ? entry.renderLifecycle.sourceDraw
+                    : {};
+                return {
+                    sourceBitmap: entry && (entry.sourceContentsBitmap || entry.contentsBitmap || entry.ownerWindow && entry.ownerWindow.contents) || null,
+                    sourceSurfaceId: firstSourceRunString(
+                        origin.surfaceId,
+                        boundary.surfaceId,
+                        sourceDraw.surfaceId,
+                        entry && entry.surfaceId
+                    ),
+                    sourceRunId: firstSourceRunString(
+                        origin.runId,
+                        boundary.runId,
+                        sourceDraw.runId
+                    ),
+                    sourceRunIds: collectSourceRunStrings(
+                        origin.runId,
+                        boundary.runId,
+                        sourceDraw.runId,
+                        origin.ledgerRunIds,
+                        boundary.ledgerRunIds,
+                        sourceDraw.ledgerRunIds
+                    ),
+                    sourceSlotKey: firstSourceRunString(
+                        origin.slotKey,
+                        boundary.slotKey,
+                        sourceDraw.slotKey,
+                        entry && entry.slotKey
+                    ),
+                };
+            }
+
+    function createSourceRunLookup(input = {}) {
+                const request = input && typeof input === 'object' ? input : {};
+                const projection = request.projection && typeof request.projection === 'object'
+                    ? request.projection
+                    : {};
+                const sourceTextRun = request.sourceTextRun && typeof request.sourceTextRun === 'object'
+                    ? request.sourceTextRun
+                    : (projection.sourceTextRun && typeof projection.sourceTextRun === 'object'
+                        ? projection.sourceTextRun
+                        : {});
+                return {
+                    sourceBitmap: request.sourceBitmap || projection.sourceBitmap || sourceTextRun.sourceBitmap || null,
+                    sourceSurfaceId: firstSourceRunString(
+                        request.sourceSurfaceId,
+                        projection.sourceSurfaceId,
+                        sourceTextRun.surfaceId,
+                        sourceTextRun.sourceSurfaceId
+                    ),
+                    sourceRunId: firstSourceRunString(
+                        request.sourceRunId,
+                        projection.sourceRunId,
+                        sourceTextRun.runId,
+                        sourceTextRun.sourceRunId
+                    ),
+                    sourceSlotKey: firstSourceRunString(
+                        request.sourceSlotKey,
+                        projection.sourceSlotKey,
+                        sourceTextRun.slotKey,
+                        sourceTextRun.sourceSlotKey
+                    ),
+                };
+            }
+
+    function createSourceRunIndexKeys(identity) {
+                const sourceSurfaceId = normalizeSourceRunString(identity && identity.sourceSurfaceId);
+                if (!sourceSurfaceId) return [];
+                const keys = [];
+                const sourceRunIds = collectSourceRunStrings(
+                    identity && identity.sourceRunIds,
+                    identity && identity.sourceRunId
+                );
+                const sourceSlotKey = normalizeSourceRunString(identity && identity.sourceSlotKey);
+                sourceRunIds.forEach((sourceRunId) => {
+                    keys.push(`run:${sourceSurfaceId}:${sourceRunId}`);
+                });
+                if (sourceSlotKey) keys.push(`slot:${sourceSurfaceId}:${sourceSlotKey}`);
+                return keys;
+            }
+
+    function matchesEntrySourceRunLookup(entry, lookup) {
+                const identity = createEntrySourceRunIdentity(entry);
+                if (lookup.sourceSurfaceId && identity.sourceSurfaceId !== lookup.sourceSurfaceId) return false;
+                const lookupRunId = normalizeSourceRunString(lookup && lookup.sourceRunId);
+                const sourceRunIds = collectSourceRunStrings(identity.sourceRunIds, identity.sourceRunId);
+                if (lookupRunId && sourceRunIds.length) {
+                    return sourceRunIds.indexOf(lookupRunId) >= 0;
+                }
+                return !!(lookup.sourceSlotKey && identity.sourceSlotKey && identity.sourceSlotKey === lookup.sourceSlotKey);
+            }
+
+    function entryUsesSourceBitmap(entry, sourceBitmap) {
+                return !!(entry && sourceBitmap && (
+                    entry.sourceContentsBitmap === sourceBitmap
+                    || entry.contentsBitmap === sourceBitmap
+                    || entry.ownerWindow && entry.ownerWindow.contents === sourceBitmap
+                ));
+            }
+
+    function entryAllowsReboundSourceRunLookup(entry, lookup) {
+                if (!entry || !hasStrongSourceRunLookup(lookup)) return false;
+                if (!isCopiedSourceEntry(entry)) return false;
+                return matchesEntrySourceRunLookup(entry, lookup);
+            }
+
+    function isCopiedSourceEntry(entry) {
+                return surfaceRoleState.isCopiedSourceEntry(entry);
+            }
+
+    function hasStrongSourceRunLookup(lookup) {
+                return !!(normalizeSourceRunString(lookup && lookup.sourceSurfaceId)
+                    && (normalizeSourceRunString(lookup && lookup.sourceRunId)
+                        || normalizeSourceRunString(lookup && lookup.sourceSlotKey)));
+            }
+
+    function getSourceRunEntryIndex(create) {
+                if (!context.sourceRunEntriesByKey && create) context.sourceRunEntriesByKey = new Map();
+                const index = context.sourceRunEntriesByKey;
+                return index && typeof index.get === 'function' && typeof index.set === 'function'
+                    ? index
+                    : null;
+            }
+
+    function getSourceRunEntryKeyStore(create) {
+                if (!context.sourceRunEntryKeys && create) context.sourceRunEntryKeys = new WeakMap();
+                const keyStore = context.sourceRunEntryKeys;
+                return keyStore && typeof keyStore.get === 'function' && typeof keyStore.set === 'function'
+                    ? keyStore
+                    : null;
+            }
+
+    function getSourceBitmapEntryIndex(create) {
+                if (!context.sourceEntriesByBitmap && create) context.sourceEntriesByBitmap = new WeakMap();
+                const index = context.sourceEntriesByBitmap;
+                return index && typeof index.get === 'function' && typeof index.set === 'function'
+                    ? index
+                    : null;
+            }
+
+    function getSourceBitmapEntryKeyStore(create) {
+                if (!context.sourceBitmapEntryKeys && create) context.sourceBitmapEntryKeys = new WeakMap();
+                const keyStore = context.sourceBitmapEntryKeys;
+                return keyStore && typeof keyStore.get === 'function' && typeof keyStore.set === 'function'
+                    ? keyStore
+                    : null;
+            }
+
+    function getSourceBitmapEntrySet(sourceBitmap, create) {
+                if (!sourceBitmap) return null;
+                const index = getSourceBitmapEntryIndex(create);
+                if (!index) return null;
+                let bucket = index.get(sourceBitmap);
+                if (!bucket && create) {
+                    bucket = new Set();
+                    index.set(sourceBitmap, bucket);
+                }
+                return bucket || null;
+            }
+
+    function firstSourceRunString(...values) {
+                for (let index = 0; index < values.length; index += 1) {
+                    const value = normalizeSourceRunString(values[index]);
+                    if (value) return value;
+                }
+                return '';
+            }
+
+    function collectSourceRunStrings(...values) {
+                const result = [];
+                const seen = new Set();
+                const pushValue = (value) => {
+                    if (Array.isArray(value)) {
+                        value.forEach(pushValue);
+                        return;
+                    }
+                    const normalized = normalizeSourceRunString(value);
+                    if (!normalized || seen.has(normalized)) return;
+                    seen.add(normalized);
+                    result.push(normalized);
+                };
+                values.forEach(pushValue);
+                return result;
+            }
+
+    function normalizeSourceRunString(value) {
+                return value === undefined || value === null ? '' : String(value);
+            }
+
+    function cloneSourceRunRect(rect) {
+                if (!rect || typeof rect !== 'object') return null;
+                const x1 = Number(rect.x1);
+                const y1 = Number(rect.y1);
+                const x2 = Number(rect.x2);
+                const y2 = Number(rect.y2);
+                if (![x1, y1, x2, y2].every(Number.isFinite)) return null;
+                return { x1, y1, x2, y2 };
+            }
+
+    function rectsOverlapSourceRun(left, right) {
+                const a = cloneSourceRunRect(left);
+                const b = cloneSourceRunRect(right);
+                if (!a || !b) return false;
+                return a.x1 < b.x2 && a.x2 > b.x1 && a.y1 < b.y2 && a.y2 > b.y1;
+            }
     
     function firstNonEmptyString(...values) {
                 for (const value of values) {
@@ -168,11 +512,12 @@
                 const contents = windowInstance && windowInstance.contents ? windowInstance.contents : null;
                 const visibleText = safeStripRpgmEscapes(String(rawText ?? ''));
                 const guardState = getBitmapRenderGuardState(contents);
+                const refreshState = lifecycleService.getRefreshState(windowInstance, windowData);
                 return Object.assign({
                     adapter: ADAPTER_ID,
                     surfaceType: 'window',
                     windowType: getWindowTypeName(windowInstance, windowData),
-                    ownerType: getWindowCtorName(windowInstance),
+                    ownerType: getWindowTypeName(windowInstance, windowData),
                     methodName,
                     rawText: String(rawText ?? ''),
                     visibleText,
@@ -185,11 +530,11 @@
                         preferWindowPipeline: guardState.windowPipelineDepth > 0,
                         windowPipelineDepth: guardState.windowPipelineDepth,
                         windowPipelineSource: guardState.windowPipelineSource,
-                        windowRefreshDepth: Number(contents._trWindowRefreshDepth) || 0,
+                        windowRefreshDepth: Number(refreshState && refreshState.depth) || 0,
                         bitmapSkipDepth: guardState.bitmapSkipDepth,
                         bitmapReplayDepth: guardState.bitmapReplayDepth,
                         spriteTextReplayDepth: guardState.spriteTextReplayDepth,
-                        drawTextExReplayDepth: Number(contents._trWindowTextDrawTextExReplayDepth || contents._trWindowDrawTextExReplayDepth) || 0,
+                        drawTextExReplayDepth: Number(guardState.windowDrawTextExReplayDepth) || 0,
                     } : null,
                 }, extra || {});
             }
@@ -313,9 +658,10 @@
                 };
             }
     
-        return { requestEntryTranslation, observeEntry, syncEntryFromObservedItem, getEntryStatus, isEntryActive, isEntryRequestActive, isEntryCompleted, firstNonEmptyString, isDrawCaptureTraceEnabled, recordDrawTrace, windowTraceDetails, getRegisteredWindowData, markEntryObservedInRefresh, safeStripRpgmEscapes, describeWindowScreenState, buildOrchestratorPayload };
+        return { requestEntryTranslation, observeEntry, syncEntryFromObservedItem, getEntryStatus, isEntryActive, isEntryRequestActive, isEntryCompleted, findEntryBySourceRun, findEntriesBySourceRegion, forgetEntrySourceRun, firstNonEmptyString, isDrawCaptureTraceEnabled, recordDrawTrace, windowTraceDetails, getRegisteredWindowData, markEntryObservedInRefresh, safeStripRpgmEscapes, describeWindowScreenState, buildOrchestratorPayload };
     }
-    
-    defineRuntimeModule('adapters.windowTextEntryService', { create: createEntryServiceController });
+            return { create: createEntryServiceController };
+        },
+    });
 
 })();

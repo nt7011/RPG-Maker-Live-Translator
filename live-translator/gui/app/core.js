@@ -1,5 +1,5 @@
 // Translator monitor core helpers.
-// These functions share state from gui/app/state.js and are loaded before app.js boots.
+// These functions share state from gui/app/state.js and are loaded before app/index.js boots.
 'use strict';
 
 const GUI_THEME_MODE_CYCLE = ['solarized', 'dark', 'light'];
@@ -333,11 +333,11 @@ function notifyGuiState(open) {
 function syncRuntimeDiagnosticsForGuiState(gameWindow, open) {
     const methods = open
         ? ['publish']
-        : ['clearDiagnostics', 'clearSnapshot', 'publish'];
+        : ['clearIntel', 'clearSnapshot', 'clearDiagnostics', 'publish'];
     [
-        gameWindow && gameWindow.LiveTranslatorTextOrchestrator,
-        gameWindow && gameWindow.LiveTranslatorTranslationDiagnostics,
-        gameWindow && gameWindow.LiveTranslatorForesightDiagnostics,
+        gameWindow && gameWindow.LiveTranslatorTextOrchestratorIntel,
+        gameWindow && gameWindow.LiveTranslatorTranslationIntel,
+        gameWindow && gameWindow.LiveTranslatorForesightIntel,
         gameWindow && gameWindow.LiveTranslatorDrawCaptureTrace,
     ].forEach((api) => {
         if (!api || typeof api !== 'object') return;

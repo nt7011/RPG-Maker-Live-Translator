@@ -3,13 +3,9 @@
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    if (typeof defineRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/game-message/wrapping.js.');
-    }
+    LiveTranslatorDefine({
+        name: 'adapters.gameMessage.wrapping',
+        factory() {
 
     function createController(scope = {}) {
         const { ESCAPE_CODE_PATTERN, NUMERIC_PARAM_PATTERN, CJK_CHAR_PATTERN, captureBitmapDrawState, applyBitmapDrawState } = scope;
@@ -562,5 +558,7 @@
         };
     }
 
-    defineRuntimeModule('adapters.gameMessage.wrapping', { create: createController });
+            return { create: createController };
+        },
+    });
 })();

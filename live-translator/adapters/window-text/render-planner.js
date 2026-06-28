@@ -2,48 +2,94 @@
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    if (typeof defineRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/window-text/render-planner.js.');
-    }
+    LiveTranslatorDefine({
+        name: 'adapters.windowText.renderPlanner',
+        requires: {
+            restorePlannerModule: 'runtime.bitmap.restorePlanner',
+            bitmapRenderPlannerModule: 'runtime.bitmap.renderPlanner',
+        },
+        factory({ restorePlannerModule, bitmapRenderPlannerModule }) {
 
     function createRenderPlannerController(context = {}) {
         const { lifecycle: lifecycleService } = context.services;
         const { entryLifecycleState } = context;
+        const facades = context.facades || {};
+        const bitmapReplay = facades.bitmapReplay || {};
+        const diagnostics = facades.diagnostics || {};
+        const entryLifecycle = facades.entryLifecycle || {};
+        const textMetrics = facades.textMetrics || {};
+        const {
+                    materializeCopiedRenderTargetsForEntry,
+                    createClearRectFromArea,
+                    getReplayItemRect,
+                    expandReplayDirtyRect,
+                    collectWindowTextReplayItems,
+                    combineReplayItems,
+                    filterReplayForEntry,
+                    supportsBitmapReplayClip,
+                    isValidRect,
+                    getRedrawContents,
+                } = bitmapReplay;
+        const { summarizeReplayStateForDiagnostics } = diagnostics;
+        const {
+                    resolveWindowData,
+                    resolveTargetWindow,
+                    getTextEntryKey,
+                    isWindowReadyForRedraw,
+                } = entryLifecycle;
+        const { getWindowTypeName } = textMetrics;
+        const restorePlanner = restorePlannerModule.create({
+            getReplayItemRect,
+            isBitmapSurfaceTextEntry,
+            isValidRect,
+        });
+        const bitmapRenderPlanner = hasWindowBitmapPlannerMethods(context.bitmapRenderPlanner)
+            ? context.bitmapRenderPlanner
+            : bitmapRenderPlannerModule.create({
+                restorePlanner,
+                createClearRectFromArea,
+                expandReplayDirtyRect,
+                supportsBitmapReplayClip,
+                collectWindowTextReplayItems,
+                combineReplayItems,
+                filterReplayForEntry,
+                summarizeReplayState: summarizeReplayStateForDiagnostics,
+            });
 
         function planTranslatedRedraw(entry, windowData = null) {
             if (!entry) return reject('missing-entry');
             if (entryLifecycleState.isStale(entry)) return reject('window-entry-stale');
 
-            const activeWindowData = windowData || context.resolveWindowData(entry);
-            const targetWindow = context.resolveTargetWindow(entry, activeWindowData);
+            const activeWindowData = windowData || resolveWindowData(entry);
+            const targetWindow = resolveTargetWindow(entry, activeWindowData);
             if (!targetWindow || !activeWindowData) {
                 return reject('window-redraw-target-missing', {
                     windowType: activeWindowData && activeWindowData.windowType ? activeWindowData.windowType : '',
                 });
             }
 
-            const textKey = entry.key || context.getTextEntryKey(activeWindowData, entry);
+            const textKey = entry.key || getTextEntryKey(activeWindowData, entry);
             const currentEntry = textKey && activeWindowData.texts ? activeWindowData.texts.get(textKey) : null;
             if (currentEntry !== entry) {
                 return reject('window-entry-replaced', {
                     key: textKey || '',
-                    windowType: context.getWindowTypeName(targetWindow, activeWindowData),
+                    windowType: getWindowTypeName(targetWindow, activeWindowData),
                     textKey,
                 });
             }
 
             const pendingInvalidation = entryLifecycleState.getPendingInvalidation(entry);
-            if (pendingInvalidation && !hasCopiedStagingRenderTarget(entry)) {
+            const copiedTargetReadiness = pendingInvalidation
+                ? planCopiedStagingReadiness(entry, pendingInvalidation)
+                : null;
+            if (pendingInvalidation && (!copiedTargetReadiness || copiedTargetReadiness.status !== 'planned')) {
                 return defer('window-redraw-invalidated', 'on-update-ready', {
                     key: textKey || '',
                     reason: pendingInvalidation.reason || '',
                     textKey,
                     targetWindow,
                     windowData: activeWindowData,
+                    copiedTargetReadiness: copiedTargetReadiness && copiedTargetReadiness.diagnostics || null,
                 });
             }
 
@@ -63,8 +109,8 @@
                 });
             }
 
-            const contents = context.getRedrawContents(targetWindow, entry);
-            if (!context.isWindowReadyForRedraw(targetWindow, contents)) {
+            const contents = getRedrawContents(targetWindow, entry);
+            if (!isWindowReadyForRedraw(targetWindow, contents)) {
                 return defer('window-not-ready', 'on-update-ready', {
                     textKey,
                     targetWindow,
@@ -79,9 +125,17 @@
                     targetWindow,
                     windowData: activeWindowData,
                     key: textKey || '',
-                    windowType: context.getWindowTypeName(targetWindow, activeWindowData),
+                    windowType: getWindowTypeName(targetWindow, activeWindowData),
                     renderDrain,
                 });
+            }
+
+            const details = {
+                key: textKey || '',
+                windowType: getWindowTypeName(targetWindow, activeWindowData),
+            };
+            if (copiedTargetReadiness) {
+                details.copiedTargetReadiness = copiedTargetReadiness.diagnostics || null;
             }
 
             return {
@@ -93,19 +147,38 @@
                 targetWindow,
                 windowData: activeWindowData,
                 contents,
-                details: {
-                    key: textKey || '',
-                    windowType: context.getWindowTypeName(targetWindow, activeWindowData),
-                },
+                details,
             };
         }
 
-        function hasCopiedStagingRenderTarget(entry) {
-            const isStaging = !!(entry
-                && (entry.requiresCopiedTarget === true
-                    || entry.sourceContentsRole === 'window-staging-contents'));
-            if (!isStaging || !Array.isArray(entry._trCopiedRenderTargets)) return false;
-            return entry._trCopiedRenderTargets.some((target) => target && target.targetBitmap);
+        function planWindowCopiedTargetRedraw(entry, renderedText) {
+            const sourceDraw = entry && entry.renderLifecycle && entry.renderLifecycle.sourceDraw || null;
+            const renderPlan = bitmapRenderPlanner.createWindowSourceEntryCopiedTargetRenderPlan({
+                entry,
+                text: renderedText,
+                collectProjectedTargets: materializeCopiedRenderTargetsForEntry,
+                sourceCommitted: !!(sourceDraw && sourceDraw.sourceCommitted === true),
+            });
+            return {
+                renderPlan,
+                diagnostics: renderPlan && renderPlan.diagnostics || null,
+            };
+        }
+
+        function planWindowBitmapReplay(input) {
+            return bitmapRenderPlanner.createWindowBitmapReplayPlan(input || {});
+        }
+
+        function planWindowBitmapRedraw(input) {
+            return bitmapRenderPlanner.createWindowBitmapRenderPlan(input || {});
+        }
+
+        function planCopiedStagingReadiness(entry, pendingInvalidation) {
+            return bitmapRenderPlanner.createWindowSourceEntryCopiedTargetReadinessPlan({
+                entry,
+                collectProjectedTargets: materializeCopiedRenderTargetsForEntry,
+                pendingInvalidation: !!pendingInvalidation,
+            });
         }
 
         function isObservedInActiveRefresh(entry, targetWindow, windowData) {
@@ -166,8 +239,27 @@
             };
         }
 
-        return { planTranslatedRedraw };
-    }
+        function isBitmapSurfaceTextEntry(entry) {
+            const origin = entry && entry.drawOrigin;
+            return !!(origin && origin.type === 'bitmapSurface');
+        }
 
-    defineRuntimeModule('adapters.windowTextRenderPlanner', { create: createRenderPlannerController });
+        function hasWindowBitmapPlannerMethods(planner) {
+            return !!(planner
+                && typeof planner.createWindowBitmapReplayPlan === 'function'
+                && typeof planner.createWindowBitmapRenderPlan === 'function'
+                && typeof planner.createWindowSourceEntryCopiedTargetReadinessPlan === 'function'
+                && typeof planner.createWindowSourceEntryCopiedTargetRenderPlan === 'function');
+        }
+
+        return {
+            planTranslatedRedraw,
+            planWindowBitmapReplay,
+            planWindowBitmapRedraw,
+            planWindowCopiedTargetRedraw,
+        };
+    }
+            return { create: createRenderPlannerController };
+        },
+    });
 })();

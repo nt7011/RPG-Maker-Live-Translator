@@ -119,6 +119,24 @@ function Read-SnapshotManifest {
     return $manifest
 }
 
+function Read-OptionalSupportManifest {
+    param([Parameter(Mandatory = $true)][string]$SupportRoot)
+
+    $manifestPath = Join-Path -Path $SupportRoot -ChildPath "install-manifest.json"
+    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+        throw "Optional support install-manifest.json not found at $manifestPath"
+    }
+
+    $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if (-not $manifest.supportDirectory) { throw "Optional support install-manifest.json missing supportDirectory" }
+    if (-not $manifest.fileInventory) { throw "Optional support install-manifest.json missing fileInventory section" }
+    if (-not $manifest.fileInventory.PSObject.Properties["sourceFiles"]) {
+        throw "Optional support install-manifest.json missing fileInventory.sourceFiles"
+    }
+
+    return $manifest
+}
+
 function Resolve-SupportChildPath {
     param(
         [Parameter(Mandatory = $true)][string]$SupportTargetDir,
@@ -407,6 +425,45 @@ function Copy-OptionalSnapshotBundle {
         -Description "snapshot fileInventory.sourceFiles" `
         -Required $true | Out-Null
     Write-Host "Installed optional snapshot plugin to $snapshotTargetFull" -ForegroundColor Cyan
+    return $true
+}
+
+function Copy-OptionalSupportBundle {
+    param(
+        [Parameter(Mandatory = $true)][string]$ResolvedSupportRoot,
+        [Parameter(Mandatory = $true)][string]$PluginsDir
+    )
+
+    if ([string]::IsNullOrWhiteSpace($ResolvedSupportRoot)) { return $false }
+
+    $supportFull = Get-FullPath $ResolvedSupportRoot
+    if (-not (Test-Path -LiteralPath $supportFull -PathType Container)) {
+        return $false
+    }
+
+    $pluginsFull = Get-FullPath $PluginsDir
+    $supportManifest = Read-OptionalSupportManifest -SupportRoot $supportFull
+    $supportTargetFull = Resolve-ManifestChildPath `
+        -BaseDir $pluginsFull `
+        -RelativePath ([string]$supportManifest.supportDirectory) `
+        -Description "optional support directory"
+
+    if ((Test-IsUnderPath -Path $supportTargetFull -Parent $supportFull) -or
+        (Test-IsUnderPath -Path $supportFull -Parent $supportTargetFull)) {
+        throw "Optional support source and target must be separate directories."
+    }
+
+    if (-not (Test-Path -LiteralPath $supportTargetFull -PathType Container)) {
+        New-Item -ItemType Directory -Path $supportTargetFull -Force | Out-Null
+    }
+
+    Copy-ManifestFileList `
+        -SourceDir $supportFull `
+        -TargetDir $supportTargetFull `
+        -RelativePaths @($supportManifest.fileInventory.sourceFiles) `
+        -Description "$($supportManifest.supportDirectory) fileInventory.sourceFiles" `
+        -Required $true | Out-Null
+    Write-Host "Installed optional support bundle to $supportTargetFull" -ForegroundColor Cyan
     return $true
 }
 
@@ -1093,6 +1150,8 @@ $resolvedRuntimeSource = if ([string]::IsNullOrWhiteSpace($RuntimeSource)) {
     Get-FullPath (Resolve-InputPath -BasePath (Get-Location).Path -Path $RuntimeSource)
 }
 
+$resolvedDiagnosticsSource = Get-FullPath (Join-Path -Path (Split-Path -Path $resolvedRuntimeSource -Parent) -ChildPath "diagnostics")
+
 $resolvedSnapshotSource = Resolve-OptionalSnapshotSource `
     -ResolvedRuntimeRoot $resolvedRuntimeSource `
     -ConfiguredSnapshotSource $SnapshotSource `
@@ -1136,6 +1195,9 @@ try {
         -ResolvedRuntimeRoot $resolvedRuntimeSource `
         -SupportTargetDir $supportTargetFull `
         -Manifest $manifest
+    Copy-OptionalSupportBundle `
+        -ResolvedSupportRoot $resolvedDiagnosticsSource `
+        -PluginsDir $pluginsDirFull | Out-Null
     if ($PluginProfile -eq "snapshot") {
         Write-Host "Snapshot profile enables the standard live-translator plugin entry before the snapshot harness." -ForegroundColor Cyan
     }

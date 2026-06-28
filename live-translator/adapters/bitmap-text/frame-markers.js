@@ -1,19 +1,24 @@
 // Bitmap text adapter support: frame markers.
-// Each controller receives one adapter instance scope from bitmap-text-adapter.js.
+// Each controller receives one adapter instance scope from bitmap-text.js.
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    if (typeof defineRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/bitmap-text/frame-markers.js.');
-    }
+    LiveTranslatorDefine({
+        name: 'adapters.bitmapText.frameMarkers',
+        requires: {
+            hookWrapper: 'runtime.hookWrapper',
+        },
+        factory({ hookWrapper }) {
+    const { hasHookInChain } = hookWrapper;
 
     function createController(scope = {}) {
-        const { ADAPTER_ID, ADAPTER_LABEL, SURFACE_TYPE, RENDER_STRATEGY, BITMAP_PRIORITY, DRAW_WRAPPER_TOKEN, MUTATION_WRAPPER_TOKEN, FRAME_FLUSH_TOKEN, SMALL_TEXT_TOKEN, NORMAL_CHAR_TOKEN, MAX_FRAGMENTS, MAX_REPLAY_OPS, GAP_MIN, GAP_RATIO } = scope;
-        const { flushQueuedBitmaps } = scope.controllerFacades.aggregation;
+        const { ADAPTER_ID, ADAPTER_LABEL, SURFACE_TYPE, RENDER_STRATEGY, BITMAP_PRIORITY, DRAW_WRAPPER_TOKEN, MUTATION_WRAPPER_TOKEN, FRAME_FLUSH_TOKEN, SMALL_TEXT_TOKEN, NORMAL_CHAR_TOKEN, GAP_MIN, GAP_RATIO } = scope;
+        const normalCharacterRunsByTextState = new WeakMap();
+
+        function flushPendingDrawUnits(reason = 'frame', targetBitmap = null, options = undefined) {
+            if (!scope.bitmapServices || typeof scope.bitmapServices.flushPendingDrawUnits !== 'function') return 0;
+            return scope.bitmapServices.flushPendingDrawUnits(reason, targetBitmap, options) || 0;
+        }
 
         function installFrameFlushHooks() {
             let installed = false;
@@ -52,32 +57,90 @@
             if (installed) scope.frameFlushInstalled = true;
             return hasActiveFrameFlushHooks();
         }
-        
-        function installFrameFlushHook(target, methodName, label, flushBefore) {
-            if (!target || typeof target[methodName] !== 'function') return false;
-            if (hasHookInChain(target[methodName], '__trBitmapTextFrameFlush', FRAME_FLUSH_TOKEN)) return true;
-            const original = target[methodName];
-            const wrapped = function(...args) {
-                if (flushBefore) flushQueuedBitmaps(label);
-                const result = original.apply(this, args);
-                if (!flushBefore) flushQueuedBitmaps(label);
-                return result;
-            };
-            wrapped.__trOriginal = original;
-            wrapped.__trBitmapTextFrameFlush = FRAME_FLUSH_TOKEN;
-            target[methodName] = wrapped;
-            return true;
+
+        function ensureRecordedDrawDelivery(bitmap = null, unit = null) {
+            const bitmapHooksActive = ensureActiveFrameFlushHooks();
+            const spriteDelivery = ensurePeerFrameFlushProvider('sprite', 'bitmap.drawText.fallback');
+            const spriteHooksActive = !!(spriteDelivery && spriteDelivery.handled === true && spriteDelivery.active === true);
+            if (!bitmapHooksActive && !spriteHooksActive && shouldDrainCommittedDrawWithoutFrame(bitmap, unit)) {
+                return flushOwnerDrawUnits('bitmap.drawText.commit', bitmap) > 0;
+            }
+            if (!spriteDelivery || spriteDelivery.handled !== true) return bitmapHooksActive;
+            return bitmapHooksActive && spriteHooksActive;
+        }
+
+        function flushOwnerDrawUnits(reason = 'owner-claim', targetBitmap = null) {
+            if (!scope.bitmapServices || typeof scope.bitmapServices.flushOwnerDrawUnits !== 'function') return 0;
+            return scope.bitmapServices.flushOwnerDrawUnits(reason, targetBitmap) || 0;
+        }
+
+        function shouldDrainCommittedDrawWithoutFrame(bitmap, unit) {
+            if (!bitmap || !unit || typeof unit !== 'object') return false;
+            if (isSpriteClassifiedSurface(bitmap)) return false;
+            if (unit.normalCharacter === true) return false;
+            const context = unit.drawRunContext || getActiveDrawRunContext(bitmap);
+            if (context && context.runId) return false;
+            return countTextUnits(unit.text) > 1;
+        }
+
+        function isSpriteClassifiedSurface(bitmap) {
+            if (!scope.bitmapServices || typeof scope.bitmapServices.describeSurface !== 'function') return false;
+            let description = null;
+            try {
+                description = scope.bitmapServices.describeSurface(bitmap, {
+                    adapterId: 'sprite',
+                    source: ADAPTER_ID,
+                });
+            } catch (_) {
+                description = null;
+            }
+            const kind = description && typeof description === 'object'
+                ? String(description.kind || '')
+                : '';
+            return kind === 'sprite-owned'
+                || kind === 'sprite-text-interest'
+                || kind === 'sprite-observed'
+                || description && description.owned === true;
+        }
+
+        function getActiveDrawRunContext(bitmap) {
+            if (!scope.bitmapServices || typeof scope.bitmapServices.getActiveDrawRunContext !== 'function') return null;
+            try { return scope.bitmapServices.getActiveDrawRunContext(bitmap) || null; } catch (_) { return null; }
+        }
+
+        function countTextUnits(text) {
+            try { return Array.from(String(text ?? '')).length; } catch (_) { return 0; }
+        }
+
+        function ensurePeerFrameFlushProvider(adapterId, reason) {
+            if (!scope.bitmapServices || typeof scope.bitmapServices.ensureFrameFlushProvider !== 'function') {
+                return { handled: false, active: false, scheduled: false, status: 'unavailable' };
+            }
+            return scope.bitmapServices.ensureFrameFlushProvider(adapterId, {
+                reason: reason || 'bitmap.drawText.fallback',
+                source: ADAPTER_ID,
+            });
         }
         
-        function hasHookInChain(fn, property, token) {
-            const seen = [];
-            let current = typeof fn === 'function' ? fn : null;
-            while (current && seen.indexOf(current) < 0) {
-                if (current[property] === token) return true;
-                seen.push(current);
-                current = typeof current.__trOriginal === 'function' ? current.__trOriginal : null;
-            }
-            return false;
+        function installFrameFlushHook(target, methodName, label, flushBefore) {
+            return hookWrapper.installMethodWrapper(target, methodName, {
+                property: '__trBitmapTextFrameFlush',
+                token: FRAME_FLUSH_TOKEN,
+                createWrapper(original) {
+                    return function(...args) {
+                        if (flushBefore) flushPendingDrawUnits(label, null, {
+                            phase: 'frame-boundary',
+                            source: label,
+                        });
+                        const result = original.apply(this, args);
+                        if (!flushBefore) flushPendingDrawUnits(label, null, {
+                            phase: 'frame-boundary',
+                            source: label,
+                        });
+                        return result;
+                    };
+                },
+            });
         }
         
         function installSmallTextMarkers() {
@@ -86,19 +149,17 @@
         }
         
         function installSmallTextMarker(target, methodName) {
-            if (!target || typeof target[methodName] !== 'function') return false;
-            const current = target[methodName];
-            if (hasHookInChain(current, '__trBitmapTextSmallText', SMALL_TEXT_TOKEN)) return true;
-            const original = current;
-            const wrapped = function(...args) {
-                scope.smallTextDepth += 1;
-                try { return original.apply(this, args); }
-                finally { scope.smallTextDepth = Math.max(0, scope.smallTextDepth - 1); }
-            };
-            wrapped.__trBitmapTextSmallText = SMALL_TEXT_TOKEN;
-            wrapped.__trOriginal = original;
-            target[methodName] = wrapped;
-            return true;
+            return hookWrapper.installMethodWrapper(target, methodName, {
+                property: '__trBitmapTextSmallText',
+                token: SMALL_TEXT_TOKEN,
+                createWrapper(original) {
+                    return function(...args) {
+                        scope.smallTextDepth += 1;
+                        try { return original.apply(this, args); }
+                        finally { scope.smallTextDepth = Math.max(0, scope.smallTextDepth - 1); }
+                    };
+                },
+            });
         }
         
         function installNormalCharacterMarker() {
@@ -106,53 +167,73 @@
                 if (typeof Window_Base === 'undefined' || !Window_Base || !Window_Base.prototype) return false;
                 const current = Window_Base.prototype.processNormalCharacter;
                 if (typeof current !== 'function' || hasHookInChain(current, '__trBitmapTextNormalChar', NORMAL_CHAR_TOKEN)) return true;
-                const original = current;
-                const wrapped = function(...args) {
-                const contents = this && this.contents ? this.contents : null;
-                const runId = getNormalCharacterRunId(args && args[0]);
-                const runInfo = getNormalCharacterRunInfo(this, args && args[0], runId);
-                const leaveRunContext = contents && scope.bitmapServices && typeof scope.bitmapServices.enterDrawRunContext === 'function'
-                    ? scope.bitmapServices.enterDrawRunContext(contents, {
-                        type: 'normalCharacter',
-                        runId,
-                        runInfo,
-                    })
-                    : null;
-                scope.normalCharacterDepth += 1;
-                try { return original.apply(this, args); }
-                finally {
-                        scope.normalCharacterDepth = Math.max(0, scope.normalCharacterDepth - 1);
-                        if (typeof leaveRunContext === 'function') leaveRunContext();
-                    }
-                };
-                wrapped.__trBitmapTextNormalChar = NORMAL_CHAR_TOKEN;
-                wrapped.__trOriginal = original;
-                Window_Base.prototype.processNormalCharacter = wrapped;
-                return true;
+                return hookWrapper.installMethodWrapper(Window_Base.prototype, 'processNormalCharacter', {
+                    property: '__trBitmapTextNormalChar',
+                    token: NORMAL_CHAR_TOKEN,
+                    createWrapper(original) {
+                        return function(...args) {
+                            const contents = this && this.contents ? this.contents : null;
+                            const runId = getNormalCharacterRunId(args && args[0]);
+                            const runInfo = getNormalCharacterRunInfo(this, args && args[0], runId);
+                            const leaveRunContext = contents && scope.bitmapServices && typeof scope.bitmapServices.enterDrawRunContext === 'function'
+                                ? scope.bitmapServices.enterDrawRunContext(contents, {
+                                    type: 'normalCharacter',
+                                    runId,
+                                    runInfo,
+                                })
+                                : null;
+                            scope.normalCharacterDepth += 1;
+                            try { return original.apply(this, args); }
+                            finally {
+                                scope.normalCharacterDepth = Math.max(0, scope.normalCharacterDepth - 1);
+                                if (typeof leaveRunContext === 'function') leaveRunContext();
+                            }
+                        };
+                    },
+                });
             } catch (_) {
                 return false;
             }
         }
 
+        function getNormalCharacterRunState(textState) {
+            if (!textState || typeof textState !== 'object') return null;
+            try {
+                let state = normalCharacterRunsByTextState.get(textState);
+                if (!state) {
+                    state = {
+                        runId: '',
+                        runInfo: null,
+                    };
+                    normalCharacterRunsByTextState.set(textState, state);
+                }
+                return state;
+            } catch (_) {
+                return null;
+            }
+        }
+
         function getNormalCharacterRunId(textState) {
-            if (!textState || typeof textState !== 'object') return '';
+            const state = getNormalCharacterRunState(textState);
+            if (!state) return '';
             try {
                 // RPG Maker keeps one textState object for a drawTextEx pass, so it
                 // is the stable boundary for glyph draws emitted by processNormalCharacter.
-                if (!textState._trBitmapTextNormalCharRunId) {
+                if (!state.runId) {
                     scope.nextNormalCharacterRunId = (Number(scope.nextNormalCharacterRunId) || 0) + 1;
-                    textState._trBitmapTextNormalCharRunId = `normalChar:${scope.nextNormalCharacterRunId.toString(36)}`;
+                    state.runId = `normalChar:${scope.nextNormalCharacterRunId.toString(36)}`;
                 }
-                return String(textState._trBitmapTextNormalCharRunId || '');
+                return String(state.runId || '');
             } catch (_) {
                 return '';
             }
         }
 
         function getNormalCharacterRunInfo(windowInstance, textState, runId) {
-            if (!runId || !textState || typeof textState !== 'object') return null;
+            const state = getNormalCharacterRunState(textState);
+            if (!runId || !state) return null;
             try {
-                const existing = textState._trBitmapTextNormalCharRunInfo;
+                const existing = state.runInfo;
                 if (existing && existing.runId === runId) return existing;
                 const rawText = String(textState.text ?? '');
                 const rawIndex = Number(textState.index);
@@ -169,7 +250,7 @@
                     lineHeight,
                     align: 'left',
                 };
-                textState._trBitmapTextNormalCharRunInfo = info;
+                state.runInfo = info;
                 return info;
             } catch (_) {
                 return null;
@@ -190,7 +271,7 @@
         }
         
         function isSmallTextDrawActive(bitmap) {
-            return scope.smallTextDepth > 0 || !!(bitmap && bitmap._trSmallTextDepth > 0);
+            return scope.smallTextDepth > 0;
         }
 
         function isNormalCharacterDrawActive(bitmap) {
@@ -209,8 +290,10 @@
             }
         }
 
-        return { installFrameFlushHooks, hasActiveFrameFlushHooks, ensureActiveFrameFlushHooks, installFrameFlushHook, hasHookInChain, installSmallTextMarkers, installSmallTextMarker, installNormalCharacterMarker, isSmallTextDrawActive, isNormalCharacterDrawActive, isSmallTextScratchBitmap };
+        return { installFrameFlushHooks, hasActiveFrameFlushHooks, ensureActiveFrameFlushHooks, ensureRecordedDrawDelivery, installFrameFlushHook, hasHookInChain, installSmallTextMarkers, installSmallTextMarker, installNormalCharacterMarker, isSmallTextDrawActive, isNormalCharacterDrawActive, isSmallTextScratchBitmap };
     }
 
-    defineRuntimeModule('adapters.bitmapTextFrameMarkers', { create: createController });
+            return { create: createController };
+        },
+    });
 })();

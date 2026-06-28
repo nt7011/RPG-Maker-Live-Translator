@@ -3,19 +3,19 @@
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    if (typeof defineRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/game-message/install.js.');
-    }
+    LiveTranslatorDefine({
+        name: 'adapters.gameMessage.install',
+        requires: {
+            hookWrapper: 'runtime.hookWrapper',
+            conversionScope: 'runtime.conversionScope',
+        },
+        factory({ hookWrapper, conversionScope }) {
 
     function createController(scope = {}) {
         const { globalScope, diag, adapterContract, surfaceOwnership } = scope;
         const { installGameInterpreterExecutionContextHook, installGameInterpreterChildOriginHook, installGameMessageAddOriginHook, installGameInterpreterMessageOriginHook, installGamePlayerTransferForesightHook } = scope.controllerFacades.foresightHooks;
         const { installGameMessageClearHook } = scope.controllerFacades.clear;
-        const { installOrchestratorSubscription, getWindowId, updateItem, recordDecision, recordRenderAccepted, recordRenderDeferred, recordRenderRejected, backgroundItem, retireItem } = scope.controllerFacades.records;
+        const { installOrchestratorSubscription, getWindowId } = scope.controllerFacades.records;
         const { warn } = scope.controllerFacades.render;
         const { discoverAndHookMessageWindowCtors, installProcessCharacterFallback, installProcessCompleteMessage, getMessageStartCoordinates } = scope.controllerFacades.session;
         const messageContentsClaims = new WeakMap();
@@ -46,6 +46,7 @@
                 installGameInterpreterMessageOriginHook();
                 installGamePlayerTransferForesightHook();
             }
+            installGameMessageConversionRouters();
 
             return {
                 status: 'installed',
@@ -69,7 +70,7 @@
                     'setItemTranslationPriority',
                     'setItemVisibility',
                     'recordDecision',
-                    'recordRenderAccepted',
+                    'recordRenderCommitted',
                     'recordRenderDeferred',
                     'recordRenderRejected',
                     'describeTextEligibility',
@@ -79,6 +80,38 @@
                     'releaseTextClaim',
                     'subscribeRecords',
                 ]));
+        }
+
+        function installGameMessageConversionRouters() {
+            const prototype = globalScope.Game_Message && globalScope.Game_Message.prototype;
+            if (!prototype) return 0;
+            let installed = 0;
+            getPrototypeMethodNames(prototype).forEach((methodName) => {
+                if (hookWrapper.installMethodWrapper(prototype, methodName, {
+                    property: '__trGameMessageConversionRouter',
+                    token: true,
+                    createWrapper(original) {
+                        return conversionScope.createMutationRouter(methodName, original);
+                    },
+                })) {
+                    installed += 1;
+                }
+            });
+            return installed;
+        }
+
+        function getPrototypeMethodNames(prototype) {
+            const names = [];
+            if (!prototype) return names;
+            try {
+                Object.getOwnPropertyNames(prototype).forEach((name) => {
+                    if (!name || name === 'constructor') return;
+                    const descriptor = Object.getOwnPropertyDescriptor(prototype, name);
+                    if (!descriptor || typeof descriptor.value !== 'function') return;
+                    names.push(name);
+                });
+            } catch (_) {}
+            return names;
         }
 
         /**
@@ -104,7 +137,6 @@
         function isMessageWindowLike(windowInstance) {
             if (!windowInstance) return false;
             if (isDedicatedTextOwner(windowInstance)) return true;
-            const ctor = windowInstance.constructor;
             try {
                 if (typeof Window_Message !== 'undefined'
                     && Window_Message
@@ -113,8 +145,9 @@
                     return true;
                 }
             } catch (_) {}
-            const name = ctor && ctor.name ? String(ctor.name) : '';
-            return /^Window_Message(?:$|_)/.test(name);
+            // Constructor names are not ownership proof. Namebox plugins can use
+            // Window_Message_* names while still drawing ordinary window text.
+            return false;
         }
 
         /**
@@ -300,5 +333,7 @@
         };
     }
 
-    defineRuntimeModule('adapters.gameMessage.install', { create: createController });
+            return { create: createController };
+        },
+    });
 })();

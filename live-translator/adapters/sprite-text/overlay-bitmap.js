@@ -3,13 +3,9 @@
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    if (typeof defineRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/sprite-text/overlay-bitmap.js.');
-    }
+    LiveTranslatorDefine({
+        name: 'adapters.spriteText.overlayBitmap',
+        factory() {
 
     function createController(scope = {}) {
         const { getBitmapState, logOverlayDraw } = scope.controllerFacades.state;
@@ -31,6 +27,12 @@
 
         function withOverlayBitmapGuard(targetBitmap, callback) {
             return scope.bitmapServices.withBitmapSkipAndSpriteReplayGuard(targetBitmap, callback);
+        }
+
+        function withBitmapNativeDrawAttribution(targetBitmap, attribution, callback) {
+            if (typeof callback !== 'function') return undefined;
+            if (!targetBitmap || !attribution) return callback();
+            return scope.bitmapServices.withBitmapNativeDrawAttribution(targetBitmap, attribution, callback);
         }
 
         /**
@@ -128,8 +130,18 @@
                         scaleText: hasRenderedTranslation(entry),
                     });
                 });
+            finalizeSpriteOverlayBitmapDirty(overlayBitmap, 'sprite-overlay-cache-miss');
             bitmapState.overlayCache = { key: cacheKey, bitmap: overlayBitmap };
             return overlayBitmap;
+        }
+
+        function finalizeSpriteOverlayBitmapDirty(bitmap, reason) {
+            const bitmapServices = scope.bitmapServices;
+            if (!bitmapServices || typeof bitmapServices.markBitmapPixelsDirty !== 'function') return null;
+            return bitmapServices.markBitmapPixelsDirty(bitmap, {
+                source: 'sprite-overlay-bitmap',
+                reason: String(reason || 'sprite-overlay-redraw'),
+            });
         }
         
         /**
@@ -205,7 +217,7 @@
                 const width = Math.max(1, Math.ceil(Number(sourceBitmap && sourceBitmap.width) || 1));
                 const height = Math.max(1, Math.ceil(Number(sourceBitmap && sourceBitmap.height) || 1));
                 const bitmap = new Bitmap(width, height);
-                bitmap._trSpriteTextOverlayBitmap = true;
+                scope.overlayBitmaps.add(bitmap);
                 return bitmap;
             } catch (_) {
                 return null;
@@ -342,9 +354,7 @@
             if (!targetBitmap || !group || !text) return;
             const drawState = options.scaleText ? getScaledDrawState(group.drawState) : group.drawState;
             try { scope.applyBitmapDrawState(targetBitmap, drawState); } catch (_) {}
-            const previousOwner = targetBitmap._trBitmapNativeDrawOwner;
-            targetBitmap._trBitmapNativeDrawOwner = 'spriteOverlayText';
-            try {
+            return withBitmapNativeDrawAttribution(targetBitmap, 'spriteOverlayText', () => {
                 withOverlayBitmapGuard(targetBitmap, () => {
                     const methodName = group.methodName && typeof targetBitmap[group.methodName] === 'function'
                         ? group.methodName
@@ -362,13 +372,7 @@
                         );
                     }
                 });
-            } finally {
-                if (previousOwner === undefined) {
-                    try { delete targetBitmap._trBitmapNativeDrawOwner; } catch (_) { targetBitmap._trBitmapNativeDrawOwner = undefined; }
-                } else {
-                    targetBitmap._trBitmapNativeDrawOwner = previousOwner;
-                }
-            }
+            });
         }
         
         /**
@@ -394,5 +398,7 @@
         return { renderSpriteOverlay, renderSpriteOverlayNow, getCachedSpriteOverlayBitmap, createSpriteOverlayCacheKey, createSpriteOverlayEntryCacheKey, roundCacheNumber, invalidateBitmapOverlayCache, createOverlayBitmapFromSource, copySourceBitmapToOverlay, clearOverlayTextRegions, restoreOverlayTextRegions, restoreOverlayTextRegion, forEachEntryTextRegion, emitTextRegion, replayPaintOps, replayPaintOp, drawTextToBitmap, getScaledDrawState, shouldScaleTranslatedText };
     }
 
-    defineRuntimeModule('adapters.spriteText.overlaybitmap', { createController });
+            return { createController };
+        },
+    });
 })();

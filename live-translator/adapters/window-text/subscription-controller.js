@@ -2,27 +2,20 @@
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    if (typeof defineRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/window-text/subscription-controller.js.');
-    }
+    LiveTranslatorDefine({
+        name: 'adapters.windowText.subscriptionController',
+        factory() {
 
     function createSubscriptionControllerController(context = {}) {
     const { entriesByRecordId, RENDER_STRATEGY, entryLifecycleState } = context;
     const { lifecycle: lifecycleService, surface: surfaceService } = context.services;
-    const { bitmapReplay, entryLifecycle, entryRecords, renderCommands, renderDraw, renderProof, renderQueue, textConversion, textMetrics } = context.facades;
+    const { entryLifecycle, entryRecords, renderCommands, renderProof, textConversion, textMetrics } = context.facades;
     const { observeEntry, firstNonEmptyString } = entryRecords;
-    const { applyRenderCommand, markRequestSkipped, markRequestFailed, updateOrchestratorItem, beginPendingRenderCommand, markPendingRenderDeferred } = renderCommands;
-    const { drawTranslatedEntry } = renderDraw;
-    const { rememberDetachedEntry, takeDetachedEntry, markRecordDisappeared, clearPendingInvalidation, getCurrentEntry, getTextEntryKey, resolveWindowData, isWindowReadyForRedraw } = entryLifecycle;
+    const { applyRenderCommand, markRequestSkipped, markRequestFailed } = renderCommands;
+    const { rememberDetachedEntry, takeDetachedEntry, markRecordDisappeared, clearPendingInvalidation, getCurrentEntry, getTextEntryKey, resolveWindowData } = entryLifecycle;
     const { resolveDetachedRenderTarget } = renderProof;
-    const { queueRenderRetry } = renderQueue;
     const { restoreTranslatedWindowText, sanitizeDrawTextOutput } = textConversion;
     const { getSurfaceId, getWindowTypeName } = textMetrics;
-    const { getRedrawContents } = bitmapReplay;
 
     function installOrchestratorSubscription() {
                 lifecycleService.subscribeRecords({
@@ -31,6 +24,7 @@
                     renderStrategy: RENDER_STRATEGY,
                     getRenderGeneration: getRenderGeneration,
                     isRenderTargetCurrent: isRenderTargetCurrent,
+                    resolveRecord: resolveSubscriptionRecord,
                     onRenderQueued: applyRenderCommand,
                     onRenderRejected: handleRenderRejected,
                     onMissingRecord(route, event) {
@@ -44,15 +38,20 @@
                     },
                     onEvent(entry, event) {
                         const type = event && event.type ? String(event.type) : '';
+                        const details = event && event.details && typeof event.details === 'object' ? event.details : {};
+                        if (isDetachedStoredTranslationEvent(event, details)) {
+                            handleMissingRecordEvent(createDetachedStoredTranslationRoute(event), event);
+                            return;
+                        }
                         if (type !== 'item.cache_hit'
-                            || !event.details
-                            || event.details.lookupReuse !== true) {
+                            || !details
+                            || details.lookupReuse !== true) {
                             return;
                         }
                         const received = firstNonEmptyString(
-                            event && event.details && event.details.translationReceived,
-                            event && event.details && event.details.translation,
-                            event && event.details && event.details.text
+                            details && details.translationReceived,
+                            details && details.translation,
+                            details && details.text
                         );
                         if (!received) return;
                         entry.providerText = received;
@@ -63,12 +62,43 @@
                 });
             }
 
+    function createDetachedStoredTranslationRoute(event) {
+                const recordId = firstNonEmptyString(event && event.itemId, event && event.id);
+                return {
+                    recordId,
+                    itemId: recordId,
+                    eventType: event && event.type ? String(event.type) : '',
+                    adapterId: event && event.adapterId ? String(event.adapterId) : '',
+                    surfaceId: event && event.surfaceId ? String(event.surfaceId) : '',
+                    event,
+                    command: null,
+                };
+            }
+
+    function resolveSubscriptionRecord(recordId, event) {
+                if (isDetachedStoredTranslationEvent(event)) return null;
+                const entry = entriesByRecordId && typeof entriesByRecordId.get === 'function'
+                    ? entriesByRecordId.get(String(recordId || '')) || null
+                    : null;
+                return entry;
+            }
+
     function handleMissingRecordEvent(route, event) {
                 const type = event && event.type ? String(event.type) : '';
                 if (type !== 'item.translation_stored') return false;
                 const details = event && event.details && typeof event.details === 'object' ? event.details : {};
-                if (details.detached !== true && String(event && event.message || '') !== 'detached') return false;
+                if (!isDetachedStoredTranslationEvent(event, details)) return false;
                 return renderDetachedTranslation(route, event, details);
+            }
+
+    function isDetachedStoredTranslationEvent(event, details = null) {
+                if (!event || String(event.type || '') !== 'item.translation_stored') return false;
+                const eventDetails = details && typeof details === 'object'
+                    ? details
+                    : event && event.details && typeof event.details === 'object'
+                        ? event.details
+                        : {};
+                return eventDetails.detached === true || String(event && event.message || '') === 'detached';
             }
 
     function renderDetachedTranslation(route, event, details) {
@@ -89,6 +119,9 @@
                     rememberDetachedEntry(entry, 'detached-translation-missing', {
                         key: entry.key || '',
                     });
+                    recordDetachedRecoveryDecision(entry, 'detached-translation-missing', {
+                        key: entry.key || '',
+                    });
                     return false;
                 }
                 const match = findDetachedTranslationWindow(event, details, entry);
@@ -96,59 +129,69 @@
                     rememberDetachedEntry(entry, 'detached-window-missing', {
                         key: entry.key || '',
                     });
+                    recordDetachedRecoveryDecision(entry, 'detached-window-missing', {
+                        key: entry.key || '',
+                        surfaceId: event && event.surfaceId || details && details.surfaceId || '',
+                        identitySurfaceId: details && details.metadata && details.metadata.identitySurfaceId || '',
+                    });
                     return false;
                 }
                 const windowInstance = match.windowInstance;
                 const windowData = match.windowData;
                 const renderTarget = resolveDetachedRenderTarget(entry, windowData, windowInstance);
-                if (!renderTarget || renderTarget.accepted !== true || !renderTarget.entry) return false;
-                const targetEntry = renderTarget.entry;
-                const proof = renderTarget.proof || null;
-                const reattached = reattachDetachedEntry(targetEntry, windowInstance, windowData, received, route, event, details, proof);
-                if (!reattached) return false;
-                const contents = getRedrawContents(windowInstance, targetEntry);
-                if (!isWindowReadyForRedraw(windowInstance, contents)) {
-                    beginPendingRenderCommand(targetEntry, {
-                        id: `detached:${recordId}`,
-                        text: received,
-                    }, {
-                        strategy: RENDER_STRATEGY,
-                        commandGeneration: targetEntry.surfaceRevision || 0,
-                    }, received, targetEntry.renderedText || '');
-                    markPendingRenderDeferred(targetEntry, 'detached-window-redraw-deferred', {
-                        detached: true,
-                        renderRoute: 'detached-record',
+                if (!renderTarget || renderTarget.accepted !== true || !renderTarget.entry) {
+                    recordDetachedRecoveryDecision(entry, renderTarget && renderTarget.reason || 'detached-render-proof-rejected', {
+                        key: entry.key || '',
                         windowType: getWindowTypeName(windowInstance, windowData),
-                        method: targetEntry.type || '',
-                        renderProof: proof,
-                    });
-                    queueRenderRetry(windowInstance, windowData, targetEntry, targetEntry.key || getTextEntryKey(windowData, targetEntry));
-                    return true;
-                }
-                if (!drawTranslatedEntry(windowInstance, windowData, contents, targetEntry)) {
-                    markRecordDisappeared(targetEntry, 'detached-redraw-failed', {
-                        key: targetEntry.key || '',
-                        windowType: getWindowTypeName(windowInstance, windowData),
+                        proof: renderTarget && renderTarget.details || null,
                     });
                     return false;
                 }
-                const rendered = targetEntry.renderedText || '';
-                updateOrchestratorItem(targetEntry, {
-                    status: 'completed',
-                    translation: rendered,
+                const targetEntry = renderTarget.entry;
+                const proof = renderTarget.proof || null;
+                const reattached = reattachDetachedEntry(targetEntry, windowInstance, windowData, received, route, event, details, proof);
+                if (!reattached) {
+                    recordDetachedRecoveryDecision(entry, 'detached-reattach-failed', {
+                        key: entry.key || '',
+                        windowType: getWindowTypeName(windowInstance, windowData),
+                        proof,
+                    });
+                    return false;
+                }
+                return queueDetachedRecoveryRenderCommand(targetEntry, windowInstance, windowData, received, proof);
+            }
+
+    function recordDetachedRecoveryDecision(entry, reason, details = null) {
+                if (!entry || !lifecycleService || typeof lifecycleService.recordDecision !== 'function') return null;
+                return lifecycleService.recordDecision(entry, 'detached_recovery.rejected', reason || 'detached-recovery-rejected', Object.assign({
+                    reason: reason || 'detached-recovery-rejected',
+                }, details || {}));
+            }
+
+    function queueDetachedRecoveryRenderCommand(entry, windowInstance, windowData, received, proof = null) {
+                if (!entry || !lifecycleService || typeof lifecycleService.queueStoredRenderCommand !== 'function') return false;
+                const command = lifecycleService.queueStoredRenderCommand(entry, {
+                    strategy: RENDER_STRATEGY,
+                    text: received,
                     translationReceived: received,
-                    translationDrawn: rendered,
-                }, 'item.rendered', {
-                    detached: true,
-                    renderRoute: 'detached-record',
-                    windowType: getWindowTypeName(windowInstance, windowData),
-                    method: targetEntry.type || '',
-                    key: targetEntry.key || '',
-                    translationReceived: received,
-                    translationDrawn: rendered,
-                    renderProof: proof,
+                    generation: entry.surfaceRevision || 0,
+                    targetSurfaceId: entry.surfaceId || getSurfaceId(windowData) || '',
+                    sourceKind: 'stored',
+                    recoveryProof: proof,
+                    metadata: {
+                        detached: true,
+                        renderRoute: 'detached-record',
+                        windowType: getWindowTypeName(windowInstance, windowData),
+                        method: entry.type || '',
+                        key: entry.key || getTextEntryKey(windowData, entry) || '',
+                    },
                 });
-                return true;
+                if (command && command.commandId) return true;
+                markRecordDisappeared(entry, 'detached-render-command-queue-failed', {
+                    key: entry.key || '',
+                    windowType: getWindowTypeName(windowInstance, windowData),
+                });
+                return false;
             }
 
     function reattachDetachedEntry(entry, windowInstance, windowData, received, route, event, details, proof = null) {
@@ -257,7 +300,8 @@
     
         return { installOrchestratorSubscription, getRenderGeneration, isRenderTargetCurrent, handleRenderRejected };
     }
-    
-    defineRuntimeModule('adapters.windowTextSubscriptionController', { create: createSubscriptionControllerController });
+            return { create: createSubscriptionControllerController };
+        },
+    });
 
 })();

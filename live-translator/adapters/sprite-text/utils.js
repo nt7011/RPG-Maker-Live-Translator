@@ -3,13 +3,9 @@
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    if (typeof defineRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/sprite-text/utils.js.');
-    }
+    LiveTranslatorDefine({
+        name: 'adapters.spriteText.utils',
+        factory() {
 
     function createController(scope = {}) {
         /**
@@ -249,5 +245,7 @@
         return { findPropertyDescriptor, measureTextWidth, computeFontSignature, sanitizeVisibleText, textUnitCount, normalizeCanvasTextAlign, rectCenterY, verticalOverlapAmount, glyphBounds, rectFromDimensions, isValidRect, rectHasArea, rectanglesOverlap, bucket, bucketCount, getParentId, finiteNumber, positiveNumber, pruneArray, stringify, safeCall, isAdapterContractFailure, errorMessage, warn };
     }
 
-    defineRuntimeModule('adapters.spriteText.utils', { createController });
+            return { createController };
+        },
+    });
 })();

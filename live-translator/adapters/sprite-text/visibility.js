@@ -3,18 +3,12 @@
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    if (typeof defineRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/sprite-text/visibility.js.');
-    }
-    const requireRuntimeModule = globalScope.LiveTranslatorRequire;
-    if (typeof requireRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module require is unavailable before adapters/sprite-text/visibility.js.');
-    }
-    const displayStateModule = requireRuntimeModule('runtime.displayState');
+    LiveTranslatorDefine({
+        name: 'adapters.spriteText.visibility',
+        requires: {
+            displayStateModule: 'runtime.displayState',
+        },
+        factory({ displayStateModule }, { scope: globalScope }) {
 
     function createController(scope = {}) {
         const displayState = displayStateModule.createDisplayStateService(scope.globalScope || globalScope);
@@ -286,5 +280,7 @@
         return { shouldPublishObservation, createObservationSignature, normalizeRectSignature, normalizeSignatureNumber, updateEntryVisibility, updateRunVisibility, syncRecordVisibility, markRecordVisibilitySynced, deactivateHiddenSpriteRecord, isTerminalSpriteRecord, isSpriteEntryScreenVisible, isParentRunScreenVisible, isSpriteSourceRenderableNow, isSpriteSourceRenderableInOpenParent, isDisplayObjectOpen, hasPositiveOpacity, hasVisibleFrame, areAncestorsOpen, isDisplayObjectInCurrentScene, isChildInParent, readFrameKey };
     }
 
-    defineRuntimeModule('adapters.spriteText.visibility', { createController });
+            return { createController };
+        },
+    });
 })();

@@ -7,16 +7,11 @@
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-
-    if (!globalScope.LiveTranslatorModules) globalScope.LiveTranslatorModules = {};
-    if (!globalScope.LiveTranslatorModules.adapters) globalScope.LiveTranslatorModules.adapters = {};
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    if (typeof defineRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/window-text/services.js.');
-    }
+    LiveTranslatorDefine({
+        name: 'adapters.windowText.services',
+        factory(_dependencies, { scope: globalScope }) {
+            if (!globalScope.LiveTranslatorModules) globalScope.LiveTranslatorModules = {};
+            if (!globalScope.LiveTranslatorModules.adapters) globalScope.LiveTranslatorModules.adapters = {};
 
     function createWindowTextServices(context = {}) {
         const adapterContract = context.adapterContract || null;
@@ -62,11 +57,22 @@
             recordRenderDeferred(entry, decision) {
                 return adapterContract.recordRenderDeferred(entry, decision);
             },
-            recordRenderAccepted(entry, decision) {
-                return adapterContract.recordRenderAccepted(entry, decision);
+            recordRenderCommitted(entry, decision) {
+                return adapterContract.recordRenderCommitted(entry, decision);
             },
             recordRenderRejected(entry, decision) {
                 return adapterContract.recordRenderRejected(entry, decision);
+            },
+            queueStoredRenderCommand(entry, recovery) {
+                if (!adapterContract || typeof adapterContract.queueStoredRenderCommand !== 'function') return null;
+                return adapterContract.queueStoredRenderCommand(entry, recovery || {});
+            },
+            notifyRenderCommandReady(commandId, details) {
+                return adapterContract.notifyRenderCommandReady(commandId, details || {});
+            },
+            getUnresolvedRenderCommandsForItem(entry) {
+                if (!adapterContract || typeof adapterContract.getUnresolvedRenderCommandsForItem !== 'function') return [];
+                return adapterContract.getUnresolvedRenderCommandsForItem(entry);
             },
             describeTextEligibility(payload) {
                 return adapterContract.describeTextEligibility(payload);
@@ -189,6 +195,7 @@
             snapshot,
         });
     }
-
-    defineRuntimeModule('adapters.windowTextServices', { create: createWindowTextServices });
+            return { create: createWindowTextServices };
+        },
+    });
 })();

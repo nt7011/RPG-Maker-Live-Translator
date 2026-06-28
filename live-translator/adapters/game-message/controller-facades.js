@@ -3,13 +3,9 @@
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    if (typeof defineRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/game-message/controller-facades.js.');
-    }
+    LiveTranslatorDefine({
+        name: 'adapters.gameMessage.controllerFacades',
+        factory() {
 
     function createGameMessageControllerFacades(context = {}) {
         const callController = context.callController;
@@ -225,7 +221,7 @@
                 'observeMessageRecord',
                 'updateItem',
                 'recordDecision',
-                'recordRenderAccepted',
+                'recordRenderCommitted',
                 'recordRenderDeferred',
                 'recordRenderRejected',
                 'backgroundItem',
@@ -278,7 +274,9 @@
         return Object.freeze(facade);
     }
 
-    defineRuntimeModule('adapters.gameMessage.controllerFacades', {
-        create: createGameMessageControllerFacades,
+            return {
+                create: createGameMessageControllerFacades,
+            };
+        },
     });
 })();

@@ -1,5 +1,5 @@
 // Translator monitor foresight copy helpers.
-// These functions share state from gui/app/state.js and are loaded before app.js boots.
+// These functions share state from gui/app/state.js and are loaded before app/index.js boots.
 'use strict';
 
 function buildForesightDiagnosticsCopyText(snapshot = state.foresight, textRecords = getForesightTextRecords()) {

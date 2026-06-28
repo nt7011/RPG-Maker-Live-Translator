@@ -3,14 +3,6 @@
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    if (typeof defineRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/bitmap-text/controller-facades.js.');
-    }
-
     function createBitmapTextControllerFacades(context = {}) {
         const callController = context.callController;
         if (typeof callController !== 'function') {
@@ -27,25 +19,77 @@
                 'installBitmapDrawWrapper',
                 'installDeferredBitmapDrawWrapper',
                 'handleBitmapDrawText',
-                'shouldBypassBitmapDraw',
-                'describeBitmapDrawBypassReason',
-                'recordBitmapSurfaceDraw',
-                'createFragment',
-                'handleBitmapDrawBatch',
             ]),
-            aggregation: bindControllerMethods(callController, [
-                'scheduleFlush',
-                'scheduleFallbackFlush',
-                'flushQueuedBitmaps',
-                'flushAggregatedLines',
-                'takeFragmentsForFlush',
-                'finalizeFragmentOwnership',
-                'releaseFragmentOwnership',
-                'groupFragmentsIntoLines',
-                'canMergeFragments',
-                'createEntryFromGroup',
-                'registerBitmapEntry',
-                'refreshExistingEntry',
+            drawCapture: bindControllerMethods(callController, [
+                'beginBitmapTextDrawTransaction',
+            ]),
+            drawDiagnostics: bindControllerMethods(callController, [
+                'beginBitmapDrawHookDiagnostics',
+                'isBitmapDrawTraceEnabled',
+                'recordBitmapDrawEnterIfEnabled',
+                'recordBitmapDrawTransactionOutcome',
+                'createBitmapNativeDrawInvoker',
+                'finishBitmapDrawHookDiagnostics',
+            ]),
+            drawPolicy: bindControllerMethods(callController, [
+                'createBitmapDrawRoutingDecision',
+                'resolveInlineBitmapReplacement',
+            ]),
+            fallbackObserver: bindControllerMethods(callController, [
+                'handleBitmapTextRuns',
+            ]),
+            fallbackRenderer: bindControllerMethods(callController, [
+                'executeBitmapFallbackRender',
+            ]),
+            copiedTargets: bindControllerMethods(callController, [
+                'registerCopiedBitmapTargetProvider',
+                'materializeCopiedBitmapTargetsBeforeMutation',
+                'redrawMaterializedCopiedBitmapTargetsAfterMutation',
+                'invalidateCopiedBitmapTargetsForMutation',
+                'materializeCopiedBitmapTargetRedraws',
+                'redrawCopiedBitmapTargets',
+            ]),
+            mutationPolicy: bindControllerMethods(callController, [
+                'shouldBypassMutation',
+                'getMutationBypassReason',
+            ]),
+            mutationDiagnostics: bindControllerMethods(callController, [
+                'recordMutationHookDecision',
+                'recordNativeMutationAttribution',
+                'classifyBitmapMutationSurface',
+                'bucketBitmapPixels',
+                'bucketBitmapDimensions',
+                'bucketDimension',
+                'sanitizePerfLabel',
+            ]),
+            mutationInterest: bindControllerMethods(callController, [
+                'planBitmapMutationObservation',
+                'hasMutationObserverInterest',
+                'shouldHandleBitmapMutation',
+                'hasBitmapStateMutationInterest',
+                'hasPendingBitmapTextSource',
+            ]),
+            mutationDescriptor: bindControllerMethods(callController, [
+                'describeMutation',
+                'createMutationJournalInput',
+                'createLedgerMutationInput',
+                'createMutationDescriptorFromJournalContext',
+            ]),
+            mutationInvalidation: bindControllerMethods(callController, [
+                'handleBitmapMutation',
+                'invalidateEntriesInRect',
+            ]),
+            mutationJournal: bindControllerMethods(callController, [
+                'beginBitmapMutationTransaction',
+            ]),
+            mutationNative: bindControllerMethods(callController, [
+                'applyNativeBitmapMutation',
+            ]),
+            mutationParticipants: bindControllerMethods(callController, [
+                'registerBitmapMutationParticipants',
+            ]),
+            fallbackRunRecords: bindControllerMethods(callController, [
+                'flushFallbackRunRecords',
             ]),
             records: bindControllerMethods(callController, [
                 'observeEntry',
@@ -55,15 +99,17 @@
                 'isRenderTargetCurrent',
                 'handleRenderRejected',
                 'restoreTranslatedEntryText',
-                'redrawBitmapEntry',
                 'markEntryTerminal',
                 'isEntryActive',
                 'getEntryStatus',
                 'isEntryRequestActive',
                 'isEntryCompleted',
+                'findEntryBySourceRun',
                 'getEntryObservationStatus',
                 'retireEntry',
                 'detachEntryForCopiedTargets',
+                'rejectUnresolvedRenderCommandsForInvalidation',
+                'getUnresolvedRenderCommandsForEntry',
                 'shouldKeepRecordAfterRenderRejection',
                 'isRenderApplicationFailure',
                 'normalizeRenderRejectionReason',
@@ -71,32 +117,12 @@
             mutations: bindControllerMethods(callController, [
                 'installBitmapMutationHooks',
                 'installBitmapMutationHook',
-                'shouldBypassMutation',
-                'getMutationBypassReason',
-                'hasMutationObserverInterest',
-                'shouldHandleBitmapMutation',
-                'hasBitmapStateMutationInterest',
-                'hasWindowEntryMutationInterest',
-                'hasAnyWindowEntries',
-                'recordNativeMutationAttribution',
-                'classifyBitmapMutationSurface',
-                'bucketBitmapPixels',
-                'bucketBitmapDimensions',
-                'bucketDimension',
-                'sanitizePerfLabel',
-                'describeMutation',
-                'handleBitmapMutation',
-                'flushFragmentsBeforeMutation',
-                'invalidateEntriesInRect',
-                'discardFragmentsInRect',
-                'invalidateWindowEntries',
-                'wasWindowEntryObservedInCurrentRefresh',
-                'isWindowRefreshMutation',
             ]),
             frameMarkers: bindControllerMethods(callController, [
                 'installFrameFlushHooks',
                 'hasActiveFrameFlushHooks',
                 'ensureActiveFrameFlushHooks',
+                'ensureRecordedDrawDelivery',
                 'installFrameFlushHook',
                 'hasHookInChain',
                 'installSmallTextMarkers',
@@ -121,13 +147,6 @@
                 'drawBitmapTextValue',
                 'drawBitmapTextArgs',
                 'calculateClearRect',
-                'prepareCopiedBitmapTargetsForMutation',
-                'commitCopiedBitmapTargetsForMutation',
-                'invalidateCopiedBitmapTargetsForMutation',
-                'hasCopiedBitmapTargetsForBitmap',
-                'redrawCopiedBitmapTargets',
-                'forgetCopiedBitmapTargets',
-                'markBitmapPixelsDirty',
             ]),
             textUtils: bindControllerMethods(callController, [
                 'estimateTextWidth',
@@ -138,6 +157,8 @@
                 'sanitizeBitmapDrawText',
                 'safePrepareText',
                 'describeEntryEligibility',
+                'normalizeBitmapDrawCallArgs',
+                'createBitmapDrawContext',
                 'isDrawCaptureTraceEnabled',
                 'recordDrawTrace',
                 'bitmapTraceDetails',
@@ -147,10 +168,7 @@
                 'resolveBitmapWindowSurface',
                 'hasDedicatedOwnerHook',
                 'describeBitmapContentsOwnership',
-                'windowEntryBelongsToBitmap',
-                'deriveWindowEntryRect',
                 'deriveEntryRect',
-                'fragmentRect',
                 'rectFromDimensions',
                 'isValidRect',
                 'rectHasArea',
@@ -158,9 +176,6 @@
                 'rectanglesOverlap',
                 'normalizeCanvasTextAlign',
                 'describeOwnerType',
-                'shouldKeepWindowEntryTranslation',
-                'getWindowOwnerScreenState',
-                'retireWindowEntry',
                 'logTextDetected',
                 'updateItem',
                 'safeCall',
@@ -183,7 +198,12 @@
         return Object.freeze(facade);
     }
 
-    defineRuntimeModule('adapters.bitmapText.controllerFacades', {
-        create: createBitmapTextControllerFacades,
+    LiveTranslatorDefine({
+        name: 'adapters.bitmapText.controllerFacades',
+        factory() {
+            return {
+                create: createBitmapTextControllerFacades,
+            };
+        },
     });
 })();

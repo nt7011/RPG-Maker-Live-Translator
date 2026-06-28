@@ -3,13 +3,9 @@
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    if (typeof defineRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/sprite-text/parent-run-records.js.');
-    }
+    LiveTranslatorDefine({
+        name: 'adapters.spriteText.parentRunRecords',
+        factory() {
 
     function createController(scope = {}) {
         const renderTransaction = scope.renderTransaction;
@@ -325,5 +321,7 @@
         return { createOrUpdateParentRun, observeRun, observeRunWhenVisibleOrActive, requestRunTranslation, completeRunFromCommand, isRunCommandCurrent };
     }
 
-    defineRuntimeModule('adapters.spriteText.parentrunrecords', { createController });
+            return { createController };
+        },
+    });
 })();

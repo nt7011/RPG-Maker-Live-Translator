@@ -2,15 +2,6 @@
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    if (typeof defineRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/pixi-text/state-controller.js.');
-    }
-
     // WeakMap-backed local state for PIXI display objects.
     function createPixiStateController(context = {}) {
         const { pixiStates, inferLabel } = context;
@@ -82,8 +73,13 @@
         };
     }
     
-    defineRuntimeModule('adapters.pixiTextStateController', {
-        create: createPixiStateController,
+    LiveTranslatorDefine({
+        name: 'adapters.pixiText.stateController',
+        factory() {
+            return {
+                create: createPixiStateController,
+            };
+        },
     });
 
 })();

@@ -3,13 +3,13 @@
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    if (typeof defineRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/game-message/clear.js.');
-    }
+    LiveTranslatorDefine({
+        name: 'adapters.gameMessage.clear',
+        requires: {
+            hookWrapper: 'runtime.hookWrapper',
+        },
+        factory({ hookWrapper }) {
+            const { hasHookInChain } = hookWrapper;
 
     function createController(scope = {}) {
         const { MESSAGE_ACTIVE_PRIORITY, MESSAGE_BACKGROUND_PRIORITY, logger, diag, preview, detachedRecords } = scope;
@@ -53,17 +53,6 @@
             };
             Game_Message.prototype.clear.__trOriginal = original;
             Game_Message.prototype.clear.__trGameMessageClearWrapped = true;
-        }
-
-        function hasHookInChain(fn, property, token) {
-            const seen = [];
-            let current = typeof fn === 'function' ? fn : null;
-            while (current && seen.indexOf(current) < 0) {
-                if (current[property] === token) return true;
-                seen.push(current);
-                current = typeof current.__trOriginal === 'function' ? current.__trOriginal : null;
-            }
-            return false;
         }
 
         function clearForesightSnapshot() {
@@ -192,5 +181,7 @@
         };
     }
 
-    defineRuntimeModule('adapters.gameMessage.clear', { create: createController });
+            return { create: createController };
+        },
+    });
 })();

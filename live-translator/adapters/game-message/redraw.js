@@ -3,20 +3,16 @@
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    if (typeof defineRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/game-message/redraw.js.');
-    }
+    LiveTranslatorDefine({
+        name: 'adapters.gameMessage.redraw',
+        factory() {
 
     function createController(scope = {}) {
         const { MESSAGE_RENDER_STRATEGY } = scope;
         const NATIVE_RENDER_STALL_CODE = 'native-message-render-stalled';
         const { markDedicatedMessageWindow, drawMessageFaceIfNeeded, resolveMessageStartCoordinates } = scope.controllerFacades.install;
         const { createTextScaleScope, disposeTextScaleScope, ensureTextScaleScope, wrapMessageText } = scope.controllerFacades.wrapping;
-        const { getWindowType, recordDecision, recordRenderAccepted, recordRenderRejected, resolveMessageRecord } = scope.controllerFacades.records;
+        const { getWindowType, recordDecision, recordRenderCommitted, recordRenderRejected, resolveMessageRecord } = scope.controllerFacades.records;
         const { markMessageRendered, getMessageScreenState, warn } = scope.controllerFacades.render;
         const { isSessionCurrent, getMessageRenderSession, getPendingMessageRedrawSession, setPendingMessageRedrawSession, clearPendingMessageRedrawSession, setMessageStartCoordinates } = scope.controllerFacades.session;
 
@@ -277,6 +273,7 @@
                 : null;
             try {
                 windowInstance.drawTextEx(text, coords.x, coords.y);
+                finalizeFallbackBitmapDirty(windowInstance.contents, 'game-message-fallback-redraw');
                 if (windowInstance._textState) windowInstance._textState.index = windowInstance._textState.text.length;
                 windowInstance._showFast = true;
                 windowInstance._lineShowFast = true;
@@ -287,6 +284,15 @@
                 windowInstance._trBypassProcessCharacter = Math.max(0, (windowInstance._trBypassProcessCharacter || 1) - 1);
             }
             return true;
+        }
+
+        function finalizeFallbackBitmapDirty(bitmap, reason) {
+            const bitmapDraws = scope.bitmapDraws;
+            if (!bitmapDraws || typeof bitmapDraws.markBitmapPixelsDirty !== 'function') return null;
+            return bitmapDraws.markBitmapPixelsDirty(bitmap, {
+                source: 'game-message-redraw',
+                reason: String(reason || 'game-message-fallback-redraw'),
+            });
         }
 
         /**
@@ -477,7 +483,7 @@
                 reason: 'rendered',
                 details: Object.assign({}, pending.renderDecision.details || {}, details || {}),
             });
-            return recordRenderAccepted(record || pending.record, decision);
+            return recordRenderCommitted(record || pending.record, decision);
         }
 
         function rejectPendingMessageRender(windowInstance, reason, details = {}) {
@@ -519,5 +525,7 @@
         };
     }
 
-    defineRuntimeModule('adapters.gameMessage.redraw', { create: createController });
+            return { create: createController };
+        },
+    });
 })();

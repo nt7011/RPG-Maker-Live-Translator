@@ -1,5 +1,5 @@
 // Translator monitor text record details helpers.
-// These functions share state from gui/app/state.js and are loaded before app.js boots.
+// These functions share state from gui/app/state.js and are loaded before app/index.js boots.
 'use strict';
 
 function createTextRecordItem(item, options = {}, renderContext = createTextRecordRenderContext()) {
@@ -199,7 +199,7 @@ function formatSubscriberRecord(subscriber) {
 
 function toggleTextRecordDetail(recordKey) {
     const policySnapshot = refreshGuiPolicySnapshot();
-    if (!recordKey || !getGuiTextRecordPolicy(policySnapshot).detailView) return;
+    if (!recordKey || !getGuiTextRecordPolicy(policySnapshot).detailsEnabled) return;
     state.activeTextRecordDetailKey = state.activeTextRecordDetailKey === recordKey
         ? ''
         : recordKey;
@@ -214,7 +214,7 @@ function shouldRenderActiveTextRecordDetail(recordKey, renderContext = createTex
 }
 
 function isGuiTextRecordDetailAllowed(item, renderContext = createTextRecordRenderContext()) {
-    return renderContext.policy.detailView
+    return renderContext.policy.detailsEnabled
         && !isTextRecordSpoilerCensoredForContext(item, renderContext);
 }
 

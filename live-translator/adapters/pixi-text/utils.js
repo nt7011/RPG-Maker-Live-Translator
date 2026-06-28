@@ -2,15 +2,6 @@
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    if (typeof defineRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/pixi-text/utils.js.');
-    }
-
     // Constants and pure helpers shared by the PIXI adapter split files.
     const ADAPTER_ID = 'pixi';
     const SURFACE_TYPE = 'pixi';
@@ -22,18 +13,7 @@
     const SETTER_HOOK_TOKEN = 'liveTranslator.pixiTextSetter.v2';
     const REMOVAL_HOOK_TOKEN = 'liveTranslator.pixiTextRemoval.v2';
     const DESTROY_HOOK_TOKEN = 'liveTranslator.pixiTextDestroy.v2';
-    
-    function hasHookInChain(fn, property, token) {
-                const seen = [];
-                let current = typeof fn === 'function' ? fn : null;
-                while (current && seen.indexOf(current) < 0) {
-                    if (current[property] === token) return true;
-                    seen.push(current);
-                    current = typeof current.__trOriginal === 'function' ? current.__trOriginal : null;
-                }
-                return false;
-            }
-    
+
     function isDisplayObjectRenderable(displayObject) {
                 if (!displayObject || displayObject._destroyed) return false;
                 if (!displayObject.parent) return false;
@@ -151,31 +131,40 @@
                 ]));
         }
     
-    defineRuntimeModule('adapters.pixiTextUtils', {
-        ADAPTER_ID,
-        DESTROY_HOOK_TOKEN,
-        FRAME_HOOK_TOKEN,
-        PRIORITY_DETACHED,
-        PRIORITY_HIDDEN,
-        PRIORITY_VISIBLE,
-        REMOVAL_HOOK_TOKEN,
-        RENDER_STRATEGY,
-        SETTER_HOOK_TOKEN,
-        SURFACE_TYPE,
-        errorMessage,
-        findDescriptor,
-        hasHookInChain,
-        hasPositiveOpacity,
-        hasRequiredOrchestrator,
-        inferLabel,
-        isDisplayObjectRenderable,
-        priorityReason,
-        resolvePriority,
-        resolveScalePercent,
-        safeCall,
-        screenStateFor,
-        snapshotRemovedChildren,
-        stringifyText,
+    LiveTranslatorDefine({
+        name: 'adapters.pixiText.utils',
+        requires: {
+            hookWrapper: 'runtime.hookWrapper',
+        },
+        factory({ hookWrapper }) {
+
+            return {
+                ADAPTER_ID,
+                DESTROY_HOOK_TOKEN,
+                FRAME_HOOK_TOKEN,
+                PRIORITY_DETACHED,
+                PRIORITY_HIDDEN,
+                PRIORITY_VISIBLE,
+                REMOVAL_HOOK_TOKEN,
+                RENDER_STRATEGY,
+                SETTER_HOOK_TOKEN,
+                SURFACE_TYPE,
+                errorMessage,
+                findDescriptor,
+                hasHookInChain: hookWrapper.hasHookInChain,
+                hasPositiveOpacity,
+                hasRequiredOrchestrator,
+                inferLabel,
+                isDisplayObjectRenderable,
+                priorityReason,
+                resolvePriority,
+                resolveScalePercent,
+                safeCall,
+                screenStateFor,
+                snapshotRemovedChildren,
+                stringifyText,
+            };
+        },
     });
 
 })();

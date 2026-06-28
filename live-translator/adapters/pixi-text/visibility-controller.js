@@ -5,14 +5,6 @@
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    if (typeof defineRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/pixi-text/visibility-controller.js.');
-    }
-
     function create(options = {}) {
         const {
             adapterContract,
@@ -108,5 +100,10 @@
         };
     }
 
-    defineRuntimeModule('adapters.pixiTextVisibilityController', { create });
+    LiveTranslatorDefine({
+        name: 'adapters.pixiText.visibilityController',
+        factory() {
+            return { create };
+        },
+    });
 })();

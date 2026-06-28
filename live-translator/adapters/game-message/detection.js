@@ -3,13 +3,9 @@
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    if (typeof defineRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/game-message/detection.js.');
-    }
+    LiveTranslatorDefine({
+        name: 'adapters.gameMessage.detection',
+        factory() {
 
     function createController(scope = {}) {
         const { MESSAGE_RENDER_STRATEGY, MESSAGE_ACTIVE_PRIORITY, FORESIGHT_BASE_PRIORITY, diag, preview, telemetry, adapterContract } = scope;
@@ -186,5 +182,7 @@
         };
     }
 
-    defineRuntimeModule('adapters.gameMessage.detection', { create: createController });
+            return { create: createController };
+        },
+    });
 })();

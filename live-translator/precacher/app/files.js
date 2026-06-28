@@ -1,5 +1,5 @@
 // Filesystem helpers for the Precacher UI.
-// They are created after NW.js exposes Node fs/path, keeping app.js focused on UI workflow.
+// They are created after NW.js exposes Node fs/path, keeping app/index.js focused on UI workflow.
 (() => {
     'use strict';
 

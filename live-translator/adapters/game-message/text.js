@@ -3,13 +3,9 @@
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    if (typeof defineRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/game-message/text.js.');
-    }
+    LiveTranslatorDefine({
+        name: 'adapters.gameMessage.text',
+        factory() {
 
     function createController(scope = {}) {
         const { BREAK_SENTINEL_PREFIX, BREAK_SENTINEL_SUFFIX, RAW_BREAK_PATTERN, SOFT_BREAK_PATTERN, NO_SPACE_LINE_JOIN_PATTERN, SENTINEL_BOUNDARY_PATTERN, preview, textCodec, stripControls, createTextSource, restoreText, logEscape } = scope;
@@ -319,5 +315,7 @@
         };
     }
 
-    defineRuntimeModule('adapters.gameMessage.text', { create: createController });
+            return { create: createController };
+        },
+    });
 })();

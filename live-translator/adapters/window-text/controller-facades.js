@@ -7,13 +7,9 @@
 (() => {
     'use strict';
 
-    const globalScope = typeof window !== 'undefined'
-        ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : Function('return this')());
-    const defineRuntimeModule = globalScope.LiveTranslatorDefine;
-    if (typeof defineRuntimeModule !== 'function') {
-        throw new Error('[LiveTranslator] runtime module registry is unavailable before adapters/window-text/controller-facades.js.');
-    }
+    LiveTranslatorDefine({
+        name: 'adapters.windowText.controllerFacades',
+        factory() {
 
     function createWindowTextControllerFacades(context = {}) {
         const callController = context.callController;
@@ -36,7 +32,8 @@
             entryLifecycle: bindControllerMethods(callController, [
                 'markRecordDisappeared',
                 'findExistingEntry',
-                'retireEntriesInSameSlot',
+                'retireEntriesInExactSlot',
+                'retireEntriesForReplacementDraw',
                 'rememberDetachedEntry',
                 'takeDetachedEntry',
                 'clearPendingInvalidation',
@@ -51,6 +48,9 @@
                 'getEntryStatus',
                 'isEntryActive',
                 'isEntryCompleted',
+                'findEntryBySourceRun',
+                'findEntriesBySourceRegion',
+                'forgetEntrySourceRun',
                 'firstNonEmptyString',
                 'requestEntryTranslation',
                 'observeEntry',
@@ -85,12 +85,15 @@
                 'invokeOriginalDrawTextEx',
                 'isWindowTranslatedDrawActive',
             ]),
-            renderQueue: bindControllerMethods(callController, [
-                'queueRenderRetry',
-                'dropRenderRetry',
+            renderReadinessSchedule: bindControllerMethods(callController, [
+                'scheduleRenderRetry',
+                'dropScheduledRenderRetry',
             ]),
             renderReadiness: bindControllerMethods(callController, [
                 'planTranslatedRedraw',
+                'planWindowBitmapReplay',
+                'planWindowBitmapRedraw',
+                'planWindowCopiedTargetRedraw',
             ]),
             renderProof: bindControllerMethods(callController, [
                 'resolveDetachedRenderTarget',
@@ -115,7 +118,6 @@
                 'createSlotKey',
                 'createWindowTextRecordId',
                 'getWindowTypeName',
-                'getWindowCtorName',
                 'describeWindowTextEligibility',
                 'describeEntryEligibility',
                 'isDedicatedMessageWindow',
@@ -127,14 +129,17 @@
                 'calculateBitmapSurfaceTextYOffset',
                 'estimateBitmapSurfaceTextBounds',
                 'withWindowRedrawClear',
+                'isWindowRedrawClearActive',
                 'withWindowContents',
                 'isUsableBitmap',
                 'getRedrawContents',
                 'getBitmapReplayApi',
                 'assignWindowTextDrawOrder',
+                'rememberInlineReplacement',
                 'captureWindowEntryBackground',
                 'captureWindowEntryBackgroundPatch',
                 'ensureWindowEntryBackground',
+                'materializeCopiedRenderTargetsForEntry',
                 'redrawCopiedWindowTextTargets',
                 'createClearRectFromArea',
                 'getReplayItemRect',
@@ -157,6 +162,7 @@
         });
         return Object.freeze(facade);
     }
-
-    defineRuntimeModule('adapters.windowTextControllerFacades', { create: createWindowTextControllerFacades });
+            return { create: createWindowTextControllerFacades };
+        },
+    });
 })();

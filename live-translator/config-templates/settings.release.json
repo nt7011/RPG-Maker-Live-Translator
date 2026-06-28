@@ -13,15 +13,18 @@
     "performanceProfiler": {
         "enabled": false
     },
-    "diagnostics": {
-        "performanceMode": true
+    "intel": {
+        "captureWhenGuiClosed": false,
+        "limits": {
+            "foresightScans": 5,
+            "foresightMessages": 5,
+            "archivedItems": 40,
+            "detachedItems": 40,
+            "pastJobs": 20
+        }
     },
-    "drawCaptureTrace": {
-        "enabled": false,
-        "recordCjk": true,
-        "recordAll": false,
-        "limit": 320,
-        "targetTexts": []
+    "diagnostics": {
+        "enabled": false
     },
     "translation": {
         "disableCjkFilter": false,
