@@ -228,7 +228,7 @@
                     composition.surfaceReplayPlan = copySurfaceReplayPlan(plan.surfaceReplayPlan);
                     composition.surfaceReplayItems = Array.isArray(plan.surfaceReplayItems) ? plan.surfaceReplayItems : [];
                     composition.executionSteps = copyExecutionSteps(plan.executionSteps);
-                    composition.plannerDiagnostics = copyPlannerDiagnostics(plan.diagnostics);
+                    composition.plannerIntel = copyPlannerIntel(plan.intel);
                 }
 
                 function appendCopiedTargetRestoreProviderCandidates(composition, input = {}) {
@@ -403,7 +403,7 @@
                             : 0,
                         surfaceReplayPlan: copySurfaceReplayPlan(composition && composition.surfaceReplayPlan),
                         executionSteps: copyExecutionSteps(composition && composition.executionSteps),
-                        plannerDiagnostics: copyPlannerDiagnostics(composition && composition.plannerDiagnostics),
+                        plannerIntel: copyPlannerIntel(composition && composition.plannerIntel),
                         candidateCount: Array.isArray(composition && composition.candidates)
                             ? composition.candidates.length
                             : 0,
@@ -891,25 +891,25 @@
                 };
             }
 
-            function copyPlannerDiagnostics(diagnostics) {
-                if (!diagnostics || typeof diagnostics !== 'object') return null;
+            function copyPlannerIntel(intel) {
+                if (!intel || typeof intel !== 'object') return null;
                 return {
-                    dependencySearchCount: nonNegativeNumber(diagnostics.dependencySearchCount, 0),
-                    requestedMaterialRestoreCoverageCount: nonNegativeNumber(diagnostics.requestedMaterialRestoreCoverageCount, 0),
-                    survivorCoverageCount: nonNegativeNumber(diagnostics.survivorCoverageCount, 0),
-                    materialRestoreCoverageCount: nonNegativeNumber(diagnostics.materialRestoreCoverageCount, 0),
-                    rejectedMaterialRestoreCoverageCount: nonNegativeNumber(diagnostics.rejectedMaterialRestoreCoverageCount, 0),
-                    candidateCoverageCount: nonNegativeNumber(diagnostics.candidateCoverageCount, 0),
-                    replayCoverageCount: nonNegativeNumber(diagnostics.replayCoverageCount, 0),
-                    requiredRestoreCoverageCount: nonNegativeNumber(diagnostics.requiredRestoreCoverageCount, 0),
-                    restoreCoverageCount: nonNegativeNumber(diagnostics.restoreCoverageCount, 0),
-                    coverageGapCount: nonNegativeNumber(diagnostics.coverageGapCount, 0),
-                    surfaceReplayItemCount: nonNegativeNumber(diagnostics.surfaceReplayItemCount, 0),
-                    surfaceReplayRejectedOpCount: nonNegativeNumber(diagnostics.surfaceReplayRejectedOpCount, 0),
-                    surfaceReplayMethodCounts: copyStringNumberMap(diagnostics.surfaceReplayMethodCounts),
-                    candidateCount: nonNegativeNumber(diagnostics.candidateCount, 0),
-                    invariantViolationCount: nonNegativeNumber(diagnostics.invariantViolationCount, 0),
-                    invariantViolationReasons: copyStringNumberMap(diagnostics.invariantViolationReasons),
+                    dependencySearchCount: nonNegativeNumber(intel.dependencySearchCount, 0),
+                    requestedMaterialRestoreCoverageCount: nonNegativeNumber(intel.requestedMaterialRestoreCoverageCount, 0),
+                    survivorCoverageCount: nonNegativeNumber(intel.survivorCoverageCount, 0),
+                    materialRestoreCoverageCount: nonNegativeNumber(intel.materialRestoreCoverageCount, 0),
+                    rejectedMaterialRestoreCoverageCount: nonNegativeNumber(intel.rejectedMaterialRestoreCoverageCount, 0),
+                    candidateCoverageCount: nonNegativeNumber(intel.candidateCoverageCount, 0),
+                    replayCoverageCount: nonNegativeNumber(intel.replayCoverageCount, 0),
+                    requiredRestoreCoverageCount: nonNegativeNumber(intel.requiredRestoreCoverageCount, 0),
+                    restoreCoverageCount: nonNegativeNumber(intel.restoreCoverageCount, 0),
+                    coverageGapCount: nonNegativeNumber(intel.coverageGapCount, 0),
+                    surfaceReplayItemCount: nonNegativeNumber(intel.surfaceReplayItemCount, 0),
+                    surfaceReplayRejectedOpCount: nonNegativeNumber(intel.surfaceReplayRejectedOpCount, 0),
+                    surfaceReplayMethodCounts: copyStringNumberMap(intel.surfaceReplayMethodCounts),
+                    candidateCount: nonNegativeNumber(intel.candidateCount, 0),
+                    invariantViolationCount: nonNegativeNumber(intel.invariantViolationCount, 0),
+                    invariantViolationReasons: copyStringNumberMap(intel.invariantViolationReasons),
                 };
             }
 

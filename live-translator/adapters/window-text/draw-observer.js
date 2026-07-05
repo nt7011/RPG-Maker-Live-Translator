@@ -26,15 +26,17 @@
     function createDrawObserverController(context = {}) {
     const { telemetry, ensureWindowRegistered, generateKey, ADAPTER_ID, entryLifecycleState } = context;
     const { lifecycle: lifecycleService, draw: drawService } = context.services;
-    const { bitmapReplay, diagnostics, entryLifecycle, entryRecords, renderCommands, renderDraw, textConversion, textMetrics } = context.facades;
-    const { recordDrawTrace, windowTraceDetails, cloneDiagnosticRect } = diagnostics;
+    const { bitmapInkMeasurement, bitmapReplay, drawIdentity, intel, entryLifecycle, entryRecords, renderCommands, renderDraw, textConversion, textMetrics } = context.facades;
+    const { recordDrawTrace, windowTraceDetails, cloneIntelRect } = intel;
     const { requestEntryTranslation, observeEntry, getEntryStatus, isEntryCompleted, getRegisteredWindowData, markEntryObservedInRefresh, safeStripRpgmEscapes, describeWindowScreenState } = entryRecords;
     const { redrawTranslatedText } = renderCommands;
     const { invokeCompletedEntry, invokeOriginalDrawText, invokeOriginalDrawTextEx, isWindowTranslatedDrawActive } = renderDraw;
     const { findExistingEntry, retireEntriesInExactSlot, retireEntriesForReplacementDraw, clearPendingInvalidation, refreshEntryBounds } = entryLifecycle;
     const { describeWindowTextEligibility, isDedicatedMessageWindow, getSurfaceId, getIdentitySurfaceId, createSlotKey, createWindowTextRecordId, getWindowTypeName, normalizeDrawTextAlignValue } = textMetrics;
+    const { createDrawSlotIdentity, isExactDrawSlot, isSameLogicalDrawSlot } = drawIdentity;
     const { sanitizeDrawTextOutput, convertWindowText } = textConversion;
-    const { calculateBitmapSurfaceTextYOffset, assignWindowTextDrawOrder, rememberInlineReplacement, captureWindowEntryBackground, ensureWindowEntryBackground } = bitmapReplay;
+    const { calculateBitmapSurfaceTextYOffset } = bitmapInkMeasurement;
+    const { assignWindowTextDrawOrder, rememberInlineReplacement, captureWindowEntryBackground, ensureWindowEntryBackground } = bitmapReplay;
     const surfaceDrawSupport = surfaceDrawSupportModule.create({
                 ADAPTER_ID,
                 renderTransaction: context.renderTransaction,
@@ -402,8 +404,9 @@
                 const entries = windowData && windowData.texts;
                 if (!entries || typeof entries.forEach !== 'function') return null;
                 const methodName = draw.methodName || 'drawText';
-                const slotKey = createSlotKey(methodName, draw.x, draw.y, {
+                const drawSlot = createDrawSlotIdentity(methodName, draw.x, draw.y, {
                     maxWidth: draw.maxWidth,
+                    lineHeight: draw.lineHeight,
                     align: draw.align,
                 });
                 const rawText = String(draw.text ?? '');
@@ -417,7 +420,8 @@
                         const origin = entry.drawOrigin && typeof entry.drawOrigin === 'object' ? entry.drawOrigin : null;
                         if (origin && origin.type && origin.type !== 'window') return;
                         if (!windowEntryTextMatchesSurfaceDraw(entry, rawText, normalizedText, draw)) return;
-                        if (entry.slotKey === slotKey) {
+                        if (isExactDrawSlot(entry.slotKey, drawSlot.slotKey)
+                            || isSameLogicalDrawSlot(entry.slotKey, drawSlot.canonicalSlotKey)) {
                             match = entry;
                             return;
                         }
@@ -595,7 +599,7 @@
                     recordDrawTrace(`${tracePrefix}.skip`, rawText, windowTraceDetails(windowInstance, traceMethod, rawText, x, y, Object.assign({
                         reason: draw.drawRole.reason,
                         drawRole: draw.drawRole.role,
-                        bounds: cloneDiagnosticRect(draw.drawRole.bounds),
+                        bounds: cloneIntelRect(draw.drawRole.bounds),
                         contentsSize: draw.drawRole.contentsSize,
                     }, traceDetails)));
                     return { completed: false, phase: 'non-renderable', reason: draw.drawRole.reason, drawRole: draw.drawRole };
@@ -612,7 +616,7 @@
                         recordId: existing.recordId || '',
                         slotKey: existing.slotKey || createSlotKey(type, x, y, originalParams),
                         status: getEntryStatus(existing),
-                        bounds: cloneDiagnosticRect(existing.bounds),
+                        bounds: cloneIntelRect(existing.bounds),
                     }, traceDetails)));
                     if (isEntryCompleted(existing)) {
                         return { completed: true, phase: 'existing', entry: existing, windowData, normalizedText };
@@ -643,7 +647,7 @@
                         recordId: entry && entry.recordId || '',
                         slotKey: entry && entry.slotKey || createSlotKey(type, x, y, originalParams),
                         status: entry ? getEntryStatus(entry) : '',
-                        bounds: cloneDiagnosticRect(entry && entry.bounds),
+                        bounds: cloneIntelRect(entry && entry.bounds),
                     }, traceDetails)));
                 }
                 if (isEntryCompleted(entry)) {
@@ -781,7 +785,7 @@
                     status: getEntryStatus(entry),
                     convertedText,
                     translationSource: entry.translationSource || '',
-                    bounds: cloneDiagnosticRect(entry.bounds),
+                    bounds: cloneIntelRect(entry.bounds),
                     contentsRevision: entry.contentsRevision || 0,
                 }));
                 try {
@@ -823,7 +827,7 @@
                         category: eligibility && eligibility.category ? eligibility.category : '',
                         status: getEntryStatus(existing, 'skipped'),
                         convertedText,
-                        bounds: cloneDiagnosticRect(existing.bounds),
+                        bounds: cloneIntelRect(existing.bounds),
                     }));
                     return existing;
                 }
@@ -848,7 +852,7 @@
                     category: eligibility && eligibility.category ? eligibility.category : '',
                     status: getEntryStatus(entry, 'skipped'),
                     convertedText,
-                    bounds: cloneDiagnosticRect(entry.bounds),
+                    bounds: cloneIntelRect(entry.bounds),
                 }));
                 try {
                     if (windowData.renderReadinessSchedule) windowData.renderReadinessSchedule.delete(key);

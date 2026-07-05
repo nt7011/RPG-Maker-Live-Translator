@@ -23,13 +23,13 @@
             drawCapture: bindControllerMethods(callController, [
                 'beginBitmapTextDrawTransaction',
             ]),
-            drawDiagnostics: bindControllerMethods(callController, [
-                'beginBitmapDrawHookDiagnostics',
+            drawIntel: bindControllerMethods(callController, [
+                'beginBitmapDrawHookIntel',
                 'isBitmapDrawTraceEnabled',
                 'recordBitmapDrawEnterIfEnabled',
                 'recordBitmapDrawTransactionOutcome',
                 'createBitmapNativeDrawInvoker',
-                'finishBitmapDrawHookDiagnostics',
+                'finishBitmapDrawHookIntel',
             ]),
             drawPolicy: bindControllerMethods(callController, [
                 'createBitmapDrawRoutingDecision',
@@ -53,7 +53,7 @@
                 'shouldBypassMutation',
                 'getMutationBypassReason',
             ]),
-            mutationDiagnostics: bindControllerMethods(callController, [
+            mutationIntel: bindControllerMethods(callController, [
                 'recordMutationHookDecision',
                 'recordNativeMutationAttribution',
                 'classifyBitmapMutationSurface',

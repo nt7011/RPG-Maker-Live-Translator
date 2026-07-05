@@ -23,7 +23,7 @@
                         const source = normalizedInput && typeof normalizedInput === 'object'
                             ? normalizedInput
                             : normalizeInputRecord(raw);
-                        const status = normalizeStatus(firstString(raw.status, raw.translationStatus, source.status), 'detected');
+                        const status = normalizeStatus(source.status, 'detected');
                         const text = selectEligibilityText(raw, source);
                         const visibleText = firstNonEmptyString(
                             source.visibleText,

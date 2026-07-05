@@ -1,4 +1,4 @@
-// Shared diagnostics for optional runtime capability boundaries.
+// Shared intel for optional runtime capability boundaries.
 //
 // Adapters often call into optional facets owned by another subsystem. The
 // caller should keep its fallback behavior when a facet fails, but the failure
@@ -9,7 +9,7 @@
     'use strict';
 
     LiveTranslatorDefine({
-        name: 'runtime.operationDiagnostics',
+        name: 'runtime.operationIntel',
         factory() {
             function createOperationErrorReporter(options = {}) {
                 const source = options && typeof options === 'object' ? options : {};

@@ -23,15 +23,6 @@
                 removed: freezeStatus({ retired: true }),
             });
 
-            const STATUS_ALIASES = Object.freeze({
-                requested: 'pending',
-                request: 'pending',
-                error: 'failed',
-                canceled: 'stale',
-                cancelled: 'stale',
-                gone: 'disappeared',
-            });
-
             const TRANSLATION_EVENT_STATUSES = Object.freeze({
                 request: 'pending',
                 cache_miss: 'translating',
@@ -50,18 +41,27 @@
             // still proven separately by the render-command lifecycle.
             const ADAPTER_RECORD_TRANSLATION_READY_STATUS = 'completed';
             const ADAPTER_RECORD_RENDER_COMMITTED_STATUS = 'completed';
-            const ADAPTER_RECORD_EVENT_STATUSES = Object.freeze({
-                'item.render_queued': ADAPTER_RECORD_TRANSLATION_READY_STATUS,
-                'item.render_committed': ADAPTER_RECORD_RENDER_COMMITTED_STATUS,
-                'item.skipped': 'skipped',
-                'item.failed': 'failed',
-                'item.translation_noop': 'failed',
-                'item.translation_noop_detached': 'failed',
-                'item.stale': 'stale',
-                'item.disappeared': 'disappeared',
-                'item.removed': 'removed',
-                'item.replaced': 'stale',
-                'item.surface_invalidated': 'stale',
+            const ADAPTER_RECORD_EVENT_TRANSITIONS = Object.freeze({
+                'item.render_command_ready': freezeAdapterRecordTransition({ status: ADAPTER_RECORD_TRANSLATION_READY_STATUS }),
+                'item.render_committed': freezeAdapterRecordTransition({ status: ADAPTER_RECORD_RENDER_COMMITTED_STATUS }),
+                'item.requested': freezeAdapterRecordTransition({ status: 'pending' }),
+                'item.cache_hit': freezeAdapterRecordTransition({ status: 'completed' }),
+                'item.translated': freezeAdapterRecordTransition({ status: 'completed' }),
+                'item.request_reused': freezeAdapterRecordTransition({ status: 'completed' }),
+                'item.skipped': freezeAdapterRecordTransition({ status: 'skipped' }),
+                'item.failed': freezeAdapterRecordTransition({ status: 'failed' }),
+                'item.canceled': freezeAdapterRecordTransition({ status: 'stale' }),
+                'item.translation_noop': freezeAdapterRecordTransition({ status: 'failed' }),
+                'item.translation_stored': freezeAdapterRecordTransition({ status: 'completed', active: false, detached: true, requestActive: false }),
+                'item.translation_skipped_detached': freezeAdapterRecordTransition({ status: 'skipped', active: false, detached: true, requestActive: false }),
+                'item.translation_failed_detached': freezeAdapterRecordTransition({ status: 'failed', active: false, detached: true, requestActive: false }),
+                'item.translation_canceled_detached': freezeAdapterRecordTransition({ status: 'stale', active: false, detached: true, requestActive: false }),
+                'item.translation_noop_detached': freezeAdapterRecordTransition({ status: 'failed', active: false, detached: true, requestActive: false }),
+                'item.stale': freezeAdapterRecordTransition({ status: 'stale' }),
+                'item.disappeared': freezeAdapterRecordTransition({ status: 'disappeared' }),
+                'item.removed': freezeAdapterRecordTransition({ status: 'removed' }),
+                'item.replaced': freezeAdapterRecordTransition({ status: 'stale' }),
+                'item.surface_invalidated': freezeAdapterRecordTransition({ status: 'stale' }),
             });
 
             const ACTIVE_STATUSES = freezeStatusSet((status) => getStatusDefinition(status).active === true);
@@ -78,6 +78,18 @@
                 });
             }
 
+            function freezeAdapterRecordTransition(options) {
+                const transition = {
+                    status: String(options && options.status || ''),
+                };
+                ['active', 'detached', 'requestActive', 'retire'].forEach((key) => {
+                    if (Object.prototype.hasOwnProperty.call(options || {}, key)) {
+                        transition[key] = options[key] === true;
+                    }
+                });
+                return Object.freeze(transition);
+            }
+
             function freezeStatusSet(predicate) {
                 const result = {};
                 Object.keys(STATUS_DEFINITIONS).forEach((status) => {
@@ -90,9 +102,8 @@
                 const raw = value === undefined || value === null || value === ''
                     ? fallback
                     : value;
-                const text = String(raw || fallback || 'detected').trim().toLowerCase();
-                const alias = STATUS_ALIASES[text] || text;
-                return STATUS_DEFINITIONS[alias] ? alias : (fallback ? normalizeStatus(fallback, 'detected') : 'detected');
+                const text = String(raw || fallback || 'detected').trim();
+                return STATUS_DEFINITIONS[text] ? text : (fallback ? normalizeStatus(fallback, 'detected') : 'detected');
             }
 
             function getStatusDefinition(status) {
@@ -121,11 +132,30 @@
             }
 
             function adapterRecordStatusFromEvent(eventType, fallback = '') {
+                const transition = adapterRecordTransitionFromEvent(eventType, fallback);
+                return transition ? transition.status : '';
+            }
+
+            function adapterRecordTransitionFromEvent(eventType, fallback = '') {
                 const key = String(eventType || '').trim().toLowerCase();
-                if (!key || !Object.prototype.hasOwnProperty.call(ADAPTER_RECORD_EVENT_STATUSES, key)) {
-                    return fallback ? normalizeStatus(fallback, fallback) : '';
+                const source = key && Object.prototype.hasOwnProperty.call(ADAPTER_RECORD_EVENT_TRANSITIONS, key)
+                    ? ADAPTER_RECORD_EVENT_TRANSITIONS[key]
+                    : null;
+                if (!source) {
+                    if (!fallback) return null;
+                    return freezeAdapterRecordTransition({ status: normalizeStatus(fallback, fallback) });
                 }
-                return normalizeStatus(ADAPTER_RECORD_EVENT_STATUSES[key], fallback || ADAPTER_RECORD_EVENT_STATUSES[key]);
+                const status = normalizeStatus(source.status, fallback || source.status);
+                const transition = { status };
+                ['active', 'detached', 'requestActive', 'retire'].forEach((option) => {
+                    if (Object.prototype.hasOwnProperty.call(source, option)) {
+                        transition[option] = source[option] === true;
+                    }
+                });
+                if (!Object.prototype.hasOwnProperty.call(transition, 'retire') && isRetiredStatus(status)) {
+                    transition.retire = true;
+                }
+                return freezeAdapterRecordTransition(transition);
             }
 
             function createState(source = {}) {
@@ -179,9 +209,8 @@
 
             return {
                 STATUS_DEFINITIONS,
-                STATUS_ALIASES,
                 TRANSLATION_EVENT_STATUSES,
-                ADAPTER_RECORD_EVENT_STATUSES,
+                ADAPTER_RECORD_EVENT_TRANSITIONS,
                 ADAPTER_RECORD_TRANSLATION_READY_STATUS,
                 ADAPTER_RECORD_RENDER_COMMITTED_STATUS,
                 ACTIVE_STATUSES,
@@ -196,6 +225,7 @@
                 isRetiredStatus,
                 statusFromTranslationEvent,
                 adapterRecordStatusFromEvent,
+                adapterRecordTransitionFromEvent,
                 createState,
                 transitionState,
                 applyTransition,

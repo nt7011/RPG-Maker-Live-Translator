@@ -16,7 +16,7 @@
                 const status = normalizeSourceObservationStatus(source.status || fallbackStatus);
                 return {
                     status,
-                    reason: stringify(source.reason || source.diagnosticReason || fallbackReason || ''),
+                    reason: stringify(source.reason || source.intelReason || fallbackReason || ''),
                 };
             }
 

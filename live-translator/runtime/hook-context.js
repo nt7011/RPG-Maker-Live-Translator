@@ -55,6 +55,7 @@
                     if (data) {
                         data._trActiveRefreshToken = token;
                         data._trWindowRefreshDepth = (Number(data._trWindowRefreshDepth) || 0) + 1;
+                        ensureRefreshLedger(data, token);
                     }
                     return token;
                 }
@@ -65,6 +66,8 @@
                     if (data && Number(data._trWindowRefreshDepth) > 0) {
                         data._trWindowRefreshDepth = Math.max(0, Number(data._trWindowRefreshDepth) - 1);
                     }
+                    const finished = getRefreshDepth(windowInstance, data) <= 0;
+                    if (finished) commitRefreshLedger(windowInstance, data, token);
                     if ((Number(windowInstance._trWindowRefreshDepth) || 0) <= 0) {
                         if (windowInstance._trWindowRefreshToken === token) {
                             delete windowInstance._trWindowRefreshToken;
@@ -192,6 +195,7 @@
                         depth: state.depth,
                         observedAt: Date.now(),
                     };
+                    recordRefreshObservation(entry, windowInstance, windowData, state);
                     return state.token;
                 }
 
@@ -222,20 +226,205 @@
                     return Number.isFinite(number) && number > 0 ? Math.floor(number) : 0;
                 }
 
+                function getRefreshDepth(windowInstance, windowData = null) {
+                    const dataDepth = positiveInteger(windowData && windowData._trWindowRefreshDepth);
+                    const windowDepth = positiveInteger(windowInstance && windowInstance._trWindowRefreshDepth);
+                    const contentsDepth = positiveInteger(windowInstance && windowInstance.contents && windowInstance.contents._trWindowRefreshDepth);
+                    return Math.max(dataDepth, windowDepth, contentsDepth);
+                }
+
+                function ensureRefreshLedger(windowData, token) {
+                    if (!windowData || !token) return null;
+                    const current = windowData._trRefreshLedger;
+                    if (current && current.token === token) return current;
+                    const ledger = {
+                        token,
+                        observedSlots: new Map(),
+                        replacedTargets: new Map(),
+                        pendingRetirements: new Map(),
+                    };
+                    windowData._trRefreshLedger = ledger;
+                    return ledger;
+                }
+
+                function getRefreshLedger(windowData, token = 0) {
+                    const ledger = windowData && windowData._trRefreshLedger;
+                    if (!ledger || !ledger.token) return null;
+                    if (token && ledger.token !== token) return null;
+                    return ledger;
+                }
+
+                function recordRefreshObservation(entry, windowInstance, windowData = null, refreshState = null) {
+                    const state = refreshState || getRefreshState(windowInstance, windowData);
+                    if (!entry || !state.active || !state.token) return false;
+                    const data = getWindowData(windowInstance, windowData);
+                    const ledger = getRefreshLedger(data, state.token);
+                    if (!ledger) return false;
+                    const proof = createRefreshEntryProof(entry, '');
+                    if (!proof || !proof.key) return false;
+                    proof.token = state.token;
+                    proof.observedAt = Date.now();
+                    ledger.observedSlots.set(proof.key, proof);
+                    const pending = ledger.pendingRetirements.get(proof.key);
+                    if (pending && pending.retargeted === true) {
+                        ledger.pendingRetirements.delete(proof.key);
+                    } else if (pending) {
+                        pending.observedAfterReplacement = true;
+                        pending.details = Object.assign({}, pending.details || {}, {
+                            refreshObservedAfterReplacement: true,
+                            renderTargetRetargeted: false,
+                        });
+                    }
+                    return true;
+                }
+
+                function recordRefreshTargetReplacement(windowInstance, windowData = null, details = {}) {
+                    const data = getWindowData(windowInstance, windowData);
+                    const state = getRefreshState(windowInstance, data);
+                    if (!data || !state.active || !state.token || !data.texts || typeof data.texts.forEach !== 'function') return 0;
+                    const ledger = ensureRefreshLedger(data, state.token);
+                    const source = details && typeof details === 'object' ? details : {};
+                    const reason = String(source.reason || source.message || 'contents-replaced');
+                    const windowType = data.windowType || (windowInstance && windowInstance.constructor ? windowInstance.constructor.name : '');
+                    let count = 0;
+                    data.texts.forEach((entry, key) => {
+                        if (!entry || !isEntryActive(entry)) return;
+                        const proof = createRefreshEntryProof(entry, key);
+                        if (!proof || !proof.key) return;
+                        const pendingDetails = {
+                            key: String(key || ''),
+                            windowType,
+                            refreshToken: state.token,
+                            slotKey: proof.slotKey,
+                            normalizedSource: proof.normalizedSource,
+                            previousContentsRevision: Number(source.previousContentsRevision) || 0,
+                            nextContentsRevision: Number(source.nextContentsRevision) || 0,
+                            wasCompleted: isEntryCompleted(entry),
+                        };
+                        const retargeted = retargetEntryRenderTarget(entry, reason, pendingDetails);
+                        pendingDetails.renderTargetRetargeted = retargeted;
+                        ledger.replacedTargets.set(proof.key, Object.assign({}, proof, {
+                            token: state.token,
+                            replacedAt: Date.now(),
+                            retargeted,
+                            details: pendingDetails,
+                        }));
+                        ledger.pendingRetirements.set(proof.key, {
+                            token: state.token,
+                            entry,
+                            key: String(key || ''),
+                            reason,
+                            retargeted,
+                            details: pendingDetails,
+                        });
+                        count += 1;
+                    });
+                    return count;
+                }
+
+                function createRefreshEntryProof(entry, key) {
+                    const slotKey = firstNonEmptyString(
+                        entry && entry.slotKey,
+                        key,
+                        entry && entry.key
+                    );
+                    const normalizedSource = firstNonEmptyString(
+                        entry && entry.normalizedSource,
+                        entry && entry.translationSource,
+                        entry && entry.visibleText,
+                        entry && entry.rawText
+                    ).trim();
+                    if (!slotKey || !normalizedSource) return null;
+                    return {
+                        key: `${slotKey}\u001f${normalizedSource}`,
+                        slotKey,
+                        normalizedSource,
+                    };
+                }
+
+                function firstNonEmptyString(...values) {
+                    for (const value of values) {
+                        const text = String(value ?? '');
+                        if (text.trim()) return text;
+                    }
+                    return '';
+                }
+
+                function retargetEntryRenderTarget(entry, reason, details) {
+                    if (!adapterContract || typeof adapterContract.retargetRenderTarget !== 'function') return false;
+                    try {
+                        const result = adapterContract.retargetRenderTarget(entry, {
+                            message: reason || 'contents-replaced',
+                            reason: reason || 'contents-replaced',
+                            details,
+                        });
+                        return !!(result && result.handled === true);
+                    } catch (_) {
+                        return false;
+                    }
+                }
+
+                function commitRefreshLedger(windowInstance, windowData, token) {
+                    const ledger = getRefreshLedger(windowData, token);
+                    if (!ledger) return false;
+                    try {
+                        ledger.pendingRetirements.forEach((pending) => {
+                            commitPendingRefreshRetirement(windowInstance, windowData, pending);
+                        });
+                    } finally {
+                        if (windowData && windowData._trRefreshLedger === ledger) {
+                            delete windowData._trRefreshLedger;
+                        }
+                    }
+                    return true;
+                }
+
+                function commitPendingRefreshRetirement(windowInstance, windowData, pending) {
+                    if (!pending || !pending.entry) return false;
+                    const entry = pending.entry;
+                    const reason = pending.reason || 'contents-replaced';
+                    const details = pending.details || {};
+                    try {
+                        entryLifecycle.markStale(entry, reason, {
+                            surfaceVisible: false,
+                            screenState: 'hidden',
+                        });
+                    } catch (_) {}
+                    retireEntry(entry, reason, details, {
+                        eventType: 'item.disappeared',
+                        policy: { kind: 'retired' },
+                    });
+                    try {
+                        entryLifecycle.setSurfaceVisible(entry, false, {
+                            reason,
+                            screenState: 'hidden',
+                        });
+                    } catch (_) {}
+                    if (windowData && windowData.texts && pending.key) {
+                        try {
+                            if (windowData.texts.get(pending.key) === entry) windowData.texts.delete(pending.key);
+                        } catch (_) {}
+                    }
+                    if (windowData && windowData.renderReadinessSchedule && pending.key) {
+                        try { windowData.renderReadinessSchedule.delete(pending.key); } catch (_) {}
+                    }
+                    if (windowData && windowData.recentlyRedrawn && pending.key) {
+                        try { windowData.recentlyRedrawn.delete(pending.key); } catch (_) {}
+                    }
+                    return true;
+                }
+
                 function retireEntry(entry, reason, details = null, options = {}) {
                     if (!entry || !entry.recordId) return false;
                     let touched = false;
                     try {
-                        if (options.cancelTranslation === true
-                            && adapterContract
-                            && typeof adapterContract.cancelItemTranslation === 'function') {
-                            adapterContract.cancelItemTranslation(entry, reason || 'window-stale');
-                            touched = true;
-                        }
                         if (adapterContract && typeof adapterContract.retireItem === 'function') {
                             adapterContract.retireItem(entry, 'disappeared', {
                                 eventType: options.eventType || 'item.disappeared',
                                 message: reason || '',
+                                policy: options.policy && typeof options.policy === 'object'
+                                    ? options.policy
+                                    : { kind: 'retired' },
                                 details,
                             });
                             touched = true;
@@ -311,6 +500,8 @@
                     finishRefresh,
                     getRefreshState,
                     getActiveRefreshToken,
+                    getRefreshLedger,
+                    recordRefreshTargetReplacement,
                     beginRenderDrain,
                     finishRenderDrain,
                     withRenderDrain,

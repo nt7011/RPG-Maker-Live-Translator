@@ -12,6 +12,8 @@
         'setItemVisibility',
         'backgroundItem',
         'retireItem',
+        'invalidateRenderTarget',
+        'retargetRenderTarget',
         'recordDecision',
         'describeTextEligibility',
         'claimSurface',

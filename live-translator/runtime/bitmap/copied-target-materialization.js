@@ -15,12 +15,18 @@
             copyEdgeState: 'runtime.bitmap.copyEdgeState',
             copyLineage: 'runtime.bitmap.copyLineage',
             copiedTextProjection: 'runtime.bitmap.copiedTextProjection',
+            sourceRunIdentity: 'runtime.bitmap.sourceRunIdentity',
         },
-        factory({ rectGeometry, copyEdgeState, copyLineage, copiedTextProjection }) {
+        factory({ rectGeometry, copyEdgeState, copyLineage, copiedTextProjection, sourceRunIdentity }) {
 
             const cloneRect = rectGeometry.cloneRect;
             const isCurrentCopyEdgeState = copyEdgeState.isCurrentCopyEdgeState;
             const copyCopiedTextProjectionRecord = copiedTextProjection.copyCopiedTextProjectionRecord;
+            const {
+                collectSourceRunIds,
+                collectSourceSlotKeys,
+                sourceRunIdentitiesMatch,
+            } = sourceRunIdentity;
 
             function createCopiedTargetMaterializer(deps = {}) {
                 const getSurfaceSnapshot = typeof deps.getSurfaceSnapshot === 'function'
@@ -295,17 +301,7 @@
 
             function isProjectedTargetRecordForTextRun(record, textRun, target) {
                 if (!record || !textRun) return false;
-                const runId = stringify(textRun.runId || '');
-                const slotKey = stringify(textRun.slotKey || '');
-                if (runId && stringify(record.sourceRunId || '') === runId) return true;
-                if (slotKey && stringify(record.sourceSlotKey || '') === slotKey) return true;
-                const targetBounds = cloneRect(target && (target.targetBounds || target.bounds));
-                const recordBounds = cloneRect(record.targetBounds || record.bounds || null);
-                return !!(targetBounds && recordBounds
-                    && Number(targetBounds.x1) === Number(recordBounds.x1)
-                    && Number(targetBounds.y1) === Number(recordBounds.y1)
-                    && Number(targetBounds.x2) === Number(recordBounds.x2)
-                    && Number(targetBounds.y2) === Number(recordBounds.y2));
+                return sourceRunIdentitiesMatch(record, textRun);
             }
 
             function createProjectedTextRunRecord(textRun, target, edge, sourceBitmap, targetBitmap, projectionRecord = null) {
@@ -322,7 +318,9 @@
                     sourceSurfaceId: stringify(edge && edge.sourceSurfaceId || target && target.sourceSurfaceId || ''),
                     targetSurfaceId: stringify(edge && edge.targetSurfaceId || target && target.targetSurfaceId || ''),
                     sourceRunId: stringify(textRun && textRun.runId || target && target.sourceRunId || ''),
+                    sourceRunIds: collectSourceRunIds(textRun && typeof textRun === 'object' ? textRun : target),
                     sourceSlotKey: stringify(textRun && textRun.slotKey || target && target.sourceSlotKey || ''),
+                    sourceSlotKeys: collectSourceSlotKeys(textRun && typeof textRun === 'object' ? textRun : target),
                     sourceRevision: nonNegativeNumber(textRun && textRun.revision, target && target.sourceRevision, 0),
                     targetRevision: nonNegativeNumber(edge && edge.targetRevision, target && target.targetRevision, 0),
                     projectionStatus: stringify(edge && (edge.projectionStatus || edge.status) || ''),
@@ -403,19 +401,23 @@
                 const slotKey = stringify(source.slotKey || source.sourceSlotKey || '');
                 const runs = Array.isArray(snapshot && snapshot.textRuns) ? snapshot.textRuns : [];
                 if (!runId && !slotKey) return null;
-                return runs.find((run) => run && (
-                    (runId && stringify(run.runId || '') === runId)
-                    || (slotKey && stringify(run.slotKey || '') === slotKey)
-                )) || null;
+                return runs.find((run) => run && sourceRunIdentitiesMatch(run, {
+                    sourceRunId: runId,
+                    sourceSlotKey: slotKey,
+                })) || null;
             }
 
             function copyTextRun(run) {
                 if (!run || typeof run !== 'object') return null;
+                const runIds = collectSourceRunIds(run);
+                const slotKeys = collectSourceSlotKeys(run);
                 return {
                     runId: stringify(run.runId || ''),
+                    runIds,
                     surfaceId: stringify(run.surfaceId || ''),
                     revision: nonNegativeNumber(run.revision, 0),
                     slotKey: stringify(run.slotKey || ''),
+                    slotKeys,
                     text: stringify(run.text || ''),
                     visibleText: stringify(run.visibleText || ''),
                     units: Array.isArray(run.units) ? run.units.map((unit) => stringify(unit)).filter(Boolean) : [],

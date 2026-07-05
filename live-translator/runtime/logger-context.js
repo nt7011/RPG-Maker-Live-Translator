@@ -1,5 +1,5 @@
 // Logger and telemetry context builder for runtime modules.
-// It creates the shared logger, preview formatter, and telemetry channel that hooks and caches use for diagnostics.
+// It creates the shared logger, preview formatter, and telemetry channel that hooks and caches use for intel.
 (() => {
     'use strict';
 
@@ -39,7 +39,7 @@
                         loggingBundle,
                         logger: loggingBundle.logger,
                         dbg: loggingBundle.dbg,
-                        diag: loggingBundle.diag,
+                        traceLog: loggingBundle.traceLog,
                         getFastTimestamp: loggingBundle.getFastTimestamp,
                         isLoggingEnabled: loggingBundle.isLoggingEnabled,
                         preview,
@@ -50,7 +50,7 @@
                     if (runtimeWindow) {
                         runtimeWindow.translationLogger = context.logger;
                         runtimeWindow.translationTelemetry = telemetry;
-                        runtimeWindow.translationDiagnostics = telemetry;
+                        runtimeWindow.translationIntel = telemetry;
                     }
 
                     return context;

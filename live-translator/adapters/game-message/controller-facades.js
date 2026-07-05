@@ -202,7 +202,7 @@
                 'installGameMessageClearHook',
                 'hasHookInChain',
                 'clearForesightSnapshot',
-                'showDiagnostics',
+                'showIntel',
                 'clearRecordFields',
                 'detachCurrentMessageRecord',
                 'updateRecordVisibility',

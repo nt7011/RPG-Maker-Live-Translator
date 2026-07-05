@@ -7,72 +7,119 @@
         name: 'runtime.textOrchestrator.policy',
         factory() {
             function createController(scope = {}) {
-                const { clampPriority, firstString, mergeDetails } = scope;
+                const { clampPriority, firstString, mergeDetails, logger } = scope;
                 const { cancelItemTranslation, setItemTranslationPriority } = scope.controllerFacades.translationState;
                 const { getItemById, hasLiveTranslationRequest } = scope.controllerFacades.items;
-                const { schedulePublish } = scope.controllerFacades.diagnostics;
+                const { schedulePublish } = scope.controllerFacades.intel;
                 const GARBAGE_PRIORITY = 100;
+                const POLICY_DEFAULTS = Object.freeze({
+                    retired: freezePolicyDefaults('preserve', 'demote', 'retire', 'release', 'reject'),
+                    'prefetch-detached': freezePolicyDefaults('preserve', 'preserve', 'retire', 'release', 'reject'),
+                    'prefetch-lost': freezePolicyDefaults('preserve', 'demote', 'retire', 'release', 'reject'),
+                    background: freezePolicyDefaults('preserve', 'demote', 'preserve', 'preserve', 'preserve'),
+                    'slot-replaced': freezePolicyDefaults('preserve', 'demote', 'retire', 'release', 'reject'),
+                    'source-replaced': freezePolicyDefaults('cancel', 'preserve', 'preserve', 'preserve', 'reject'),
+                    'text-invalidated': freezePolicyDefaults('cancel', 'preserve', 'preserve', 'preserve', 'reject'),
+                    'render-target-invalidated': freezePolicyDefaults('preserve', 'preserve', 'preserve', 'preserve', 'preserve'),
+                    'render-target-replaced': freezePolicyDefaults('preserve', 'preserve', 'preserve', 'preserve', 'preserve'),
+                });
+                const POLICY_ACTIONS = Object.freeze({
+                    translationAction: freezeActionValues('preserve', 'cancel'),
+                    priorityAction: freezeActionValues('preserve', 'demote', 'none'),
+                    placementAction: freezeActionValues('preserve', 'retire'),
+                    slotAction: freezeActionValues('preserve', 'release'),
+                    renderCommandAction: freezeActionValues('preserve', 'reject', 'rebase'),
+                });
 
-                function normalizeLifecycleIntent(status = '', options = {}) {
-                    const details = options && typeof options.details === 'object' ? options.details : {};
-                    const explicit = firstString(
-                        options.lifecycleIntent,
-                        options.policyIntent,
-                        details.lifecycleIntent,
-                        details.policyIntent
-                    );
-                    if (explicit) return explicit;
-                    const eventType = firstString(options.eventType);
-                    if (eventType === 'item.prefetch_detached') return 'prefetch-detached';
-                    if (eventType === 'item.prefetch_canceled') return 'prefetch-lost';
-                    if (eventType === 'item.backgrounded') return 'background';
-                    if (eventType === 'item.replaced') return 'slot-replaced';
-                    if (details.foresight === true && String(status || '') === 'stale') return 'prefetch-lost';
-                    if (String(status || '') === 'stale') return 'retired';
-                    if (String(status || '') === 'disappeared') return 'retired';
-                    return 'retired';
+                function normalizeLifecyclePolicyKind(status = '', options = {}) {
+                    const explicitPolicy = options.policy && typeof options.policy === 'object'
+                        ? options.policy
+                        : {};
+                    const explicit = firstString(explicitPolicy.kind);
+                    if (explicit) return normalizeExplicitPolicyKind(explicit);
+                    warnInvalidPolicyKind('');
+                    return {
+                        valid: false,
+                        kind: '',
+                        reason: 'missing-lifecycle-policy',
+                    };
                 }
 
                 function resolveLifecyclePolicy(item, status = '', options = {}) {
                     const details = options && typeof options.details === 'object' ? options.details : {};
-                    const intent = normalizeLifecycleIntent(status, options);
+                    const normalizedKind = normalizeLifecyclePolicyKind(status, options);
+                    if (!normalizedKind.valid) return createInvalidLifecyclePolicy(normalizedKind, status, options, details);
+                    const kind = normalizedKind.kind;
+                    const defaults = POLICY_DEFAULTS[kind] || POLICY_DEFAULTS.retired;
                     const liveRequest = hasLiveTranslationRequest(item) === true;
-                    const cancelTranslation = shouldCancelTranslation(intent, options);
-                    const demote = liveRequest && !cancelTranslation && shouldDemoteForLifecycle(intent, options);
-                    const priority = demote ? resolvePolicyPriority(options, details, GARBAGE_PRIORITY) : null;
-                    const priorityAction = cancelTranslation || !liveRequest
+                    const translationPolicy = resolvePolicyAction('translationAction', defaults.translationAction, options, details);
+                    if (!translationPolicy.valid) return createInvalidLifecyclePolicyAction(kind, translationPolicy, status, options, details);
+                    const priorityPolicy = resolvePolicyAction('priorityAction', defaults.priorityAction, options, details);
+                    if (!priorityPolicy.valid) return createInvalidLifecyclePolicyAction(kind, priorityPolicy, status, options, details);
+                    const placementPolicy = resolvePolicyAction('placementAction', defaults.placementAction, options, details);
+                    if (!placementPolicy.valid) return createInvalidLifecyclePolicyAction(kind, placementPolicy, status, options, details);
+                    const slotPolicy = resolvePolicyAction('slotAction', defaults.slotAction, options, details);
+                    if (!slotPolicy.valid) return createInvalidLifecyclePolicyAction(kind, slotPolicy, status, options, details);
+                    const renderCommandPolicy = resolvePolicyAction('renderCommandAction', defaults.renderCommandAction, options, details);
+                    if (!renderCommandPolicy.valid) return createInvalidLifecyclePolicyAction(kind, renderCommandPolicy, status, options, details);
+                    const translationAction = translationPolicy.action;
+                    const requestedPriorityAction = priorityPolicy.action;
+                    const placementAction = placementPolicy.action;
+                    const slotAction = slotPolicy.action;
+                    const renderCommandAction = renderCommandPolicy.action;
+                    const shouldCancelTranslation = translationAction === 'cancel';
+                    const demote = liveRequest && !shouldCancelTranslation && requestedPriorityAction === 'demote';
+                    const priority = demote ? resolvePolicyPriority(options.policy, GARBAGE_PRIORITY) : null;
+                    const priorityAction = shouldCancelTranslation || !liveRequest
                         ? 'none'
-                        : (demote ? 'demote' : 'preserve');
+                        : requestedPriorityAction;
                     const reason = firstString(
                         options.priorityReason,
                         details.priorityReason,
                         options.message,
                         details.reason,
-                        defaultPriorityReason(intent)
+                        defaultPriorityReason(kind)
                     );
+                    const normalized = {
+                        valid: true,
+                        kind,
+                        translationAction,
+                        priorityAction,
+                        placementAction,
+                        slotAction,
+                        renderCommandAction,
+                    };
                     return {
-                        intent,
-                        cancelTranslation,
+                        valid: true,
+                        kind,
+                        translationAction,
+                        priorityAction,
+                        placementAction,
+                        slotAction,
+                        renderCommandAction,
                         cancelReason: firstString(
                             options.cancelReason,
                             options.message,
                             details.reason,
-                            defaultCancelReason(intent)
+                            defaultCancelReason(kind)
                         ),
                         cancelOptions: options.cancelOptions && typeof options.cancelOptions === 'object'
                             ? options.cancelOptions
                             : {},
                         demote,
                         priority,
-                        priorityAction,
                         priorityReason: reason,
                         details: mergeDetails(details, {
                             policy: {
-                                lifecycleIntent: intent,
-                                translationAction: cancelTranslation ? 'cancel' : 'continue',
+                                kind,
+                                translationAction,
                                 priorityAction,
+                                placementAction,
+                                slotAction,
+                                renderCommandAction,
                                 priority,
                                 reason,
+                                normalized,
                             },
                         }),
                     };
@@ -80,18 +127,21 @@
 
                 function applyLifecyclePolicy(itemOrId, policy = {}) {
                     const item = resolveItem(itemOrId);
-                    if (!item || !policy) return false;
+                    if (!item || !policy || policy.valid === false) return false;
                     rememberPolicy(item, {
                         lifecycle: {
-                            intent: policy.intent,
-                            translationAction: policy.cancelTranslation === true ? 'cancel' : 'continue',
+                            kind: policy.kind,
+                            translationAction: policy.translationAction || 'preserve',
                             priorityAction: policy.priorityAction || 'none',
+                            placementAction: policy.placementAction || '',
+                            slotAction: policy.slotAction || '',
+                            renderCommandAction: policy.renderCommandAction || '',
                             priority: policy.priority,
                             reason: policy.priorityReason || policy.cancelReason || '',
                         },
                     });
                     let changed = false;
-                    if (policy.cancelTranslation === true) {
+                    if (policy.translationAction === 'cancel') {
                         changed = lifecycleResultChanged(cancelItemTranslation(item.id, policy.cancelReason, policy.cancelOptions)) || changed;
                     }
                     if (policy.priority !== null && policy.priority !== undefined) {
@@ -99,7 +149,7 @@
                             priority: policy.priority,
                             reason: policy.priorityReason,
                             action: policy.priorityAction,
-                            source: policy.intent,
+                            source: policy.kind,
                         })) || changed;
                     }
                     return changed;
@@ -109,7 +159,7 @@
                     const source = details && typeof details === 'object' ? details : {};
                     return {
                         intent: 'background',
-                        priority: resolvePolicyPriority(source, source, GARBAGE_PRIORITY),
+                        priority: resolveBackgroundPriority(source, GARBAGE_PRIORITY),
                         reason: firstString(source.priorityReason, source.reason, 'backgrounded'),
                         action: 'demote',
                         source: 'background',
@@ -240,26 +290,20 @@
                             || typeof requestOptions.onDelta === 'function'));
                 }
 
-                function resolvePolicyPriority(options = {}, details = {}, fallback = GARBAGE_PRIORITY) {
+                function resolvePolicyPriority(policy = {}, fallback = GARBAGE_PRIORITY) {
                     return clampPriority(
-                        options.priority !== undefined && options.priority !== null
-                            ? options.priority
-                            : (details.priorityOverride !== undefined && details.priorityOverride !== null
-                                ? details.priorityOverride
-                                : fallback)
+                        policy && policy.priority !== undefined && policy.priority !== null
+                            ? policy.priority
+                            : fallback
                     );
                 }
 
-                function shouldCancelTranslation(intent, options = {}) {
-                    if (options.cancelTranslation === true) return true;
-                    return intent === 'source-replaced' || intent === 'text-invalidated';
-                }
-
-                function shouldDemoteForLifecycle(intent, options = {}) {
-                    if (options.preservePriority === true) return false;
-                    if (intent === 'prefetch-detached') return false;
-                    if (intent === 'source-replaced' || intent === 'text-invalidated') return false;
-                    return true;
+                function resolveBackgroundPriority(source = {}, fallback = GARBAGE_PRIORITY) {
+                    return clampPriority(
+                        source && source.priority !== undefined && source.priority !== null
+                            ? source.priority
+                            : fallback
+                    );
                 }
 
                 function defaultPriorityReason(intent) {
@@ -273,6 +317,141 @@
                     if (intent === 'source-replaced') return 'same slot source changed';
                     if (intent === 'text-invalidated') return 'text invalidated';
                     return 'translation canceled';
+                }
+
+                function freezePolicyDefaults(translationAction, priorityAction, placementAction, slotAction, renderCommandAction) {
+                    return Object.freeze({
+                        translationAction,
+                        priorityAction,
+                        placementAction,
+                        slotAction,
+                        renderCommandAction,
+                    });
+                }
+
+                function freezeActionValues(...values) {
+                    const result = {};
+                    values.forEach((value) => {
+                        result[String(value || '')] = true;
+                    });
+                    return Object.freeze(result);
+                }
+
+                function normalizeExplicitPolicyKind(kind) {
+                    const raw = firstString(kind);
+                    const normalized = raw.trim();
+                    if (POLICY_DEFAULTS[normalized]) return createPolicyKindResult(normalized);
+                    warnInvalidPolicyKind(raw);
+                    return {
+                        valid: false,
+                        kind: raw,
+                        reason: 'unknown-lifecycle-policy',
+                    };
+                }
+
+                function createPolicyKindResult(kind) {
+                    return {
+                        valid: true,
+                        kind,
+                    };
+                }
+
+                function createInvalidLifecyclePolicy(normalizedKind, status, options, details) {
+                    const kind = firstString(normalizedKind && normalizedKind.kind, 'unknown');
+                    const reason = firstString(normalizedKind && normalizedKind.reason, 'invalid-lifecycle-policy');
+                    const actionField = firstString(normalizedKind && normalizedKind.actionField);
+                    const actionValue = firstString(normalizedKind && normalizedKind.actionValue);
+                    return {
+                        valid: false,
+                        kind,
+                        status: 'invalid-lifecycle-policy',
+                        reason,
+                        terminal: true,
+                        details: mergeDetails(details, {
+                            policy: {
+                                kind,
+                                invalid: true,
+                                reason,
+                                status: firstString(status),
+                                actionField,
+                                actionValue,
+                            },
+                        }),
+                    };
+                }
+
+                function resolvePolicyAction(field, fallback, options = {}, details = {}) {
+                    const explicitPolicy = options.policy && typeof options.policy === 'object'
+                        ? options.policy
+                        : {};
+                    const override = resolvePolicyActionOverride(field, explicitPolicy);
+                    const raw = override.found ? override.value : fallback;
+                    return normalizePolicyAction(field, raw);
+                }
+
+                function resolvePolicyActionOverride(field, policy = {}) {
+                    if (policy && typeof policy === 'object'
+                        && Object.prototype.hasOwnProperty.call(policy, field)
+                        && policy[field] !== undefined) {
+                        return {
+                            found: true,
+                            value: firstString(policy[field]),
+                        };
+                    }
+                    return {
+                        found: false,
+                        value: '',
+                    };
+                }
+
+                function normalizePolicyAction(field, value) {
+                    const raw = firstString(value);
+                    const action = raw.trim();
+                    const allowed = POLICY_ACTIONS[field] || {};
+                    if (allowed[action] === true) {
+                        return {
+                            valid: true,
+                            field,
+                            action,
+                        };
+                    }
+                    warnInvalidPolicyAction(field, raw);
+                    return {
+                        valid: false,
+                        field,
+                        action,
+                        value: raw,
+                        reason: 'invalid-lifecycle-policy-action',
+                    };
+                }
+
+                function createInvalidLifecyclePolicyAction(kind, actionPolicy, status, options, details) {
+                    return createInvalidLifecyclePolicy({
+                        valid: false,
+                        kind,
+                        reason: actionPolicy && actionPolicy.reason ? actionPolicy.reason : 'invalid-lifecycle-policy-action',
+                        actionField: actionPolicy && actionPolicy.field,
+                        actionValue: actionPolicy && actionPolicy.value,
+                    }, status, options, details);
+                }
+
+                function warnInvalidPolicyKind(kind) {
+                    if (!logger || typeof logger.warn !== 'function') return;
+                    try {
+                        logger.warn('[TextOrchestrator] Invalid lifecycle policy kind.', {
+                            kind: String(kind || ''),
+                        });
+                    } catch (_) {}
+                }
+
+                function warnInvalidPolicyAction(field, value) {
+                    if (!logger || typeof logger.warn !== 'function') return;
+                    try {
+                        logger.warn('[TextOrchestrator] Invalid lifecycle policy action.', {
+                            field: String(field || ''),
+                            value: String(value || ''),
+                        });
+                    } catch (_) {}
                 }
 
                 function resolveItem(itemOrId) {
@@ -308,7 +487,6 @@
                 }
 
                 return {
-                    normalizeLifecycleIntent,
                     resolveLifecyclePolicy,
                     applyLifecyclePolicy,
                     resolveBackgroundPriorityPolicy,

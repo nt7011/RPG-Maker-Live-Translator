@@ -2,7 +2,7 @@
 //
 // Adapters observe engine-specific facts and render adapter-specific output.
 // This wrapper is the only boundary they should use for canonical lifecycle,
-// translation requests, visibility, priority, diagnostics, and subscription
+// translation requests, visibility, priority, intel, and subscription
 // calls into runtime/text-orchestrator.js. Small support modules own the
 // reusable normalization, record-state, and subscription-routing mechanics;
 // this file documents and exposes the public adapter API.
@@ -169,16 +169,16 @@
                 }
 
                 function requestItemTranslation(target, requestOptions = {}) {
-                    if (!canTouchRecord(target)) return createLifecycleResult('missing-capability', target, 'request', 'record-capability-required');
-                    if (!hasMethod('requestItemTranslation')) return createLifecycleResult('unavailable', target, 'request', 'requestItemTranslation unavailable');
+                    if (!canTouchRecord(target)) return createOperationResult('missing-capability', target, 'request', 'record-capability-required');
+                    if (!hasMethod('requestItemTranslation')) return createOperationResult('unavailable', target, 'request', 'requestItemTranslation unavailable');
                     const id = getCapabilityRecordId(target);
-                    if (!id) return createLifecycleResult('missing-record-id', target, 'request', 'record-id-required');
+                    if (!id) return createOperationResult('missing-record-id', target, 'request', 'record-id-required');
                     const requestResult = callGateway('requestItemTranslation', () => {
                         return gateway.requestItemTranslation(id, Object.assign({
                             hook: defaultHook,
                         }, requestOptions || {}));
                     });
-                    const result = normalizeLifecycleResult(requestResult, target, 'request', 'translation-request');
+                    const result = normalizeOperationResult(requestResult, target, 'request', 'translation-request');
                     if (result.handled === true && !isRecordTerminal(target)) {
                         markRecordStatus(target, id, 'pending', { requestActive: true });
                     }
@@ -186,52 +186,52 @@
                 }
 
                 function cancelItemTranslation(target, reason = '', options = {}) {
-                    if (!canTouchRecord(target)) return createLifecycleResult('missing-capability', target, 'cancel', 'record-capability-required');
-                    if (!hasMethod('cancelItemTranslation')) return createLifecycleResult('unavailable', target, 'cancel', 'cancelItemTranslation unavailable');
+                    if (!canTouchRecord(target)) return createOperationResult('missing-capability', target, 'cancel', 'record-capability-required');
+                    if (!hasMethod('cancelItemTranslation')) return createOperationResult('unavailable', target, 'cancel', 'cancelItemTranslation unavailable');
                     const id = getCapabilityRecordId(target);
-                    if (!id) return createLifecycleResult('missing-record-id', target, 'cancel', 'record-id-required');
+                    if (!id) return createOperationResult('missing-record-id', target, 'cancel', 'record-id-required');
                     const canceled = callGateway('cancelItemTranslation', () => {
                         return gateway.cancelItemTranslation(id, reason, options && typeof options === 'object' ? options : {});
                     });
-                    return normalizeLifecycleResult(canceled, target, 'cancel', reason || 'translation canceled');
+                    return normalizeOperationResult(canceled, target, 'cancel', reason || 'translation canceled');
                 }
 
                 function setItemTranslationPriority(target, priority, reason = '') {
-                    if (!canTouchRecord(target)) return createLifecycleResult('missing-capability', target, 'priority', 'record-capability-required');
-                    if (!hasMethod('setItemTranslationPriority')) return createLifecycleResult('unavailable', target, 'priority', 'setItemTranslationPriority unavailable');
+                    if (!canTouchRecord(target)) return createOperationResult('missing-capability', target, 'priority', 'record-capability-required');
+                    if (!hasMethod('setItemTranslationPriority')) return createOperationResult('unavailable', target, 'priority', 'setItemTranslationPriority unavailable');
                     const id = getCapabilityRecordId(target);
-                    if (!id) return createLifecycleResult('missing-record-id', target, 'priority', 'record-id-required');
+                    if (!id) return createOperationResult('missing-record-id', target, 'priority', 'record-id-required');
                     const changed = callGateway('setItemTranslationPriority', () => {
                         return gateway.setItemTranslationPriority(id, priority, reason);
                     });
-                    return normalizeLifecycleResult(changed, target, 'priority', reason || 'priority changed');
+                    return normalizeOperationResult(changed, target, 'priority', reason || 'priority changed');
                 }
 
                 function setItemVisibility(target, visible, details = null) {
-                    if (!canTouchRecord(target)) return createLifecycleResult('missing-capability', target, 'visibility', 'record-capability-required');
-                    if (!hasMethod('setItemVisibility')) return createLifecycleResult('unavailable', target, 'visibility', 'setItemVisibility unavailable');
+                    if (!canTouchRecord(target)) return createOperationResult('missing-capability', target, 'visibility', 'record-capability-required');
+                    if (!hasMethod('setItemVisibility')) return createOperationResult('unavailable', target, 'visibility', 'setItemVisibility unavailable');
                     const id = getCapabilityRecordId(target);
-                    if (!id) return createLifecycleResult('missing-record-id', target, 'visibility', 'record-id-required');
-                    return normalizeLifecycleResult(callGateway('setItemVisibility', () => {
+                    if (!id) return createOperationResult('missing-record-id', target, 'visibility', 'record-id-required');
+                    return normalizeOperationResult(callGateway('setItemVisibility', () => {
                         return gateway.setItemVisibility(id, visible === true, details || {});
                     }), target, 'visibility', visible === true ? 'item visible' : 'item hidden');
                 }
 
                 function backgroundItem(target, details = {}) {
-                    if (!canTouchRecord(target)) return createLifecycleResult('missing-capability', target, 'background', 'record-capability-required');
-                    if (!hasMethod('backgroundItem')) return createLifecycleResult('unavailable', target, 'background', 'backgroundItem unavailable');
+                    if (!canTouchRecord(target)) return createOperationResult('missing-capability', target, 'background', 'record-capability-required');
+                    if (!hasMethod('backgroundItem')) return createOperationResult('unavailable', target, 'background', 'backgroundItem unavailable');
                     const id = getCapabilityRecordId(target);
-                    if (!id) return createLifecycleResult('missing-record-id', target, 'background', 'record-id-required');
-                    return normalizeLifecycleResult(callGateway('backgroundItem', () => {
+                    if (!id) return createOperationResult('missing-record-id', target, 'background', 'record-id-required');
+                    return normalizeOperationResult(callGateway('backgroundItem', () => {
                         return gateway.backgroundItem(id, details || {});
                     }), target, 'background', details && details.reason ? details.reason : 'item backgrounded');
                 }
 
                 function retireItem(target, status = 'disappeared', eventOptions = {}) {
-                    if (!canTouchRecord(target)) return createLifecycleResult('missing-capability', target, 'retire', 'record-capability-required');
-                    if (!hasMethod('retireItem')) return createLifecycleResult('unavailable', target, 'retire', 'retireItem unavailable');
+                    if (!canTouchRecord(target)) return createOperationResult('missing-capability', target, 'retire', 'record-capability-required');
+                    if (!hasMethod('retireItem')) return createOperationResult('unavailable', target, 'retire', 'retireItem unavailable');
                     const id = getCapabilityRecordId(target);
-                    if (!id) return createLifecycleResult('missing-record-id', target, 'retire', 'record-id-required');
+                    if (!id) return createOperationResult('missing-record-id', target, 'retire', 'record-id-required');
                     const normalizedOptions = normalizeEventOptions(eventOptions);
                     const recordDetached = normalizedOptions.recordDetached === true;
                     const orchestratorOptions = Object.assign({}, normalizedOptions);
@@ -239,9 +239,28 @@
                     const retired = callGateway('retireItem', () => {
                         return gateway.retireItem(id, status || 'disappeared', orchestratorOptions);
                     });
-                    const result = normalizeLifecycleResult(retired, target, 'retire', status || 'disappeared');
+                    const result = normalizeOperationResult(retired, target, 'retire', status || 'disappeared');
                     if (result.handled === true) markRetired(target, id, status, recordDetached);
                     return result;
+                }
+
+                function invalidateRenderTarget(target, details = {}) {
+                    return applyRenderTargetLifecycle(target, 'invalidateRenderTarget', 'invalidate-render-target', details);
+                }
+
+                function retargetRenderTarget(target, details = {}) {
+                    return applyRenderTargetLifecycle(target, 'retargetRenderTarget', 'retarget-render-target', details);
+                }
+
+                function applyRenderTargetLifecycle(target, methodName, operation, details = {}) {
+                    if (!canTouchRecord(target)) return createOperationResult('missing-capability', target, operation, 'record-capability-required');
+                    if (!hasMethod(methodName)) return createOperationResult('unavailable', target, operation, methodName + ' unavailable');
+                    const id = getCapabilityRecordId(target);
+                    if (!id) return createOperationResult('missing-record-id', target, operation, 'record-id-required');
+                    const result = callGateway(methodName, () => {
+                        return gateway[methodName](id, normalizeEventOptions(details));
+                    });
+                    return normalizeOperationResult(result, target, operation, details && details.reason ? details.reason : operation);
                 }
 
                 function recordDecision(target, type, message = '', details = null) {
@@ -317,7 +336,7 @@
                 }
 
                 function normalizeRenderCommandId(value) {
-                    if (value && typeof value === 'object') return nonEmptyString(value.commandId, value.id);
+                    if (value && typeof value === 'object') return nonEmptyString(value.commandId);
                     return nonEmptyString(value);
                 }
 
@@ -334,7 +353,6 @@
                     const commandId = normalizeRenderCommandId(command);
                     return Object.freeze(Object.assign({}, command, {
                         commandId,
-                        id: nonEmptyString(command.id, commandId),
                         itemId: nonEmptyString(command.itemId),
                         status: nonEmptyString(command.status),
                         strategy: nonEmptyString(command.strategy),
@@ -429,10 +447,8 @@
 
                 function resolveRenderDecisionPhase(status) {
                     const phases = renderTransaction.PHASES || {};
-                    const normalized = String(status || '').toLowerCase();
-                    // Legacy payload alias: remove after historical renderCommit.status
-                    // values have all been migrated from "accepted" to "committed".
-                    if (normalized === 'committed' || normalized === 'accepted') return phases.RENDER_COMMITTED || 'render-committed';
+                    const normalized = String(status || '').trim();
+                    if (normalized === 'committed') return phases.RENDER_COMMITTED || 'render-committed';
                     if (normalized === 'deferred') return phases.RENDER_DEFERRED || 'render-deferred';
                     if (normalized === 'noop') return phases.RENDER_NOOP || 'render-noop';
                     return phases.RENDER_REJECTED || 'render-rejected';
@@ -561,9 +577,9 @@
                     return next;
                 }
 
-                function normalizeLifecycleResult(result, target, operation, reason) {
+                function normalizeOperationResult(result, target, operation, reason) {
                     if (!result || typeof result !== 'object') {
-                        return createLifecycleResult('failed', target, operation, reason);
+                        return createOperationResult('failed', target, operation, reason);
                     }
                     const recordId = nonEmptyString(result.recordId, result.id, getCapabilityRecordId(target));
                     const status = nonEmptyString(result.status, result.handled === true ? 'handled' : 'failed');
@@ -582,7 +598,7 @@
                     return Object.freeze(normalized);
                 }
 
-                function createLifecycleResult(status, target, operation, reason) {
+                function createOperationResult(status, target, operation, reason) {
                     const recordId = nonEmptyString(getCapabilityRecordId(target));
                     return Object.freeze({
                         status,
@@ -708,6 +724,8 @@
                     setItemVisibility,
                     backgroundItem,
                     retireItem,
+                    invalidateRenderTarget,
+                    retargetRenderTarget,
                     recordDecision,
                     recordRenderCommitted,
                     recordRenderDeferred,

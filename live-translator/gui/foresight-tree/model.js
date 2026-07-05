@@ -96,7 +96,7 @@
     
             actions.forEach((action) => {
                 // The scanner records branch children as flat actions for the
-                // diagnostics trail. Re-parent them only when the child names its
+                // intel trail. Re-parent them only when the child names its
                 // exact owning list, command index, and branch index.
                 const parent = getActionBranchParent(action);
                 if (!parent || !ownerKeys.has(parent.ownerKey)) return;
@@ -428,8 +428,8 @@
     
     function getRecordMessageStartIndex(record) {
             const metadata = record && record.metadata && typeof record.metadata === 'object' ? record.metadata : {};
-            const nested = metadata.foresightDiagnostics && typeof metadata.foresightDiagnostics === 'object'
-                ? metadata.foresightDiagnostics
+            const nested = metadata.foresightIntel && typeof metadata.foresightIntel === 'object'
+                ? metadata.foresightIntel
                 : {};
             const value = finiteNumber(metadata.messageStartIndex);
             if (value !== null) return value;

@@ -76,9 +76,9 @@
                 messageStartIndex: Number.isFinite(Number(context.messageStartIndex)) ? Number(context.messageStartIndex) : null,
                 messageNextIndex: Number.isFinite(Number(context.messageNextIndex)) ? Number(context.messageNextIndex) : null,
             };
-            if (context.diagnostics && typeof context.diagnostics === 'object') {
-                if (shouldAttachForesightDiagnosticsMetadata()) {
-                    metadata.foresightDiagnostics = Object.assign({}, context.diagnostics);
+            if (context.intel && typeof context.intel === 'object') {
+                if (shouldAttachForesightIntelMetadata()) {
+                    metadata.foresightIntel = Object.assign({}, context.intel);
                 }
             }
             const observation = createObservation(windowInstance, payload, 0, 'detected');
@@ -125,7 +125,7 @@
             // event name so Intel shows this as prefetch lifecycle.
             retireItem(record, 'disappeared', 'message-foresight-detached', metadata, {
                 eventType: 'item.prefetch_detached',
-                lifecycleIntent: 'prefetch-detached',
+                policy: { kind: 'prefetch-detached' },
                 recordDetached: true,
             });
             return true;
@@ -142,7 +142,7 @@
                     translationPreserved: true,
                 }, {
                     eventType: 'item.prefetch_canceled',
-                    lifecycleIntent: 'prefetch-lost',
+                    policy: { kind: 'prefetch-lost' },
                 });
                 canceled += 1;
             });
@@ -188,7 +188,7 @@
             return Math.abs(hash).toString(36) || '0';
         }
 
-        function shouldAttachForesightDiagnosticsMetadata() {
+        function shouldAttachForesightIntelMetadata() {
             const policy = globalScope.LiveTranslatorIntelPolicy;
             if (policy && typeof policy.getSnapshotPolicy === 'function') {
                 const snapshotPolicy = policy.getSnapshotPolicy({

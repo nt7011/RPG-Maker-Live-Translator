@@ -14,7 +14,6 @@
 
                 return Object.freeze({
                     policy: bindControllerMethods(callController, [
-                        'normalizeLifecycleIntent',
                         'resolveLifecyclePolicy',
                         'applyLifecyclePolicy',
                         'resolveBackgroundPriorityPolicy',
@@ -28,6 +27,8 @@
                         'observeRecord',
                         'updateItem',
                         'retireItem',
+                        'invalidateRenderTarget',
+                        'retargetRenderTarget',
                         'recordDraw',
                         'recordDecision',
                         'recordTranslationEvent',
@@ -175,7 +176,7 @@
                         'isSkippedItem',
                         'createSkippedTranslationHandle',
                     ]),
-                    diagnostics: bindControllerMethods(callController, [
+                    intel: bindControllerMethods(callController, [
                         'getSnapshot',
                         'publishNow',
                         'clearIntel',

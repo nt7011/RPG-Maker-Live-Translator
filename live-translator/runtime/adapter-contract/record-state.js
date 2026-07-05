@@ -59,14 +59,9 @@
                     const state = getExactRecordState(record);
                     if (!state) return null;
                     setRecordStateId(state, id);
-                    if (event && event.status) updateRecordStateStatus(state, event.status);
-                    const eventType = String(event && event.type || '');
-                    const eventStatus = textLifecycle.adapterRecordStatusFromEvent(eventType);
-                    if (eventStatus) {
-                        updateRecordStateStatus(state, eventStatus, {
-                            retire: textLifecycle.isRetiredStatus(eventStatus),
-                            detached: eventType === 'item.translation_noop_detached' ? true : state.detached,
-                        });
+                    const eventTransition = textLifecycle.adapterRecordTransitionFromEvent(event && event.type);
+                    if (eventTransition) {
+                        updateRecordStateStatus(state, eventTransition.status, eventTransition);
                     }
                     state.updatedAt = Date.now();
                     return state;

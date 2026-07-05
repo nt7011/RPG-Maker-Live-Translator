@@ -6,7 +6,7 @@
     function createController(scope = {}) {
         const { planBitmapMutationObservation } = scope.controllerFacades.mutationInterest;
         const { getMutationBypassReason } = scope.controllerFacades.mutationPolicy;
-        const { recordMutationHookDecision } = scope.controllerFacades.mutationDiagnostics;
+        const { recordMutationHookDecision } = scope.controllerFacades.mutationIntel;
         const { describeMutation, createMutationJournalInput, createLedgerMutationInput } = scope.controllerFacades.mutationDescriptor;
 
         function beginBitmapMutationTransaction(bitmap, methodName, args) {

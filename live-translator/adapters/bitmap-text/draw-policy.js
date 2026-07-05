@@ -31,7 +31,7 @@
             if (sourcePolicy && sourcePolicy.suppressSourceObservation) {
                 return sourceObservationContract.createSourceObservation(
                     'suppressed',
-                    sourcePolicy.diagnosticReason || sourcePolicy.reason || 'source-observation-suppressed'
+                    sourcePolicy.intelReason || sourcePolicy.reason || 'source-observation-suppressed'
                 );
             }
             const contentsReason = describeBitmapContentsBypassReason(bitmap);

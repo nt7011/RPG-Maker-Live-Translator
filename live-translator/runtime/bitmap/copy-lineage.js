@@ -80,7 +80,7 @@
                 const targetBounds = projectCopyEdgeSourceRect(sourceBounds, edge);
                 if (!rectHasArea(targetBounds)) return null;
                 const run = source.run || {};
-                return {
+                const projection = {
                     edgeId: stringify(edge.edgeId || ''),
                     sourceSurfaceId: stringify(edge.sourceSurfaceId || sourceSurfaceId),
                     targetSurfaceId: stringify(edge.targetSurfaceId || ''),
@@ -99,6 +99,9 @@
                     targetRestoreRect: cloneRect(edge.targetRestoreRect || null),
                     targetRestoreRevisionBefore: optionalNonNegativeNumber(edge.targetRestoreRevisionBefore),
                 };
+                copyIdentityAliases(projection, 'sourceRunIds', run.sourceRunIds, run.runIds, source.sourceRunIds, source.runIds);
+                copyIdentityAliases(projection, 'sourceSlotKeys', run.sourceSlotKeys, run.slotKeys, source.sourceSlotKeys, source.slotKeys);
+                return projection;
             }
 
             function materializeCopiedTextTargets(input = {}) {
@@ -134,7 +137,7 @@
                 const targetRestoreMaterial = materializeTargetRestoreMaterial(input, projection);
                 const drawState = copyPlainObject(input.drawState || input.textRun && input.textRun.drawState || input.run && input.run.drawState || null);
 
-                return {
+                const target = {
                     edgeId: stringify(projection.edgeId || ''),
                     sourceSurfaceId: stringify(projection.sourceSurfaceId || ''),
                     targetSurfaceId: stringify(projection.targetSurfaceId || ''),
@@ -162,6 +165,9 @@
                     targetRestoreMaterial,
                     projection: copyProjection(projection),
                 };
+                copyIdentityAliases(target, 'sourceRunIds', projection.sourceRunIds);
+                copyIdentityAliases(target, 'sourceSlotKeys', projection.sourceSlotKeys);
+                return target;
             }
 
             function resolveCopiedSurface(surfaceId, projection, input, role) {
@@ -264,7 +270,7 @@
 
             function copyProjection(projection) {
                 if (!projection || typeof projection !== 'object') return null;
-                return {
+                const copied = {
                     edgeId: stringify(projection.edgeId || ''),
                     sourceSurfaceId: stringify(projection.sourceSurfaceId || ''),
                     targetSurfaceId: stringify(projection.targetSurfaceId || ''),
@@ -283,6 +289,24 @@
                     targetRestoreRect: cloneRect(projection.targetRestoreRect || null),
                     targetRestoreRevisionBefore: optionalNonNegativeNumber(projection.targetRestoreRevisionBefore),
                 };
+                copyIdentityAliases(copied, 'sourceRunIds', projection.sourceRunIds);
+                copyIdentityAliases(copied, 'sourceSlotKeys', projection.sourceSlotKeys);
+                return copied;
+            }
+
+            function copyIdentityAliases(target, key, ...values) {
+                const aliases = [];
+                values.forEach((value) => pushIdentityAlias(aliases, value));
+                if (aliases.length) target[key] = aliases;
+            }
+
+            function pushIdentityAlias(output, value) {
+                if (Array.isArray(value)) {
+                    value.forEach((item) => pushIdentityAlias(output, item));
+                    return;
+                }
+                const text = stringify(value);
+                if (text && output.indexOf(text) < 0) output.push(text);
             }
 
             function copyPlainObject(value) {

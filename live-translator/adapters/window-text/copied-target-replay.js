@@ -6,8 +6,9 @@
         name: 'adapters.windowText.copiedTargetReplay',
         requires: {
             surfaceRoleState: 'runtime.windowSurfaceRoleState',
+            sourceRunIdentity: 'runtime.bitmap.sourceRunIdentity',
         },
-        factory({ surfaceRoleState }) {
+        factory({ surfaceRoleState, sourceRunIdentity }) {
 
     const COPIED_TARGET_PROVIDER_TOKEN = 'window-text';
 
@@ -22,11 +23,25 @@
         const facades = context.facades || {};
         const bitmapTools = context.bitmapTools || {};
         const { replay: replayService, surface: surfaceService, draw: drawService = {} } = services;
-        const { entryRecords = {}, renderDraw = {}, textConversion = {} } = facades;
+        const { entryRecords = {}, renderDraw = {}, textConversion = {}, textMetrics = {} } = facades;
         const { isEntryCompleted, findEntryBySourceRun, findEntriesBySourceRegion } = entryRecords;
         const { drawTranslatedWindowText } = renderDraw;
         const { sanitizeDrawTextOutput } = textConversion;
-        const { calculateBitmapSurfaceTextYOffset, cloneDiagnosticRect, isValidRect } = bitmapTools;
+        const {
+            collectIdentityAliases,
+            collectSourceRunIds,
+            collectSourceSlotKeyAliases: collectSourceSlotKeyAliasesFromValues,
+            collectSourceSlotKeys,
+            sourceRunIdentitiesMatch,
+        } = sourceRunIdentity;
+        const sourceSlotAliasOptions = {
+            canonicalizeSlotKey: typeof textMetrics.canonicalizeSlotKey === 'function'
+                ? textMetrics.canonicalizeSlotKey
+                : null,
+        };
+        const collectSourceIdentityAliases = (...values) => collectIdentityAliases(values);
+        const collectSourceSlotKeyAliases = (...values) => collectSourceSlotKeyAliasesFromValues(values, sourceSlotAliasOptions);
+        const { calculateBitmapSurfaceTextYOffset, cloneIntelRect, isValidRect } = bitmapTools;
         const windowEntryBelongsToContents = requireFunction(windowEntryBelongsToContentsCallback, 'windowEntryBelongsToContents');
         const resolveBitmapWindowData = requireFunction(resolveBitmapWindowDataCallback, 'resolveBitmapWindowData');
         const getWindowEntrySnapshotBounds = requireFunction(getWindowEntrySnapshotBoundsCallback, 'getWindowEntrySnapshotBounds');
@@ -35,7 +50,7 @@
         requireFunction(findEntriesBySourceRegion, 'entryRecords.findEntriesBySourceRegion');
         requireFunction(sanitizeDrawTextOutput, 'textConversion.sanitizeDrawTextOutput');
         requireFunction(calculateBitmapSurfaceTextYOffset, 'bitmapTools.calculateBitmapSurfaceTextYOffset');
-        requireFunction(cloneDiagnosticRect, 'bitmapTools.cloneDiagnosticRect');
+        requireFunction(cloneIntelRect, 'bitmapTools.cloneIntelRect');
         requireFunction(isValidRect, 'bitmapTools.isValidRect');
 
         let copiedTargetProviderUnregister = null;
@@ -392,10 +407,7 @@
             if (!sourceRun) return false;
             const sourceSurfaceId = String(edge.sourceSurfaceId || sourceTextRun && sourceTextRun.surfaceId || '');
             if (sourceSurfaceId && sourceRun.surfaceId && sourceRun.surfaceId !== sourceSurfaceId) return false;
-            const sourceRunId = String(sourceTextRun && sourceTextRun.runId || edge.sourceRunId || '');
-            if (sourceRunId && sourceRun.runId) return sourceRun.runId === sourceRunId;
-            const sourceSlotKey = String(sourceTextRun && sourceTextRun.slotKey || edge.sourceSlotKey || '');
-            return !!(sourceSlotKey && sourceRun.slotKey && sourceRun.slotKey === sourceSlotKey);
+            return sourceRunIdentitiesMatch(sourceRun, createCopyEdgeSourceLookup(edge, sourceTextRun));
         }
 
         function isSourceRunCurrentForCopyEdge(sourceRun, edge) {
@@ -813,9 +825,21 @@
             const bounds = cloneValidReplayRect(targetDescriptor.sourceBounds || projection.sourceBounds || null);
             return {
                 runId: String(targetDescriptor.sourceRunId || projection.sourceRunId || ''),
+                runIds: collectSourceIdentityAliases(
+                    targetDescriptor.sourceRunIds,
+                    projection.sourceRunIds,
+                    targetDescriptor.sourceRunId,
+                    projection.sourceRunId
+                ),
                 surfaceId: String(targetDescriptor.sourceSurfaceId || projection.sourceSurfaceId || ''),
                 revision: firstFiniteNumber(targetDescriptor.sourceRevision, projection.sourceRevision, 0),
                 slotKey: String(targetDescriptor.sourceSlotKey || projection.sourceSlotKey || ''),
+                slotKeys: collectSourceSlotKeyAliases(
+                    targetDescriptor.sourceSlotKeys,
+                    projection.sourceSlotKeys,
+                    targetDescriptor.sourceSlotKey,
+                    projection.sourceSlotKey
+                ),
                 bounds,
             };
         }
@@ -830,10 +854,7 @@
             if (!sourceRun) return false;
             const surfaceId = String(projection.sourceSurfaceId || projection.sourceTextRun && projection.sourceTextRun.surfaceId || '');
             if (surfaceId && sourceRun.surfaceId && sourceRun.surfaceId !== surfaceId) return false;
-            const runId = String(projection.sourceRunId || projection.sourceTextRun && projection.sourceTextRun.runId || '');
-            if (runId && sourceRun.runId) return sourceRun.runId === runId;
-            const slotKey = String(projection.sourceSlotKey || projection.sourceTextRun && projection.sourceTextRun.slotKey || '');
-            return !!(slotKey && sourceRun.slotKey && sourceRun.slotKey === slotKey);
+            return sourceRunIdentitiesMatch(sourceRun, createProjectionSourceLookup(projection));
         }
 
         function isProjectedWindowTarget(projection, target, targetBitmap) {
@@ -915,7 +936,14 @@
                 entryId: createCopiedWindowTextTargetEntryKey(entry),
                 sourceSurfaceId: String(target.sourceSurfaceId || entry.surfaceId || ''),
                 sourceRunId: String(target.sourceRunId || ''),
+                sourceRunIds: collectSourceIdentityAliases(target.sourceRunIds, entry.sourceRunIds, target.sourceRunId),
                 sourceSlotKey: String(target.sourceSlotKey || entry.slotKey || ''),
+                sourceSlotKeys: collectSourceSlotKeyAliases(
+                    target.sourceSlotKeys,
+                    entry.sourceSlotKeys,
+                    target.sourceSlotKey,
+                    entry.slotKey
+                ),
                 sourceBounds: cloneValidReplayRect(target.sourceBounds || entry.bounds),
                 targetSurfaceId: String(target.targetSurfaceId || ''),
                 targetBounds: cloneValidReplayRect(target.bounds || null),
@@ -1089,8 +1117,7 @@
             if (!sameOptionalString(getProjectionValue(projection, 'edgeId'), descriptor.edgeId)) return false;
             if (!sameOptionalString(getProjectionValue(projection, 'sourceSurfaceId'), descriptor.sourceSurfaceId)) return false;
             if (!sameOptionalString(getProjectionValue(projection, 'targetSurfaceId'), descriptor.targetSurfaceId)) return false;
-            if (!sameOptionalString(getProjectionValue(projection, 'sourceRunId'), descriptor.sourceRunId)) return false;
-            if (!sameOptionalString(getProjectionValue(projection, 'sourceSlotKey'), descriptor.sourceSlotKey)) return false;
+            if (!optionalSourceIdentityMatches(createProjectionSourceLookup(projection), createDescriptorSourceLookup(descriptor))) return false;
             const descriptorBounds = cloneValidReplayRect(descriptor.targetBounds || descriptor.bounds);
             if (!descriptorBounds) return true;
             const projectionBounds = cloneValidReplayRect(
@@ -1105,6 +1132,99 @@
             const expectedText = String(expected || '');
             if (!expectedText) return true;
             return String(value || '') === expectedText;
+        }
+
+        function createCopyEdgeSourceLookup(edge, sourceTextRun = null) {
+            return {
+                sourceRunId: String(sourceTextRun && sourceTextRun.runId || edge && edge.sourceRunId || ''),
+                sourceRunIds: collectSourceIdentityAliases(
+                    sourceTextRun && sourceTextRun.runIds,
+                    sourceTextRun && sourceTextRun.sourceRunIds,
+                    edge && edge.sourceRunIds,
+                    sourceTextRun && sourceTextRun.runId,
+                    edge && edge.sourceRunId
+                ),
+                sourceSlotKey: String(sourceTextRun && sourceTextRun.slotKey || edge && edge.sourceSlotKey || ''),
+                sourceSlotKeys: collectSourceSlotKeyAliases(
+                    sourceTextRun && sourceTextRun.slotKeys,
+                    sourceTextRun && sourceTextRun.sourceSlotKeys,
+                    edge && edge.sourceSlotKeys,
+                    sourceTextRun && sourceTextRun.slotKey,
+                    edge && edge.sourceSlotKey
+                ),
+            };
+        }
+
+        function createProjectionSourceLookup(projection) {
+            const sourceTextRun = projection && projection.sourceTextRun && typeof projection.sourceTextRun === 'object'
+                ? projection.sourceTextRun
+                : {};
+            return {
+                sourceRunId: String(getProjectionValue(projection, 'sourceRunId') || sourceTextRun.runId || sourceTextRun.sourceRunId || ''),
+                sourceRunIds: collectSourceIdentityAliases(
+                    getProjectionValue(projection, 'sourceRunIds'),
+                    sourceTextRun.runIds,
+                    sourceTextRun.sourceRunIds,
+                    getProjectionValue(projection, 'sourceRunId'),
+                    sourceTextRun.runId,
+                    sourceTextRun.sourceRunId
+                ),
+                sourceSlotKey: String(getProjectionValue(projection, 'sourceSlotKey') || sourceTextRun.slotKey || sourceTextRun.sourceSlotKey || ''),
+                sourceSlotKeys: collectSourceSlotKeyAliases(
+                    getProjectionValue(projection, 'sourceSlotKeys'),
+                    sourceTextRun.slotKeys,
+                    sourceTextRun.sourceSlotKeys,
+                    getProjectionValue(projection, 'sourceSlotKey'),
+                    sourceTextRun.slotKey,
+                    sourceTextRun.sourceSlotKey
+                ),
+            };
+        }
+
+        function createTargetSourceLookup(target) {
+            const sourceTextRun = target && target.sourceTextRun && typeof target.sourceTextRun === 'object'
+                ? target.sourceTextRun
+                : {};
+            return {
+                sourceRunId: String(target && target.sourceRunId || sourceTextRun.runId || sourceTextRun.sourceRunId || ''),
+                sourceRunIds: collectSourceIdentityAliases(
+                    target && target.sourceRunIds,
+                    sourceTextRun.runIds,
+                    sourceTextRun.sourceRunIds,
+                    target && target.sourceRunId,
+                    sourceTextRun.runId,
+                    sourceTextRun.sourceRunId
+                ),
+                sourceSlotKey: String(target && target.sourceSlotKey || sourceTextRun.slotKey || sourceTextRun.sourceSlotKey || ''),
+                sourceSlotKeys: collectSourceSlotKeyAliases(
+                    target && target.sourceSlotKeys,
+                    sourceTextRun.slotKeys,
+                    sourceTextRun.sourceSlotKeys,
+                    target && target.sourceSlotKey,
+                    sourceTextRun.slotKey,
+                    sourceTextRun.sourceSlotKey
+                ),
+            };
+        }
+
+        function createDescriptorSourceLookup(descriptor) {
+            return {
+                sourceRunId: String(descriptor && descriptor.sourceRunId || ''),
+                sourceRunIds: collectSourceIdentityAliases(
+                    descriptor && descriptor.sourceRunIds,
+                    descriptor && descriptor.sourceRunId
+                ),
+                sourceSlotKey: String(descriptor && descriptor.sourceSlotKey || ''),
+                sourceSlotKeys: collectSourceSlotKeyAliases(
+                    descriptor && descriptor.sourceSlotKeys,
+                    descriptor && descriptor.sourceSlotKey
+                ),
+            };
+        }
+
+        function optionalSourceIdentityMatches(candidate, expected) {
+            if (!collectSourceRunIds(expected).length && !collectSourceSlotKeys(expected).length) return true;
+            return sourceRunIdentitiesMatch(candidate, expected);
         }
 
         function createDetachedProofTargetKey(target) {
@@ -1199,11 +1319,27 @@
             const boundary = origin.drawBoundary && typeof origin.drawBoundary === 'object'
                 ? origin.drawBoundary
                 : {};
+            const runId = String(origin.runId || boundary.runId || '');
+            const slotKey = String(origin.slotKey || boundary.slotKey || entry.slotKey || '');
             return {
-                runId: String(origin.runId || boundary.runId || ''),
+                runId,
+                runIds: collectSourceIdentityAliases(
+                    origin.sourceRunIds,
+                    boundary.sourceRunIds,
+                    origin.ledgerRunIds,
+                    boundary.ledgerRunIds,
+                    runId
+                ),
                 surfaceId: String(origin.surfaceId || boundary.surfaceId || entry.surfaceId || ''),
                 revision: firstFiniteNumber(origin.surfaceRevision, boundary.surfaceRevision, boundary.revision, entry.surfaceRevision, 0),
-                slotKey: String(origin.slotKey || boundary.slotKey || entry.slotKey || ''),
+                slotKey,
+                slotKeys: collectSourceSlotKeyAliases(
+                    origin.sourceSlotKeys,
+                    boundary.sourceSlotKeys,
+                    origin.slotKeys,
+                    boundary.slotKeys,
+                    slotKey
+                ),
                 bounds: runBounds,
                 drawState: entry.drawState || origin.drawState || null,
             };
@@ -1221,8 +1357,15 @@
                 || null
             );
             if (!rectHasArea(runBounds)) return null;
+            const runId = String(proof.sourceDrawRunId || descriptor && descriptor.sourceRunId || '');
+            const slotKey = String(descriptor && descriptor.sourceSlotKey || proof.slotKey || entry && entry.slotKey || '');
             return {
-                runId: String(proof.sourceDrawRunId || descriptor && descriptor.sourceRunId || ''),
+                runId,
+                runIds: collectSourceIdentityAliases(
+                    proof.sourceDrawRunIds,
+                    descriptor && descriptor.sourceRunIds,
+                    runId
+                ),
                 surfaceId: String(proof.sourceDrawSurfaceId || descriptor && descriptor.sourceSurfaceId || entry && entry.surfaceId || ''),
                 revision: firstFiniteNumber(
                     proof.sourceDrawSurfaceRevision,
@@ -1231,7 +1374,12 @@
                     entry && entry.surfaceRevision,
                     0
                 ),
-                slotKey: String(descriptor && descriptor.sourceSlotKey || proof.slotKey || entry && entry.slotKey || ''),
+                slotKey,
+                slotKeys: collectSourceSlotKeyAliases(
+                    proof.sourceSlotKeys,
+                    descriptor && descriptor.sourceSlotKeys,
+                    slotKey
+                ),
                 bounds: runBounds,
                 drawState: entry && entry.drawState || null,
             };
@@ -1244,10 +1392,15 @@
             if (!descriptors.length) return null;
             const sourceRunId = String(proof && proof.sourceDrawRunId || '');
             const slotKey = String(proof && proof.slotKey || entry && entry.slotKey || '');
+            const proofLookup = {
+                sourceRunId,
+                sourceRunIds: collectSourceIdentityAliases(proof && proof.sourceDrawRunIds, sourceRunId),
+                sourceSlotKey: slotKey,
+                sourceSlotKeys: collectSourceSlotKeyAliases(proof && proof.sourceSlotKeys, slotKey),
+            };
             const matching = descriptors.find((descriptor) => {
                 if (!descriptor) return false;
-                if (sourceRunId && String(descriptor.sourceRunId || '') === sourceRunId) return true;
-                return !!(slotKey && String(descriptor.sourceSlotKey || '') === slotKey);
+                return sourceRunIdentitiesMatch(createDescriptorSourceLookup(descriptor), proofLookup);
             });
             return matching || descriptors[0];
         }
@@ -1287,7 +1440,9 @@
             return {
                 edgeId: String(materialized.edgeId || ''),
                 sourceRunId: String(materialized.sourceRunId || ''),
+                sourceRunIds: collectSourceIdentityAliases(materialized.sourceRunIds, materialized.sourceRunId),
                 sourceSlotKey: String(materialized.sourceSlotKey || ''),
+                sourceSlotKeys: collectSourceSlotKeyAliases(materialized.sourceSlotKeys, materialized.sourceSlotKey),
                 sourceSurfaceId: String(materialized.sourceSurfaceId || ''),
                 targetSurfaceId: String(materialized.targetSurfaceId || ''),
                 targetRevision: Number(materialized.targetRevision) || 0,
@@ -1363,7 +1518,19 @@
             return {
                 edgeId: String(getProjectionValue(projection, 'edgeId') || materialized && materialized.edgeId || ''),
                 sourceRunId: String(getProjectionValue(projection, 'sourceRunId') || materialized && materialized.sourceRunId || ''),
+                sourceRunIds: collectSourceIdentityAliases(
+                    getProjectionValue(projection, 'sourceRunIds'),
+                    materialized && materialized.sourceRunIds,
+                    getProjectionValue(projection, 'sourceRunId'),
+                    materialized && materialized.sourceRunId
+                ),
                 sourceSlotKey: String(getProjectionValue(projection, 'sourceSlotKey') || materialized && materialized.sourceSlotKey || ''),
+                sourceSlotKeys: collectSourceSlotKeyAliases(
+                    getProjectionValue(projection, 'sourceSlotKeys'),
+                    materialized && materialized.sourceSlotKeys,
+                    getProjectionValue(projection, 'sourceSlotKey'),
+                    materialized && materialized.sourceSlotKey
+                ),
                 sourceSurfaceId: String(getProjectionValue(projection, 'sourceSurfaceId') || materialized && materialized.sourceSurfaceId || ''),
                 targetSurfaceId: String(getProjectionValue(projection, 'targetSurfaceId') || materialized && materialized.targetSurfaceId || ''),
                 targetRevision: firstFiniteNumber(getProjectionValue(projection, 'targetRevision'), materialized && materialized.targetRevision, 0),
@@ -1426,10 +1593,7 @@
             if (!sourceRun) return false;
             const surfaceId = String(target.sourceSurfaceId || target.sourceTextRun && target.sourceTextRun.surfaceId || '');
             if (!surfaceId || !sourceRun.surfaceId || sourceRun.surfaceId !== surfaceId) return false;
-            const runId = String(target.sourceRunId || target.sourceTextRun && target.sourceTextRun.runId || '');
-            if (runId && sourceRun.runId) return sourceRun.runId === runId;
-            const slotKey = String(target.sourceSlotKey || target.sourceTextRun && target.sourceTextRun.slotKey || '');
-            return !!(slotKey && sourceRun.slotKey && sourceRun.slotKey === slotKey);
+            return sourceRunIdentitiesMatch(sourceRun, createTargetSourceLookup(target));
         }
 
         function isCopiedSourceEntry(entry) {
@@ -1630,7 +1794,7 @@
                 targetSurfaceId: String(material.targetSurfaceId || ''),
                 targetRevisionBefore: Number(material.targetRevisionBefore) || 0,
                 rect,
-                bounds: cloneDiagnosticRect(rect),
+                bounds: cloneIntelRect(rect),
                 x,
                 y,
                 w,

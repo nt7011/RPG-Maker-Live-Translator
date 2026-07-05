@@ -220,7 +220,7 @@
         }
 
         /**
-         * Keep inactive hidden glyph runs out of active diagnostics until seen.
+         * Keep inactive hidden glyph runs out of active intel until seen.
          */
         function observeRunWhenVisibleOrActive(run, status) {
             if (!run || run.stale) return null;
@@ -281,17 +281,24 @@
             const restored = restoreTranslatedText(translated, run.codecState, run.rawText);
             const visible = sanitizeVisibleText(restored);
             if (!visible || visible === run.trimmedText) {
+                const reason = visible ? 'translated text matched original' : 'restored text empty';
                 updateItem(run, { status: 'skipped' }, 'item.skipped', {
-                    reason: visible ? 'translated text matched original' : 'restored text empty',
+                    reason,
                     translationReceived: translated,
                     mode: 'sprite-run',
                 });
-                return true;
+                return createRenderDecision('committed', reason, {
+                    translationReceived: translated,
+                    mode: 'sprite-run',
+                });
             }
             run.renderedText = restored;
             if (!renderParentRunOverlay(run, command.metadata && command.metadata.sourceHint || 'translation')) {
                 run.renderedText = '';
-                return false;
+                return createRenderDecision('rejected', 'sprite-run-render-failed', {
+                    translationReceived: translated,
+                    mode: 'sprite-run',
+                });
             }
             updateItem(run, {
                 status: 'completed',
@@ -302,7 +309,19 @@
                 translationReceived: translated,
                 translationDrawn: restored,
             });
-            return true;
+            return createRenderDecision('committed', 'sprite-run-rendered', {
+                translationReceived: translated,
+                translationDrawn: restored,
+                mode: 'sprite-run',
+            });
+        }
+
+        function createRenderDecision(status, reason, details = null) {
+            return {
+                status,
+                reason,
+                details: details && typeof details === 'object' ? details : {},
+            };
         }
 
         /**

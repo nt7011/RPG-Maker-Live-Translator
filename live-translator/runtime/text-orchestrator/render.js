@@ -19,21 +19,18 @@
                  * The orchestrator owns this command until an adapter reports a terminal
                  * outcome. Adapter-local retry schedules may remember the command id, but
                  * the command status here remains the source of truth for dispatch.
-                 * Subscribers still receive item.render_queued for compatibility; that
-                 * event means "execute this ready command", not "render succeeded".
+                 * Subscribers receive item.render_command_ready when the command is ready
+                 * to execute. That event is dispatch, not render success.
                  */
                 function queueRenderCommand(itemId, command = {}) {
                     const item = activeItems.get(String(itemId || '')) || null;
                     if (!item) return null;
                     const text = firstString(command.text, item.translation, item.translationDrawn);
-                    let commandId = firstString(command.commandId, command.id);
+                    let commandId = firstString(command.commandId);
                     if (!commandId) commandId = `render:${++scope.renderSequence}`;
                     const now = Date.now();
                     const renderCommand = {
                         commandId,
-                        // Legacy alias: adapters still read command.id from item.render_queued.
-                        // Remove after all render paths consume commandId directly.
-                        id: commandId,
                         itemId: item.id,
                         surfaceId: item.surfaceId || '',
                         targetSurfaceId: firstString(command.targetSurfaceId, command.surfaceId, item.surfaceId),
@@ -115,7 +112,7 @@
                     const key = normalizeId(id || source.itemId || source.recordId);
                     const item = getItemById(key);
                     if (!item) return null;
-                    const command = findRenderCommand(item.id, firstString(source.commandId, source.id, source.rebasedFromCommandId));
+                    const command = findRenderCommand(item.id, firstString(source.commandId, source.rebasedFromCommandId));
                     const details = normalizeRenderCommandSupersededDecision(source, item, command);
                     updateRenderCommandStatus(command, 'superseded', details);
                     return recordEvent('item.render_superseded', item, {
@@ -129,7 +126,7 @@
                     const key = normalizeId(id || source.itemId || source.recordId);
                     const item = getItemById(key);
                     if (!item) return createRenderCommandRebaseResult('missing-item', null, null, null, 'render-item-missing', false, true);
-                    const oldCommand = findRenderCommand(item.id, firstString(source.commandId, source.id, source.rebasedFromCommandId));
+                    const oldCommand = findRenderCommand(item.id, firstString(source.commandId, source.rebasedFromCommandId));
                     if (!oldCommand) {
                         return createRenderCommandRebaseResult('missing-command', item, null, null, 'render-command-missing', false, true);
                     }
@@ -141,7 +138,7 @@
                         return createRenderCommandRebaseResult('invalid-replacement', item, oldCommand, null, 'render-rebase-replacement-invalid', false, true);
                     }
                     const superseded = recordRenderSuperseded(item.id, {
-                        commandId: oldCommand.commandId || oldCommand.id,
+                        commandId: oldCommand.commandId,
                         reason: firstString(source.reason, 'render-command-rebased'),
                         commandGeneration: replacement.oldGeneration,
                         targetGeneration: replacement.newGeneration,
@@ -160,7 +157,7 @@
                     const key = normalizeId(id || source.itemId || source.recordId);
                     const item = getItemById(key);
                     if (!item) return null;
-                    const command = findRenderCommand(item.id, firstString(source.commandId, source.id));
+                    const command = findRenderCommand(item.id, firstString(source.commandId));
                     const details = normalizeRenderCommandDecision(normalizedStatus, source, item, command);
                     updateRenderCommandStatus(command, normalizedStatus, details);
                     markItemRenderCycleDecision(item, normalizedStatus, details, command);
@@ -193,7 +190,7 @@
 
                 function notifyRenderCommandReady(commandId, details = {}) {
                     const normalizedCommandId = normalizeId(commandId && typeof commandId === 'object'
-                        ? firstString(commandId.commandId, commandId.id)
+                        ? firstString(commandId.commandId)
                         : commandId);
                     if (!normalizedCommandId) {
                         return createRenderCommandReadinessResult('missing-command-id', null, null, 'render-command-id-required', false, true);
@@ -227,7 +224,7 @@
                     recordEvent('item.render_retry_ready', item, {
                         message: firstString(source.reason, 'render-command-ready'),
                         details: Object.assign({
-                            commandId: command.commandId || command.id,
+                            commandId: command.commandId,
                             retryCount: command.retryCount,
                         }, readiness),
                     });
@@ -242,7 +239,7 @@
                         details: Object.assign({}, readiness, {
                             reason,
                             wakeReason: firstString(source && source.reason),
-                            commandId: firstString(command && command.commandId, command && command.id),
+                            commandId: firstString(command && command.commandId),
                             commandStatus: firstString(command && command.status),
                             expectedStatus: 'deferred',
                             retryCount: finiteNumber(command && command.retryCount) || 0,
@@ -260,7 +257,7 @@
                         if (!command || command.itemId !== item.id) continue;
                         if (!isRenderCommandUnresolved(command)) continue;
                         const decision = normalizeRenderCommandDecision('rejected', {
-                            commandId: command.commandId || command.id,
+                            commandId: command.commandId,
                             reason: firstString(reason, 'item-retired'),
                             details,
                         }, item, command);
@@ -281,8 +278,7 @@
                     for (let index = renderCommands.length - 1; index >= 0; index -= 1) {
                         const command = renderCommands[index];
                         if (!command) continue;
-                        if (normalizedCommandId
-                            && (command.commandId === normalizedCommandId || command.id === normalizedCommandId)) return command;
+                        if (normalizedCommandId && command.commandId === normalizedCommandId) return command;
                         if (!normalizedCommandId && normalizedItemId && command.itemId === normalizedItemId) return command;
                     }
                     return null;
@@ -297,14 +293,11 @@
                 }
 
                 function normalizeRenderCommandStatus(status) {
-                    const value = String(status || '').toLowerCase();
-                    // Legacy input aliases: "accepted", "rendered", and "drawn" all
-                    // mean the adapter committed pixels for this command. Remove after
-                    // historical callback/status payloads are migrated to "committed".
-                    if (value === 'accepted' || value === 'committed' || value === 'rendered' || value === 'drawn') return 'committed';
+                    const value = String(status || '').trim();
+                    if (value === 'committed') return 'committed';
                     if (value === 'deferred') return 'deferred';
-                    if (value === 'ready' || value === 'retry-ready' || value === 'queued') return 'ready';
-                    if (value === 'noop' || value === 'no-op') return 'noop';
+                    if (value === 'ready') return 'ready';
+                    if (value === 'noop') return 'noop';
                     if (value === 'aborted' || value.indexOf('aborted-') === 0) return 'aborted';
                     if (value === 'superseded' || value.indexOf('superseded-') === 0) return 'superseded';
                     return 'rejected';
@@ -318,7 +311,7 @@
                     const normalized = {
                         status,
                         reason: firstString(decision.reason, status),
-                        commandId: firstString(decision.commandId, decision.id, command && command.commandId, command && command.id),
+                        commandId: firstString(decision.commandId, command && command.commandId),
                         strategy: firstString(decision.strategy, command && command.strategy, item.renderStrategy),
                         commandGeneration: finiteNumber(decision.commandGeneration) || (command && command.generation) || 0,
                         queuedAt: command && command.queuedAt ? command.queuedAt : 0,
@@ -338,7 +331,7 @@
                     return {
                         status: 'superseded',
                         reason: firstString(source.reason, 'render-command-rebased'),
-                        commandId: firstString(source.commandId, source.id, command && command.commandId, command && command.id),
+                        commandId: firstString(source.commandId, command && command.commandId),
                         strategy: firstString(source.strategy, command && command.strategy, item && item.renderStrategy),
                         commandGeneration: finiteNumber(source.commandGeneration) || finiteNumber(source.oldGeneration) || (command && command.generation) || 0,
                         targetGeneration: finiteNumber(source.targetGeneration) || finiteNumber(source.newGeneration) || 0,
@@ -376,14 +369,14 @@
                         pickSerializableObject(source.metadata || {}),
                         pickSerializableObject(replacement.metadata || {}),
                         {
-                            rebasedFromCommandId: firstString(oldCommand && oldCommand.commandId, oldCommand && oldCommand.id),
+                            rebasedFromCommandId: firstString(oldCommand && oldCommand.commandId),
                             oldGeneration,
                             newGeneration,
                         }
                     );
                     if (currentSlotProof) replacementMetadata.currentSlotProof = currentSlotProof;
                     const command = {
-                        commandId: firstString(replacement.commandId, replacement.id),
+                        commandId: firstString(replacement.commandId),
                         strategy: firstString(replacement.strategy, source.strategy, oldCommand && oldCommand.strategy, item && item.renderStrategy),
                         text: firstString(
                             replacement.text,
@@ -410,7 +403,7 @@
                         metadata: replacementMetadata,
                     };
                     const supersedeDetails = Object.assign({}, pickSerializableObject(source.details || {}), {
-                        rebasedFromCommandId: firstString(oldCommand && oldCommand.commandId, oldCommand && oldCommand.id),
+                        rebasedFromCommandId: firstString(oldCommand && oldCommand.commandId),
                         replacementCommandId: firstString(command.commandId),
                         oldGeneration,
                         newGeneration,
@@ -447,7 +440,7 @@
                         surfaceId: firstString(source.surfaceId, item && item.surfaceId, existingCommit && existingCommit.surfaceId),
                         slotKey: firstString(source.slotKey, item && item.slotKey, existingCommit && existingCommit.slotKey),
                         strategy: firstString(source.strategy, command && command.strategy, item && item.renderStrategy, existingCommit && existingCommit.strategy),
-                        commandId: firstString(source.commandId, source.id, command && command.commandId, command && command.id, existingCommit && existingCommit.commandId),
+                        commandId: firstString(source.commandId, command && command.commandId, existingCommit && existingCommit.commandId),
                         commandGeneration: finiteNumber(source.commandGeneration) || (command && command.generation) || finiteNumber(existingCommit && existingCommit.commandGeneration),
                         generation: finiteNumber(source.generation) || (command && command.generation) || finiteNumber(existingCommit && existingCommit.generation) || (item && item.generation) || 0,
                         translationReceived: firstString(
@@ -503,9 +496,7 @@
 
                 function resolveRenderCommandCommitPhase(status) {
                     const phases = renderTransaction && renderTransaction.PHASES || {};
-                    // Legacy payload alias: remove after historical renderCommit.status
-                    // values have all been migrated from "accepted" to "committed".
-                    if (status === 'committed' || status === 'accepted') return phases.RENDER_COMMITTED || 'render-committed';
+                    if (status === 'committed') return phases.RENDER_COMMITTED || 'render-committed';
                     if (status === 'deferred') return phases.RENDER_DEFERRED || 'render-deferred';
                     if (status === 'noop') return phases.RENDER_NOOP || 'render-noop';
                     return phases.RENDER_REJECTED || 'render-rejected';
@@ -546,10 +537,7 @@
                     command.dispatchCount = (finiteNumber(command.dispatchCount) || 0) + 1;
                     command.dispatchedAt = Date.now();
                     command.updatedAt = command.dispatchedAt;
-                    // Legacy event name: adapters currently subscribe to item.render_queued.
-                    // Replace with an explicit render-command-ready dispatch event once
-                    // every adapter is migrated to the new command boundary.
-                    return recordEvent('item.render_queued', item, {
+                    return recordEvent('item.render_command_ready', item, {
                         message: command.strategy || '',
                         details: cloneRenderCommand(command),
                     });
@@ -591,11 +579,8 @@
                 }
 
                 function isTerminalRenderCommandStatus(status) {
-                    const value = String(status || '').toLowerCase();
-                    // Legacy payload alias: remove after old snapshots stop feeding
-                    // accepted render statuses back into recovery.
+                    const value = String(status || '').trim();
                     return value === 'committed'
-                        || value === 'accepted'
                         || value === 'rejected'
                         || value === 'aborted'
                         || value === 'superseded'
@@ -603,7 +588,7 @@
                 }
 
                 function createRenderCommandReadinessResult(status, item, command, reason, changed, terminal, fallbackCommandId = '') {
-                    const commandId = command ? firstString(command.commandId, command.id) : firstString(fallbackCommandId);
+                    const commandId = command ? firstString(command.commandId) : firstString(fallbackCommandId);
                     const itemId = item && item.id ? item.id : (command && command.itemId ? command.itemId : '');
                     return Object.freeze({
                         status,
@@ -619,9 +604,9 @@
                 }
 
                 function createRenderCommandRebaseResult(status, item, oldCommand, replacementCommand, reason, changed, terminal, event = null) {
-                    const commandId = oldCommand ? firstString(oldCommand.commandId, oldCommand.id) : '';
+                    const commandId = oldCommand ? firstString(oldCommand.commandId) : '';
                     const itemId = item && item.id ? item.id : (oldCommand && oldCommand.itemId ? oldCommand.itemId : '');
-                    const replacementCommandId = replacementCommand ? firstString(replacementCommand.commandId, replacementCommand.id) : '';
+                    const replacementCommandId = replacementCommand ? firstString(replacementCommand.commandId) : '';
                     return Object.freeze({
                         status,
                         handled: changed === true || status === 'terminal-command',

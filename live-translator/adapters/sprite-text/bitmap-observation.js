@@ -106,7 +106,7 @@
             if (!sourcePolicy || sourcePolicy.suppressSourceObservation !== true) return null;
             return createBitmapDrawRecordDecision(
                 'source-suppressed',
-                sourcePolicy.diagnosticReason || sourcePolicy.reason || 'source-observation-suppressed'
+                sourcePolicy.intelReason || sourcePolicy.reason || 'source-observation-suppressed'
             );
         }
         

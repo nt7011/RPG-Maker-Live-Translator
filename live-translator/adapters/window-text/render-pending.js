@@ -13,14 +13,14 @@
         const { ADAPTER_ID, RENDER_STRATEGY, entryLifecycleState } = context;
         const { lifecycle: lifecycleService } = context.services;
         const {
-            diagnostics,
+            intel,
             entryLifecycle,
             renderDraw,
             renderReadinessSchedule,
             renderReadiness,
             textConversion,
         } = context.facades;
-        const { recordDecision } = diagnostics;
+        const { recordDecision } = intel;
         const { markRecordDisappeared, resolveWindowData } = entryLifecycle;
         const { drawTranslatedEntry } = renderDraw;
         const { scheduleRenderRetry, dropScheduledRenderRetry } = renderReadinessSchedule;
@@ -49,7 +49,7 @@
                         surfaceId: entry.surfaceId || '',
                         slotKey: entry.slotKey || '',
                         strategy: route && route.strategy || RENDER_STRATEGY,
-                        commandId: command && command.id || '',
+                        commandId: command && command.commandId || '',
                         commandGeneration: route && route.commandGeneration || command && command.generation || 0,
                         generation: entry.surfaceRevision || 0,
                         translationReceived: received,
@@ -82,7 +82,7 @@
                         surfaceId: entry.surfaceId || '',
                         slotKey: entry.slotKey || '',
                         strategy: route && route.strategy || RENDER_STRATEGY,
-                        commandId: command && command.id || '',
+                        commandId: command && command.commandId || '',
                         commandGeneration: route && route.commandGeneration || command && command.generation || 0,
                         generation: entry.surfaceRevision || 0,
                         translationReceived: received,
@@ -101,7 +101,7 @@
                         surfaceId: entry.surfaceId || '',
                         slotKey: entry.slotKey || '',
                         strategy: route && route.strategy || RENDER_STRATEGY,
-                        commandId: command && command.id || '',
+                        commandId: command && command.commandId || '',
                         commandGeneration: route && route.commandGeneration || command && command.generation || 0,
                         generation: entry.surfaceRevision || 0,
                         translationReceived: received,
@@ -120,7 +120,7 @@
                     surfaceId: entry.surfaceId || '',
                     slotKey: entry.slotKey || '',
                     strategy: route && route.strategy || RENDER_STRATEGY,
-                    commandId: command && command.id || '',
+                    commandId: command && command.commandId || '',
                     commandGeneration: route && route.commandGeneration || command && command.generation || 0,
                     generation: entry.surfaceRevision || 0,
                     translationReceived: received,
@@ -154,7 +154,7 @@
                     surfaceId: entry.surfaceId || '',
                     slotKey: entry.slotKey || '',
                     strategy: route && route.strategy ? String(route.strategy) : RENDER_STRATEGY,
-                    commandId: command.id ? String(command.id) : '',
+                    commandId: command && command.commandId ? String(command.commandId) : '',
                     commandGeneration: Number(route && route.commandGeneration) || Number(command.generation) || 0,
                     generation: Number(entry.surfaceRevision) || 0,
                     translationReceived: typeof received === 'string' ? received : '',
@@ -361,12 +361,8 @@
                     handled: normalizedStatus !== 'ignored',
                     accepted: normalizedStatus === 'admitted'
                         || normalizedStatus === 'committed'
-                        || normalizedStatus === 'deferred'
-                        // Legacy internal alias; remove after tests and any
-                        // remaining helpers stop feeding accepted back in.
-                        || normalizedStatus === 'accepted',
+                        || normalizedStatus === 'deferred',
                     terminal: normalizedStatus === 'committed'
-                        || normalizedStatus === 'accepted'
                         || normalizedStatus === 'rejected',
                     reason: String(reason || commit && commit.reason || state && state.reason || normalizedStatus),
                     phase: state && state.phase ? state.phase : (commit && commit.phase ? commit.phase : ''),

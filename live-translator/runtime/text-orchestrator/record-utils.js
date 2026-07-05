@@ -16,9 +16,8 @@
             /**
              * Convert adapter input into the canonical item patch schema.
              *
-             * Hooks currently use different field names for the same concepts. This
-             * function is the compatibility boundary that maps those shapes into one
-             * item model before anything touches active/detached/archive state.
+             * This function maps adapter payloads into one item model before anything
+             * touches active/detached/archive state.
              */
             function normalizeInputRecord(input = {}) {
                 const source = input && typeof input === 'object' ? input : {};
@@ -42,7 +41,7 @@
                     sourceAdapter,
                     hook,
                     surfaceType: firstString(source.surfaceType, inferSurfaceType(hook)),
-                    status: normalizeStatus(source.status || source.translationStatus, 'detected'),
+                    status: normalizeStatus(source.status, 'detected'),
                     rawText: firstString(source.rawText),
                     visibleText: firstString(source.visibleText, source.original, source.text),
                     original: firstString(source.original, source.visibleText, source.convertedText, source.rawText, source.text),
@@ -110,7 +109,7 @@
             }
 
             /**
-             * Normalize status aliases into the orchestrator lifecycle vocabulary.
+             * Normalize canonical lifecycle statuses into the orchestrator vocabulary.
              */
             function normalizeStatus(status, fallback = 'detected') {
                 return textLifecycle.normalizeStatus(status, fallback);
@@ -174,6 +173,7 @@
              */
             function cloneItem(item, options = {}) {
                 const includeDetails = options && options.includeDetails === true;
+                const includeHistory = includeDetails || (options && options.includeHistory === true);
                 const history = Array.isArray(options.history) ? options.history : [];
                 return {
                     id: item.id,
@@ -199,6 +199,7 @@
                     renderStrategy: item.renderStrategy || '',
                     drawBoundary: cloneDrawBoundary(item.drawBoundary),
                     renderCycle: cloneRenderCycle(item.renderCycle, includeDetails),
+                    renderTarget: item.renderTarget ? pickSerializableObject(item.renderTarget) : null,
                     visible: item.visible !== false,
                     screenState: item.screenState || '',
                     backgrounded: item.backgrounded === true,
@@ -209,7 +210,7 @@
                     lastSeenAt: item.lastSeenAt || 0,
                     updatedAt: item.updatedAt || 0,
                     deactivatedAt: item.deactivatedAt || null,
-                    history: includeDetails ? history.map(cloneDiagnosticEvent) : [],
+                    history: includeHistory ? history.map(cloneIntelEvent) : [],
                 };
             }
 
@@ -307,7 +308,7 @@
                 return target;
             }
 
-            function cloneDiagnosticEvent(event) {
+            function cloneIntelEvent(event) {
                 const source = event && typeof event === 'object' ? event : {};
                 const itemId = source.itemId !== undefined && source.itemId !== null ? String(source.itemId) : '';
                 return {
@@ -363,7 +364,7 @@
                 summarize,
                 cloneItem,
                 cloneEventDetails,
-                cloneDiagnosticEvent,
+                cloneIntelEvent,
                 pruneMap,
                 getItemRetentionTime,
             };

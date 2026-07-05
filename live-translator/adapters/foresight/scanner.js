@@ -12,13 +12,13 @@
         loadBefore: ['adapters.foresight'],
         run({ partsRegistry }) {
             const parts = partsRegistry.getParts();
-            const { DEFAULT_BUDGET, DEFAULT_MAX_SCAN_COMMANDS, MESSAGE_BUDGET_COST, BRANCH_BUDGET_STRATEGY, MAX_NESTED_LIST_DEPTH, MAX_NESTED_LISTS_PER_COMMAND, MAX_BRANCH_DEPTH, DIAGNOSTIC_ACTION_LIMIT, RECENT_SCAN_LIMIT, COMMAND_CATALOG_ASSET, BRANCH_MARKER_CODES, RESOLVABLE_CONTROL_FLOW_CODES, commandCatalog } = parts;
+            const { DEFAULT_BUDGET, DEFAULT_MAX_SCAN_COMMANDS, MESSAGE_BUDGET_COST, BRANCH_BUDGET_STRATEGY, MAX_NESTED_LIST_DEPTH, MAX_NESTED_LISTS_PER_COMMAND, MAX_BRANCH_DEPTH, INTEL_ACTION_LIMIT, RECENT_SCAN_LIMIT, COMMAND_CATALOG_ASSET, BRANCH_MARKER_CODES, RESOLVABLE_CONTROL_FLOW_CODES, commandCatalog } = parts;
             const { getEventCommandMetadata, hasStalenessRisk } = parts.facades.catalog;
             const { sortBlocksForPriority, attachPathContextToBlock, createScanPath, createBranchScanPath, cloneScanFrames, getPathIndex, isFrameExhausted, hasVisitedPathPosition, rememberPathPosition, stopScanPath, appendPathStop, createBranchPathStop, isBarrierStopReason, compareNumbers, compareBranchPaths, parseMessageCommandBlock } = parts.facades.pathState;
             const { readNestedListCommand, createScanFrame, createFrameListContext, attachFrameContextToBlock, finishCurrentFrame, pushNestedFrames, readTransparentCommand } = parts.facades.nestedLists;
             const { readBranchCommand, splitBudgetAcrossBranches } = parts.facades.branches;
             const { createBudgetState, hasBudgetRemaining, spendBudget, createBudgetSnapshot, cloneBudgetSnapshot, createActionBudgetSnapshot, createBranchBudgetSnapshot } = parts.facades.budget;
-            const { createBlockDiagnostics, recordCommandAction, createConsumedEventCommands, incrementCodeCount, getStopReasonLabel } = parts.facades.intel;
+            const { createBlockIntel, recordCommandAction, createConsumedEventCommands, incrementCodeCount, getStopReasonLabel } = parts.facades.intel;
             const { positiveInteger } = parts.facades.utils;
 
             function collectLinearMessageBlocks(list, startIndex, interpreterId, baseIndent = null, maxMessages, maxScanCommands, budgetLimit, originFrames = null, options = {}) {
@@ -43,16 +43,16 @@
                         budget: rootPathBudget,
                         frames,
                     }));
-                    const diagnostics = createScanDiagnostics(interpreterId, startIndex, scanBudget, options);
+                    const intel = createScanIntel(interpreterId, startIndex, scanBudget, options);
                     const blockLimit = getFinalBlockLimit(scanBudget, maxMessages);
                     let index = startIndex;
 
                     while (pendingPaths.length
-                        && diagnostics.scannedCommands < maxScanCommands
+                        && intel.scannedCommands < maxScanCommands
                         && canScanMorePaths(blocks, blockLimit, pendingPaths)) {
                         const path = shiftNextScanPath(pendingPaths, blocks, blockLimit);
                         if (!path || path.done) continue;
-                        const result = scanPathUntilYield(path, diagnostics, blocks, blockLimit, maxScanCommands);
+                        const result = scanPathUntilYield(path, intel, blocks, blockLimit, maxScanCommands);
                         if (Number.isFinite(Number(result && result.index))) index = Number(result.index);
                         if (result && Array.isArray(result.newPaths) && result.newPaths.length) {
                             result.newPaths.forEach((newPath) => {
@@ -62,32 +62,32 @@
                         if (result && result.requeue) enqueueScanPath(pendingPaths, queuedPathKeys, path);
                     }
 
-                    const blockedPredictions = filterBlockedReturnGuardPredictions(blocks, diagnostics);
+                    const blockedPredictions = filterBlockedReturnGuardPredictions(blocks, intel);
                     sortBlocksForPriority(blocks);
                     if (blocks.length > blockLimit) blocks.splice(blockLimit);
                     applyFinalBudgetToBlocks(blocks, scanBudget);
-                    diagnostics.budget = createBudgetSnapshot(scanBudget);
+                    intel.budget = createBudgetSnapshot(scanBudget);
                     blocks.forEach((block) => {
-                        if (block.foresightDiagnostics && typeof block.foresightDiagnostics === 'object') {
-                            block.foresightDiagnostics.budget = cloneBudgetSnapshot(block.foresightBudget);
-                            block.foresightDiagnostics.priorityOffset = block.priorityOffset;
+                        if (block.foresightIntel && typeof block.foresightIntel === 'object') {
+                            block.foresightIntel.budget = cloneBudgetSnapshot(block.foresightBudget);
+                            block.foresightIntel.priorityOffset = block.priorityOffset;
                         }
                     });
-                    if (!diagnostics.stopReason) {
-                        diagnostics.stopReason = selectScanStopReason(diagnostics, blocks, maxMessages, maxScanCommands, pendingPaths, {
+                    if (!intel.stopReason) {
+                        intel.stopReason = selectScanStopReason(intel, blocks, maxMessages, maxScanCommands, pendingPaths, {
                             blockedPredictions,
                         });
                     }
-                    diagnostics.stopReasonLabel = getStopReasonLabel(diagnostics.stopReason);
-                    diagnostics.stopIndex = index;
-                    diagnostics.blocks = blocks.length;
-                    if (!blocks.length && diagnostics.status === 'scanned') diagnostics.status = 'blocked';
-                    return { blocks, diagnostics };
+                    intel.stopReasonLabel = getStopReasonLabel(intel.stopReason);
+                    intel.stopIndex = index;
+                    intel.blocks = blocks.length;
+                    if (!blocks.length && intel.status === 'scanned') intel.status = 'blocked';
+                    return { blocks, intel };
                 }
 
-            function createScanDiagnostics(interpreterId, startIndex, budget, options = {}) {
+            function createScanIntel(interpreterId, startIndex, budget, options = {}) {
                     const captureCommandActions = options.captureCommandActions !== false;
-                    const captureBlockDiagnostics = options.captureBlockDiagnostics === true;
+                    const captureBlockIntel = options.captureBlockIntel === true;
                     const commandActionMessageLimit = captureCommandActions
                         ? positiveInteger(options.commandActionMessageLimit, 0)
                         : 0;
@@ -114,12 +114,12 @@
                         routeBarrierReason: '',
                         commandActions: captureCommandActions ? [] : null,
                         captureCommandActions,
-                        captureBlockDiagnostics,
+                        captureBlockIntel,
                         commandActionMessageLimit,
                         captureCommandActionPreview: commandActionMessageLimit > 0,
                         commandActionMessagesCaptured: 0,
                         commandActionMessageLimitReached: false,
-                        commandActionLimit: DIAGNOSTIC_ACTION_LIMIT,
+                        commandActionLimit: INTEL_ACTION_LIMIT,
                         commandActionsTruncated: 0,
                         pathStops: [],
                         blockedReturnGuards: {},
@@ -129,12 +129,12 @@
                     };
                 }
 
-            function filterBlockedReturnGuardPredictions(blocks, diagnostics) {
-                    const blocked = diagnostics && diagnostics.blockedReturnGuards;
+            function filterBlockedReturnGuardPredictions(blocks, intel) {
+                    const blocked = intel && intel.blockedReturnGuards;
                     let removed = 0;
                     if (!blocked || typeof blocked !== 'object') return removed;
-                    if (Array.isArray(diagnostics.commandActions)) {
-                        diagnostics.commandActions = diagnostics.commandActions.filter((action) => {
+                    if (Array.isArray(intel.commandActions)) {
+                        intel.commandActions = intel.commandActions.filter((action) => {
                             const blockedAction = hasBlockedReturnGuard(action && action.__returnGuards, blocked);
                             if (blockedAction) removed += 1;
                             return !blockedAction;
@@ -229,17 +229,17 @@
                     return returnStops.some((stop) => Math.max(0, Math.floor(Number(stop && stop.guardId) || 0)) > 0);
                 }
 
-            function createConsumedCommandsForDiagnostics(diagnostics, list, startIndex, nextIndex) {
-                    return diagnostics && diagnostics.captureCommandActions === false
+            function createConsumedCommandsForIntel(intel, list, startIndex, nextIndex) {
+                    return intel && intel.captureCommandActions === false
                         ? []
                         : createConsumedEventCommands(list, startIndex, nextIndex);
                 }
 
-            function createCommandActionBudgetSnapshot(diagnostics, budget) {
-                    return diagnostics
-                        && diagnostics.captureCommandActions !== false
-                        && Array.isArray(diagnostics.commandActions)
-                        && diagnostics.commandActions.length < DIAGNOSTIC_ACTION_LIMIT
+            function createCommandActionBudgetSnapshot(intel, budget) {
+                    return intel
+                        && intel.captureCommandActions !== false
+                        && Array.isArray(intel.commandActions)
+                        && intel.commandActions.length < INTEL_ACTION_LIMIT
                         ? createBudgetSnapshot(budget)
                         : null;
                 }
@@ -520,16 +520,16 @@
                     return guardId;
                 }
 
-            function scanPathUntilYield(path, diagnostics, blocks, maxMessages, maxScanCommands) {
+            function scanPathUntilYield(path, intel, blocks, maxMessages, maxScanCommands) {
                     let index = getPathIndex(path);
 
                     while (path.frames.length
-                        && diagnostics.scannedCommands < maxScanCommands
+                        && intel.scannedCommands < maxScanCommands
                         && (blocks.length < maxMessages || pathHasAnyReturnStop(path))
                         && hasBudgetRemaining(path.budget)) {
                         const frame = path.frames[path.frames.length - 1];
                         if (!frame || !Array.isArray(frame.list)) {
-                            return stopScanPath(path, diagnostics, 'missing-command', index);
+                            return stopScanPath(path, intel, 'missing-command', index);
                         }
 
                         index = frame.index;
@@ -540,28 +540,28 @@
                                 if (finished.shouldYield) return { requeue: true, index: getPathIndex(path) };
                                 continue;
                             }
-                            return stopScanPath(path, diagnostics, 'event-end', index);
+                            return stopScanPath(path, intel, 'event-end', index);
                         }
 
                         const command = frame.list[index];
-                        if (!command) return stopScanPath(path, diagnostics, 'missing-command', index);
+                        if (!command) return stopScanPath(path, intel, 'missing-command', index);
 
                         const commandIndent = Number(command.indent) || 0;
                         if (frame.expectedIndent === null) frame.expectedIndent = commandIndent;
                         if (commandIndent !== frame.expectedIndent) {
-                            return stopScanPath(path, diagnostics, 'indent-boundary', index, getEventCommandMetadata(command.code));
+                            return stopScanPath(path, intel, 'indent-boundary', index, getEventCommandMetadata(command.code));
                         }
 
                         const metadata = getEventCommandMetadata(command.code);
                         const code = metadata.code;
                         if (hasVisitedPathPosition(path, frame, index)) {
-                            return stopScanPath(path, diagnostics, 'path-cycle', index, metadata);
+                            return stopScanPath(path, intel, 'path-cycle', index, metadata);
                         }
                         rememberPathPosition(path, frame, index);
 
                         if (metadata.scanBehavior === 'frame-end') {
-                            diagnostics.scannedCommands += 1;
-                            recordCommandAction(diagnostics, path, () => ({
+                            intel.scannedCommands += 1;
+                            recordCommandAction(intel, path, () => ({
                                 index,
                                 metadata,
                                 action: 'frame-end',
@@ -576,48 +576,48 @@
                                 if (finished.shouldYield) return { requeue: true, index: getPathIndex(path) };
                                 continue;
                             }
-                            return stopScanPath(path, diagnostics, 'event-end', index);
+                            return stopScanPath(path, intel, 'event-end', index);
                         }
 
                         if (metadata.scanBehavior === 'message') {
                             const block = parseMessageCommandBlock(frame.list, index, frame.interpreterId);
                             if (!block || !block.rawText.trim()) {
-                                diagnostics.scannedCommands += 1;
-                                recordCommandAction(diagnostics, path, () => ({
+                                intel.scannedCommands += 1;
+                                recordCommandAction(intel, path, () => ({
                                     index,
                                     metadata,
                                     action: 'barrier',
                                     stopReason: 'empty-message',
                                     listContext: createFrameListContext(frame),
                                 }));
-                                return stopScanPath(path, diagnostics, 'empty-message', index, metadata);
+                                return stopScanPath(path, intel, 'empty-message', index, metadata);
                             }
                             attachFrameContextToBlock(block, frame);
-                            attachPathContextToBlock(block, path, diagnostics);
-                            const budgetBefore = createCommandActionBudgetSnapshot(diagnostics, path.budget);
+                            attachPathContextToBlock(block, path, intel);
+                            const budgetBefore = createCommandActionBudgetSnapshot(intel, path.budget);
                             spendBudget(path.budget, MESSAGE_BUDGET_COST);
-                            diagnostics.budget = createBudgetSnapshot(path.budget);
-                            diagnostics.scannedCommands += Math.max(1, block.nextIndex - index);
-                            diagnostics.blocks += 1;
-                            recordCommandAction(diagnostics, path, () => {
+                            intel.budget = createBudgetSnapshot(path.budget);
+                            intel.scannedCommands += Math.max(1, block.nextIndex - index);
+                            intel.blocks += 1;
+                            recordCommandAction(intel, path, () => {
                                 const action = {
                                     index,
                                     metadata,
                                     action: 'message',
-                                    budget: createActionBudgetSnapshot(budgetBefore, diagnostics.budget, MESSAGE_BUDGET_COST),
-                                    consumedCommands: createConsumedCommandsForDiagnostics(diagnostics, frame.list, index, block.nextIndex),
+                                    budget: createActionBudgetSnapshot(budgetBefore, intel.budget, MESSAGE_BUDGET_COST),
+                                    consumedCommands: createConsumedCommandsForIntel(intel, frame.list, index, block.nextIndex),
                                 };
                                 // listContext is only needed for the expanded command
                                 // tree. Omitting it keeps performance preview capture
-                                // clear of heavier frame diagnostics helpers.
-                                if (diagnostics.captureCommandActionPreview !== true) {
+                                // clear of heavier frame intel helpers.
+                                if (intel.captureCommandActionPreview !== true) {
                                     action.listContext = createFrameListContext(frame);
                                 }
                                 return action;
                             }, { previewKind: 'message' });
                             block.foresightBudget = createBudgetSnapshot(path.budget);
-                            if (diagnostics.captureBlockDiagnostics) {
-                                block.foresightDiagnostics = createBlockDiagnostics(diagnostics, block);
+                            if (intel.captureBlockIntel) {
+                                block.foresightIntel = createBlockIntel(intel, block);
                             }
                             blocks.push(block);
                             path.messageDistance += 1;
@@ -629,30 +629,30 @@
                         }
 
                         if (metadata.classification === 'branching') {
-                            return scanBranchCommand(path, diagnostics, frame, index, metadata);
+                            return scanBranchCommand(path, intel, frame, index, metadata);
                         }
 
                         if (metadata.scanBehavior === 'nested-list') {
                             const nested = readNestedListCommand(frame.list, index, frame.expectedIndent, metadata, path.frames);
                             if (nested.transparent) {
                                 const consumed = Math.max(1, nested.nextIndex - index);
-                                diagnostics.scannedCommands += consumed;
-                                diagnostics.advancedCommands += consumed;
-                                recordCommandAction(diagnostics, path, () => ({
+                                intel.scannedCommands += consumed;
+                                intel.advancedCommands += consumed;
+                                recordCommandAction(intel, path, () => ({
                                     index,
                                     metadata: nested.metadata,
                                     action: 'nested-list',
                                     listContext: createFrameListContext(frame),
                                     nestedList: nested.nestedList,
                                     nestedLists: nested.nestedLists,
-                                    consumedCommands: nested.consumedCommands || createConsumedCommandsForDiagnostics(diagnostics, frame.list, index, nested.nextIndex),
+                                    consumedCommands: nested.consumedCommands || createConsumedCommandsForIntel(intel, frame.list, index, nested.nextIndex),
                                 }));
-                                incrementCodeCount(diagnostics.transparentCommands, code);
-                                diagnostics.transparentCommandLabels[String(code)] = nested.metadata.label;
+                                incrementCodeCount(intel.transparentCommands, code);
+                                intel.transparentCommandLabels[String(code)] = nested.metadata.label;
                                 if (hasStalenessRisk(nested.metadata)) {
-                                    diagnostics.staleRiskCommands += 1;
-                                    incrementCodeCount(diagnostics.staleRiskCommandCounts, code);
-                                    diagnostics.staleRiskCommandLabels[String(code)] = nested.metadata.label;
+                                    intel.staleRiskCommands += 1;
+                                    incrementCodeCount(intel.staleRiskCommandCounts, code);
+                                    intel.staleRiskCommandLabels[String(code)] = nested.metadata.label;
                                 }
                                 frame.index = nested.nextIndex;
                                 index = frame.index;
@@ -663,8 +663,8 @@
                                 if (continuationPath) return { newPaths: [continuationPath, path], index: getPathIndex(path) };
                                 return { requeue: true, index: getPathIndex(path) };
                             }
-                            diagnostics.scannedCommands += 1;
-                            recordCommandAction(diagnostics, path, () => ({
+                            intel.scannedCommands += 1;
+                            recordCommandAction(intel, path, () => ({
                                 index,
                                 metadata,
                                 action: 'barrier',
@@ -672,24 +672,24 @@
                                 listContext: createFrameListContext(frame),
                                 nestedList: nested.nestedList || null,
                                 nestedLists: nested.nestedLists,
-                                consumedCommands: nested.consumedCommands || createConsumedCommandsForDiagnostics(diagnostics, frame.list, index, index + 1),
+                                consumedCommands: nested.consumedCommands || createConsumedCommandsForIntel(intel, frame.list, index, index + 1),
                             }));
-                            return stopScanPath(path, diagnostics, nested.stopReason || 'nested-list-unavailable', index, metadata);
+                            return stopScanPath(path, intel, nested.stopReason || 'nested-list-unavailable', index, metadata);
                         }
 
-                        const transparentRead = readTransparentCommand(frame.list, index, frame.expectedIndent, path.frames, diagnostics);
+                        const transparentRead = readTransparentCommand(frame.list, index, frame.expectedIndent, path.frames, intel);
                         if (transparentRead.transparent) {
                             const consumed = Math.max(1, transparentRead.nextIndex - index);
-                            diagnostics.scannedCommands += consumed;
-                            diagnostics.advancedCommands += consumed;
-                            incrementCodeCount(diagnostics.transparentCommands, code);
-                            diagnostics.transparentCommandLabels[String(code)] = transparentRead.metadata.label;
+                            intel.scannedCommands += consumed;
+                            intel.advancedCommands += consumed;
+                            incrementCodeCount(intel.transparentCommands, code);
+                            intel.transparentCommandLabels[String(code)] = transparentRead.metadata.label;
                             if (hasStalenessRisk(transparentRead.metadata)) {
-                                diagnostics.staleRiskCommands += 1;
-                                incrementCodeCount(diagnostics.staleRiskCommandCounts, code);
-                                diagnostics.staleRiskCommandLabels[String(code)] = transparentRead.metadata.label;
+                                intel.staleRiskCommands += 1;
+                                incrementCodeCount(intel.staleRiskCommandCounts, code);
+                                intel.staleRiskCommandLabels[String(code)] = transparentRead.metadata.label;
                             }
-                            recordCommandAction(diagnostics, path, () => ({
+                            recordCommandAction(intel, path, () => ({
                                 index,
                                 metadata: transparentRead.metadata,
                                 action: transparentRead.kind === 'movement-route'
@@ -698,10 +698,10 @@
                                 listContext: createFrameListContext(frame),
                                 nestedList: transparentRead.nestedList,
                                 nestedLists: transparentRead.nestedLists,
-                                consumedCommands: transparentRead.consumedCommands || createConsumedCommandsForDiagnostics(diagnostics, frame.list, index, transparentRead.nextIndex),
+                                consumedCommands: transparentRead.consumedCommands || createConsumedCommandsForIntel(intel, frame.list, index, transparentRead.nextIndex),
                                 routeCommandActions: transparentRead.routeCommandActions || [],
                             }));
-                            if (transparentRead.kind === 'movement-route') diagnostics.routeCommands += 1;
+                            if (transparentRead.kind === 'movement-route') intel.routeCommands += 1;
                             frame.index = transparentRead.nextIndex;
                             index = frame.index;
                             if (transparentRead.kind === 'nested-list') {
@@ -715,13 +715,13 @@
                             continue;
                         }
 
-                        diagnostics.scannedCommands += 1;
-                        diagnostics.routeBarrierCode = transparentRead.routeBarrierCode || null;
-                        diagnostics.routeBarrierReason = transparentRead.routeBarrierReason || '';
-                        diagnostics.routeBarrierLabel = transparentRead.routeBarrierLabel || '';
-                        if (diagnostics.routeBarrierCode !== null) diagnostics.routeBarriers += 1;
-                        const budgetBefore = createCommandActionBudgetSnapshot(diagnostics, path.budget);
-                        recordCommandAction(diagnostics, path, () => ({
+                        intel.scannedCommands += 1;
+                        intel.routeBarrierCode = transparentRead.routeBarrierCode || null;
+                        intel.routeBarrierReason = transparentRead.routeBarrierReason || '';
+                        intel.routeBarrierLabel = transparentRead.routeBarrierLabel || '';
+                        if (intel.routeBarrierCode !== null) intel.routeBarriers += 1;
+                        const budgetBefore = createCommandActionBudgetSnapshot(intel, path.budget);
+                        recordCommandAction(intel, path, () => ({
                             index,
                             metadata,
                             action: 'barrier',
@@ -730,37 +730,37 @@
                             listContext: createFrameListContext(frame),
                             nestedList: transparentRead.nestedList,
                             nestedLists: transparentRead.nestedLists,
-                            consumedCommands: transparentRead.consumedCommands || createConsumedCommandsForDiagnostics(diagnostics, frame.list, index, index + 1),
+                            consumedCommands: transparentRead.consumedCommands || createConsumedCommandsForIntel(intel, frame.list, index, index + 1),
                             routeCommandActions: transparentRead.routeCommandActions || [],
                         }));
-                        return stopScanPath(path, diagnostics, transparentRead.stopReason || 'barrier-command', index, metadata);
+                        return stopScanPath(path, intel, transparentRead.stopReason || 'barrier-command', index, metadata);
                     }
 
-                    if (!hasBudgetRemaining(path.budget)) return stopScanPath(path, diagnostics, 'budget-limit', index);
-                    if (blocks.length >= maxMessages) return stopScanPath(path, diagnostics, 'message-limit', index);
-                    return stopScanPath(path, diagnostics, 'scan-limit', index);
+                    if (!hasBudgetRemaining(path.budget)) return stopScanPath(path, intel, 'budget-limit', index);
+                    if (blocks.length >= maxMessages) return stopScanPath(path, intel, 'message-limit', index);
+                    return stopScanPath(path, intel, 'scan-limit', index);
                 }
 
-            function scanBranchCommand(path, diagnostics, frame, index, metadata) {
+            function scanBranchCommand(path, intel, frame, index, metadata) {
                     if (path.branchDepth >= MAX_BRANCH_DEPTH) {
-                        diagnostics.scannedCommands += 1;
-                        recordCommandAction(diagnostics, path, () => ({
+                        intel.scannedCommands += 1;
+                        recordCommandAction(intel, path, () => ({
                             index,
                             metadata,
                             action: 'barrier',
                             stopReason: 'branch-depth-limit',
                             listContext: createFrameListContext(frame),
-                            consumedCommands: createConsumedCommandsForDiagnostics(diagnostics, frame.list, index, index + 1),
+                            consumedCommands: createConsumedCommandsForIntel(intel, frame.list, index, index + 1),
                         }));
-                        return stopScanPath(path, diagnostics, 'branch-depth-limit', index, metadata);
+                        return stopScanPath(path, intel, 'branch-depth-limit', index, metadata);
                     }
 
                     const branchRead = readBranchCommand(frame.list, index, frame.expectedIndent, metadata);
-                    const budgetBefore = createCommandActionBudgetSnapshot(diagnostics, path.budget);
-                    diagnostics.scannedCommands += 1;
+                    const budgetBefore = createCommandActionBudgetSnapshot(intel, path.budget);
+                    intel.scannedCommands += 1;
 
                     if (!branchRead.transparent) {
-                        recordCommandAction(diagnostics, path, () => ({
+                        recordCommandAction(intel, path, () => ({
                             index,
                             metadata,
                             action: branchRead.stopReason === 'control-flow-target' ? 'control-flow' : 'barrier',
@@ -769,15 +769,15 @@
                             listContext: createFrameListContext(frame),
                             branches: branchRead.branches || [],
                             controlFlowTarget: branchRead.controlFlowTarget,
-                            consumedCommands: createConsumedCommandsForDiagnostics(diagnostics, frame.list, index, index + 1),
+                            consumedCommands: createConsumedCommandsForIntel(intel, frame.list, index, index + 1),
                         }));
-                        return stopScanPath(path, diagnostics, branchRead.stopReason, index, metadata, {
+                        return stopScanPath(path, intel, branchRead.stopReason, index, metadata, {
                             controlFlowTarget: branchRead.controlFlowTarget,
                         });
                     }
 
                     const allocations = splitBudgetAcrossBranches(path.budget && path.budget.remaining, branchRead.targets.length);
-                    recordCommandAction(diagnostics, path, () => ({
+                    recordCommandAction(intel, path, () => ({
                         index,
                         metadata,
                         action: 'branch',
@@ -791,14 +791,14 @@
                             budget: createBranchBudgetSnapshot(path.budget, allocations[branchIndex] || 0, branchIndex, branchRead.targets.length),
                             actions: [],
                         })),
-                        consumedCommands: createConsumedCommandsForDiagnostics(diagnostics, frame.list, index, index + 1),
+                        consumedCommands: createConsumedCommandsForIntel(intel, frame.list, index, index + 1),
                     }));
 
                     const newPaths = [];
                     branchRead.targets.forEach((target, branchIndex) => {
                         const allocation = allocations[branchIndex] || 0;
                         if (allocation <= 0) {
-                            appendPathStop(diagnostics, createBranchPathStop(path, target, 'budget-limit', index, metadata));
+                            appendPathStop(intel, createBranchPathStop(path, target, 'budget-limit', index, metadata));
                             return;
                         }
                         newPaths.push(createBranchScanPath(path, frame, target, allocation, branchIndex, branchRead.targets.length, metadata));
@@ -807,22 +807,22 @@
                     return { requeue: false, newPaths, index: branchRead.joinIndex };
                 }
 
-            function selectScanStopReason(diagnostics, blocks, maxMessages, maxScanCommands, pendingPaths, options = {}) {
-                    const stops = Array.isArray(diagnostics.pathStops) ? diagnostics.pathStops : [];
+            function selectScanStopReason(intel, blocks, maxMessages, maxScanCommands, pendingPaths, options = {}) {
+                    const stops = Array.isArray(intel.pathStops) ? intel.pathStops : [];
                     if (Number(options.blockedPredictions) > 0 && Array.isArray(blocks) && !blocks.length) {
                         const barrierStop = stops.find((stop) => stop && isBarrierStopReason(stop.stopReason));
                         if (barrierStop) return barrierStop.stopReason;
                     }
-                    if (diagnostics.scannedCommands >= maxScanCommands) return 'scan-limit';
+                    if (intel.scannedCommands >= maxScanCommands) return 'scan-limit';
                     if (stops.some((stop) => stop && stop.stopReason === 'budget-limit')) return 'budget-limit';
-                    if (diagnostics.budget && Number(diagnostics.budget.remaining) <= 0) return 'budget-limit';
+                    if (intel.budget && Number(intel.budget.remaining) <= 0) return 'budget-limit';
                     if (blocks.length >= maxMessages) return 'message-limit';
                     if (Array.isArray(pendingPaths) && pendingPaths.length) return 'scan-limit';
                     const nonEventStop = stops.find((stop) => stop && stop.stopReason && stop.stopReason !== 'event-end');
                     return nonEventStop ? nonEventStop.stopReason : 'event-end';
                 }
 
-            Object.assign(parts, { collectLinearMessageBlocks, createScanDiagnostics, scanPathUntilYield, scanBranchCommand, selectScanStopReason });
+            Object.assign(parts, { collectLinearMessageBlocks, createScanIntel, scanPathUntilYield, scanBranchCommand, selectScanStopReason });
         },
     });
 })();

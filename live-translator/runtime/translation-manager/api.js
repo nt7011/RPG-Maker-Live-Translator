@@ -19,15 +19,15 @@
         const { lookup, request } = controllerFacades.requests;
 
         function getStats() {
-            const diagnostics = scope.translationIntel.getSnapshot({ jobLimit: 1 });
+            const intel = scope.translationIntel.getSnapshot({ jobLimit: 1 });
             return {
-                queued: diagnostics.summary.queued,
-                running: diagnostics.summary.running,
-                capacity: diagnostics.provider.capacity,
-                jobs: diagnostics.summary.jobs,
-                completed: diagnostics.cache.completed,
-                subscribers: diagnostics.summary.activeSubscribers,
-                streamJobs: diagnostics.summary.streamJobs,
+                queued: intel.summary.queued,
+                running: intel.summary.running,
+                capacity: intel.provider.capacity,
+                jobs: intel.summary.jobs,
+                completed: intel.cache.completed,
+                subscribers: intel.summary.activeSubscribers,
+                streamJobs: intel.summary.streamJobs,
             };
         }
 

@@ -79,10 +79,13 @@
             if (state && state.runs && state.runs.get(run.key) === run) state.runs.delete(run.key);
             scope.recordsByItemId.delete(run.recordId);
             scope.trackedParentRuns.delete(run);
-            scope.adapterContract.cancelItemTranslation(run, reason, { abortJob: true });
             scope.adapterContract.retireItem(run, status || 'stale', {
                 eventType: status === 'stale' ? 'item.stale' : `item.${status || 'stale'}`,
                 message: reason,
+                policy: {
+                    kind: 'retired',
+                    translationAction: 'cancel',
+                },
                 details: Object.assign({
                     mode: 'sprite-run',
                     glyphs: run.group ? run.group.length : 0,

@@ -220,7 +220,7 @@
                 /**
                  * Create a readable item id for observations that do not provide one.
                  *
-                 * Generated ids are intentionally diagnostic, not stable across process
+                 * Generated ids are intentionally intel, not stable across process
                  * restarts. Stable slot signatures handle refresh/replacement within a
                  * running game.
                  */

@@ -1,4 +1,4 @@
-.diagnostics-reminder,
+.intel-reminder,
 .lmstudio-complaint {
     min-height: 30px;
     margin-top: 8px;
@@ -9,21 +9,21 @@
     line-height: 1.35;
 }
 
-.header-complaints .diagnostics-reminder,
+.header-complaints .intel-reminder,
 .header-complaints .lmstudio-complaint {
     margin-top: 0;
 }
 
-.diagnostics-console-panel {
+.intel-console-panel {
     display: block;
 }
 
-.diagnostics-stack {
+.intel-stack {
     display: grid;
     gap: 14px;
 }
 
-.diagnostics-section {
+.intel-section {
     display: grid;
     gap: 8px;
     min-width: 0;
@@ -31,7 +31,7 @@
     border-top: 1px solid var(--gui-border-soft);
 }
 
-.diagnostics-section:first-child {
+.intel-section:first-child {
     padding-top: 0;
     border-top: 0;
 }
@@ -45,14 +45,14 @@
     margin-bottom: 8px;
 }
 
-.diagnostic-job-list {
+.intel-job-list {
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
     align-items: flex-start;
 }
 
-.diagnostic-job-list > .empty {
+.intel-job-list > .empty {
     flex: 1 1 100%;
     padding: 14px;
     border: 1px dashed var(--gui-border-dashed);
@@ -60,7 +60,7 @@
     background: var(--gui-surface-muted);
 }
 
-.diagnostic-job-pill {
+.intel-job-pill {
     display: inline-flex;
     align-items: center;
     max-width: min(100%, 520px);
@@ -75,16 +75,16 @@
     text-align: left;
 }
 
-.diagnostic-job-pill:hover {
+.intel-job-pill:hover {
     filter: var(--gui-hover-filter);
 }
 
-.diagnostic-job-active {
+.intel-job-active {
     border-color: var(--gui-accent);
     box-shadow: 0 0 0 2px var(--gui-accent-ring);
 }
 
-.diagnostic-job-text {
+.intel-job-text {
     min-width: 0;
     overflow: hidden;
     color: var(--gui-text);
@@ -94,7 +94,7 @@
     white-space: nowrap;
 }
 
-.diagnostic-job-meta {
+.intel-job-meta {
     flex: 0 0 auto;
     min-height: 22px;
     padding: 2px 7px;
@@ -106,7 +106,7 @@
     white-space: nowrap;
 }
 
-.diagnostic-job-expanded {
+.intel-job-expanded {
     flex: 1 0 100%;
     display: grid;
     gap: 12px;
@@ -119,14 +119,14 @@
     background: var(--gui-surface);
 }
 
-.diagnostic-job-expanded-header {
+.intel-job-expanded-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 10px;
 }
 
-.diagnostic-job-expanded-title {
+.intel-job-expanded-title {
     min-width: 0;
     overflow-wrap: anywhere;
     color: var(--gui-text-muted);
@@ -175,47 +175,47 @@
     color: var(--gui-text-muted);
 }
 
-.diagnostic-job-running {
+.intel-job-running {
     border-color: var(--gui-job-running-border);
     background: var(--gui-job-running-bg);
 }
 
-.diagnostic-job-queued {
+.intel-job-queued {
     border-color: var(--gui-job-queued-border);
     background: var(--gui-job-queued-bg);
 }
 
-.diagnostic-job-completed {
+.intel-job-completed {
     border-color: var(--gui-job-completed-border);
     background: var(--gui-job-completed-bg);
 }
 
-.diagnostic-job-failed {
+.intel-job-failed {
     border-color: var(--gui-job-failed-border);
     background: var(--gui-job-failed-bg);
 }
 
-.diagnostic-job-canceled,
-.diagnostic-job-skipped {
+.intel-job-canceled,
+.intel-job-skipped {
     border-color: var(--gui-job-muted-border);
     background: var(--gui-job-muted-bg);
 }
 
-.diagnostic-job-running .diagnostic-job-text,
-.diagnostic-job-queued .diagnostic-job-text,
-.diagnostic-job-completed .diagnostic-job-text,
-.diagnostic-job-failed .diagnostic-job-text,
-.diagnostic-job-canceled .diagnostic-job-text,
-.diagnostic-job-skipped .diagnostic-job-text {
+.intel-job-running .intel-job-text,
+.intel-job-queued .intel-job-text,
+.intel-job-completed .intel-job-text,
+.intel-job-failed .intel-job-text,
+.intel-job-canceled .intel-job-text,
+.intel-job-skipped .intel-job-text {
     color: var(--gui-on-status);
 }
 
-.diagnostic-job-running .diagnostic-job-meta,
-.diagnostic-job-queued .diagnostic-job-meta,
-.diagnostic-job-completed .diagnostic-job-meta,
-.diagnostic-job-failed .diagnostic-job-meta,
-.diagnostic-job-canceled .diagnostic-job-meta,
-.diagnostic-job-skipped .diagnostic-job-meta {
+.intel-job-running .intel-job-meta,
+.intel-job-queued .intel-job-meta,
+.intel-job-completed .intel-job-meta,
+.intel-job-failed .intel-job-meta,
+.intel-job-canceled .intel-job-meta,
+.intel-job-skipped .intel-job-meta {
     background: var(--gui-status-meta-bg);
     color: var(--gui-status-meta-text);
 }

@@ -11,7 +11,7 @@
         name: 'adapters.spriteText',
         requires: {
             measuredBounds: 'runtime.measuredBounds',
-            operationDiagnostics: 'runtime.operationDiagnostics',
+            operationIntel: 'runtime.operationIntel',
             renderTransaction: 'runtime.renderTransaction',
             controllerFacades: 'adapters.spriteText.controllerFacades',
             install: 'adapters.spriteText.install',
@@ -31,7 +31,7 @@
         },
         factory({
             measuredBounds,
-            operationDiagnostics,
+            operationIntel,
             renderTransaction,
             controllerFacades,
             install,
@@ -108,7 +108,7 @@
         const scope = {
             globalScope,
             logger: context.logger || console,
-            diag: typeof context.diag === 'function' ? context.diag : () => {},
+            traceLog: typeof context.traceLog === 'function' ? context.traceLog : () => {},
             preview: typeof context.preview === 'function' ? context.preview : (text) => String(text ?? ''),
             textCodec: requireTextCodec(context.textCodec, 'SpriteText'),
             stripControls: typeof context.stripControls === 'function'
@@ -219,14 +219,14 @@
     /**
      * Normalize the sprite-facing bitmap capability facet.
      */
-    function normalizeBitmapServices(services, diagnostics = {}) {
+    function normalizeBitmapServices(services, intel = {}) {
         const api = services && typeof services === 'object' ? services : {};
-        const onError = operationDiagnostics.createOperationErrorReporter({
+        const onError = operationIntel.createOperationErrorReporter({
             component: 'SpriteText',
             operationLabel: 'Bitmap service',
             metricBase: 'bitmapServices.error',
-            perf: diagnostics.perf,
-            logger: diagnostics.logger,
+            perf: intel.perf,
+            logger: intel.logger,
         });
         return {
             hasMutationPublisher() {

@@ -11,10 +11,11 @@
 
     function createRenderProofController(context = {}) {
     const { entryLifecycleState } = context;
-    const { bitmapReplay, entryRecords, textMetrics } = context.facades;
+    const { bitmapReplay, drawIdentity, entryRecords, textMetrics } = context.facades;
     const { firstNonEmptyString } = entryRecords;
     const { materializeCopiedRenderTargetsForEntry } = bitmapReplay;
-    const { createSlotKey, getSurfaceId } = textMetrics;
+    const { getSurfaceId } = textMetrics;
+    const { getEntrySlotKey, isSameLogicalDrawSlot } = drawIdentity;
 
     function resolveDetachedRenderTarget(entry, windowData, windowInstance) {
                 if (!entry || !windowData || !windowInstance) {
@@ -105,7 +106,7 @@
                 if (!sameText(sourceDraw.recordId, entry.recordId)) {
                     return rejectProof('detached-proof-record-mismatch', details);
                 }
-                if (!sameText(sourceDraw.slotKey, entry.slotKey)) {
+                if (!sameSlotIdentity(sourceDraw.slotKey, entry.slotKey)) {
                     return rejectProof('detached-proof-slot-mismatch', details);
                 }
                 if (!sameGeneration(sourceDraw.entryGeneration, entry.surfaceRevision)) {
@@ -146,7 +147,7 @@
                 try {
                     windowData.texts.forEach((candidate) => {
                         if (match || !candidate || entryLifecycleState.isStale(candidate)) return;
-                        if (getEntrySlotKey(candidate) !== expectedSlot) return;
+                        if (!sameSlotIdentity(getEntrySlotKey(candidate), expectedSlot)) return;
                         if (!sameCurrentContentsRevision(candidate, windowData)) return;
                         const candidateSource = firstNonEmptyString(
                             candidate.normalizedSource,
@@ -169,8 +170,12 @@
                 try {
                     windowData.texts.forEach((candidate) => {
                         if (conflict || !candidate || candidate === entry || entryLifecycleState.isStale(candidate)) return;
-                        if (getEntrySlotKey(candidate) === slotKey) {
-                            conflict = createDetachedRenderConflict(candidate, 'slot-key');
+                        const candidateSlotKey = getEntrySlotKey(candidate);
+                        if (sameSlotIdentity(candidateSlotKey, slotKey)) {
+                            conflict = createDetachedRenderConflict(
+                                candidate,
+                                candidateSlotKey === slotKey ? 'slot-key' : 'canonical-slot-key'
+                            );
                             return;
                         }
                         if (!sameCurrentContentsRevision(candidate, windowData)) return;
@@ -281,16 +286,6 @@
                 }, extra || {});
             }
 
-    function getEntrySlotKey(entry) {
-                if (!entry) return '';
-                return entry.slotKey || createSlotKey(
-                    entry.type,
-                    entry.position && entry.position.x,
-                    entry.position && entry.position.y,
-                    entry.originalParams
-                );
-            }
-
     function getSourceDraw(entry) {
                 const lifecycle = entry && entry.renderLifecycle && typeof entry.renderLifecycle === 'object'
                     ? entry.renderLifecycle
@@ -384,6 +379,10 @@
                 const leftText = String(left || '');
                 const rightText = String(right || '');
                 return !!leftText && leftText === rightText;
+            }
+
+    function sameSlotIdentity(left, right) {
+                return isSameLogicalDrawSlot(left, right);
             }
 
     function isContentsInvalidationReason(reason) {

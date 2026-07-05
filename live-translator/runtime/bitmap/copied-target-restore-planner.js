@@ -114,7 +114,7 @@
                     };
                     const invariants = validateCopiedTargetRestorePlan(plan);
                     plan.invariants = invariants;
-                    plan.diagnostics = createPlanDiagnostics({
+                    plan.intel = createPlanIntel({
                         dependencySearchRects,
                         requestedMaterialRestoreCoverageRects,
                         survivorCoverageRects,
@@ -138,7 +138,7 @@
                         items: [],
                         coverageRects: [],
                         rejectedOps: [],
-                        diagnostics: null,
+                        intel: null,
                         searchProofs: [],
                     };
                     searchRects.forEach((searchRect) => {
@@ -160,7 +160,7 @@
                         normalized.items.forEach((item) => merged.items.push(item));
                         normalized.coverageRects.forEach((rect) => merged.coverageRects.push(rect));
                         normalized.rejectedOps.forEach((op) => merged.rejectedOps.push(op));
-                        if (normalized.diagnostics) merged.diagnostics = normalized.diagnostics;
+                        if (normalized.intel) merged.intel = normalized.intel;
                         merged.searchProofs.push({
                             dependencySearchRect: cloneRect(searchRect),
                             itemCount: normalized.items.length,
@@ -312,11 +312,11 @@
                     rejectedOps: copyRejectedOps(source && source.rejectedOps),
                     rejectedOpCount: Array.isArray(source && source.rejectedOps) ? source.rejectedOps.length : 0,
                     searchProofs: copySearchProofs(source && source.searchProofs),
-                    diagnostics: copyPlainObject(source && source.diagnostics),
+                    intel: copyPlainObject(source && source.intel),
                 };
             }
 
-            function createPlanDiagnostics(input) {
+            function createPlanIntel(input) {
                 const replayItems = Array.isArray(input && input.surfaceReplayItems) ? input.surfaceReplayItems : [];
                 const rejectedOps = Array.isArray(input && input.surfaceReplayPlan && input.surfaceReplayPlan.rejectedOps)
                     ? input.surfaceReplayPlan.rejectedOps
@@ -347,7 +347,7 @@
                         items: result,
                         coverageRects: [],
                         rejectedOps: [],
-                        diagnostics: null,
+                        intel: null,
                     };
                 }
                 const source = result && typeof result === 'object' ? result : {};
@@ -357,7 +357,7 @@
                         : (Array.isArray(source.replayItems) ? source.replayItems : []),
                     coverageRects: Array.isArray(source.coverageRects) ? copyRects(source.coverageRects) : [],
                     rejectedOps: Array.isArray(source.rejectedOps) ? source.rejectedOps.slice() : [],
-                    diagnostics: source.diagnostics && typeof source.diagnostics === 'object' ? source.diagnostics : null,
+                    intel: source.intel && typeof source.intel === 'object' ? source.intel : null,
                 };
             }
 

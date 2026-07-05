@@ -144,7 +144,7 @@ function createGuiConfiguredPolicy(input = {}) {
 }
 
 function createGuiRuntimeState() {
-    const diagnostics = state.diagnostics || null;
+    const intel = state.intel || null;
     return {
         context: normalizeGuiPolicyObject(state.runtimeContext) || {
             supportPath: state.supportPath || '',
@@ -173,8 +173,8 @@ function createGuiRuntimeState() {
             archived: Array.isArray(state.archivedTexts) ? state.archivedTexts : [],
             summary: state.textSummary || null,
         },
-        diagnostics,
-        provider: diagnostics && diagnostics.provider ? diagnostics.provider : null,
+        intel,
+        provider: intel && intel.provider ? intel.provider : null,
         drawCaptureTrace: state.drawCaptureTrace || null,
         foresight: state.foresight || null,
         providerLabel: state.provider || '-',
@@ -188,11 +188,10 @@ function createGuiViewState() {
             messagesOnly: state.foresightMessagesOnly === true,
         },
         textRecords: {
-            selectedDetailKey: state.activeTextRecordDetailKey || '',
-            renderedDetailKey: state.renderedTextRecordDetailKey || '',
+            selectedDetailKey: state.selectedTextRecordKey || state.activeTextRecordDetailKey || '',
         },
-        diagnostics: {
-            selectedDetailKey: state.diagnosticDetailKey || '',
+        intel: {
+            selectedDetailKey: state.intelDetailKey || '',
         },
         logs: {
             count: Array.isArray(state.logLines) ? state.logLines.length : 0,
@@ -248,14 +247,14 @@ function deriveGuiEffectivePolicy(configured, runtime, view) {
         },
         textRecords: {
             detailsEnabled,
+            historyVisible: intelSurface,
             inactiveDisplayLimit: configured.textRecords.inactiveDisplayLimit,
             showForesightSpoilers: configured.foresight.showSpoilers,
             selectedDetailKey: view.textRecords.selectedDetailKey,
-            renderedDetailKey: view.textRecords.renderedDetailKey,
         },
-        diagnosticJobs: {
+        intelJobs: {
             detailsEnabled,
-            selectedDetailKey: view.diagnostics.selectedDetailKey,
+            selectedDetailKey: view.intel.selectedDetailKey,
         },
         reservedLane: deriveGuiReservedLanePolicy(runtime.provider, configured.reservedLane),
     };
@@ -292,13 +291,13 @@ function getGuiDrawCaptureDisabledReason(configured, traceRuntimeEnabled) {
 
 function deriveGuiForesightDisabledReason(configuredEnabled, intelSurface) {
     if (!configuredEnabled) return 'Foresight disabled in settings.json';
-    if (!intelSurface) return 'Intel disabled in settings.json';
+    if (!intelSurface) return 'Status disabled in settings.json';
     return '';
 }
 
 function deriveGuiForesightMessageFilterTitle(configuredEnabled, intelSurface, messagesOnly) {
     if (!configuredEnabled) return 'Foresight disabled in settings.json';
-    if (!intelSurface) return 'Intel disabled in settings.json';
+    if (!intelSurface) return 'Status disabled in settings.json';
     return messagesOnly
         ? 'Show all foresight actions'
         : 'Only show game messages and message-bearing paths';
@@ -383,7 +382,7 @@ function getGuiEffectivePolicy(policySnapshot = null) {
     return (policySnapshot || getGuiPolicySnapshot()).effectivePolicy;
 }
 
-function getGuiDiagnosticsSnapshotRequest(policySnapshot = null) {
+function getGuiIntelSnapshotRequest(policySnapshot = null) {
     return getGuiEffectivePolicy(policySnapshot).intel.snapshotRequest;
 }
 
@@ -399,8 +398,8 @@ function getGuiTextRecordPolicy(policySnapshot = null) {
     return getGuiEffectivePolicy(policySnapshot).textRecords;
 }
 
-function getGuiDiagnosticJobPolicy(policySnapshot = null) {
-    return getGuiEffectivePolicy(policySnapshot).diagnosticJobs;
+function getGuiIntelJobPolicy(policySnapshot = null) {
+    return getGuiEffectivePolicy(policySnapshot).intelJobs;
 }
 
 function getGuiReservedLanePolicy(provider = null, policySnapshot = null) {

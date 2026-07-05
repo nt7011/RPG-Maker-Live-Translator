@@ -36,9 +36,6 @@
 
             const COMMIT_PHASE_BY_STATUS = Object.freeze({
                 committed: PHASES.RENDER_COMMITTED,
-                // Legacy input alias: remove after retained renderCommit payloads stop
-                // using accepted to mean committed pixels.
-                accepted: PHASES.RENDER_COMMITTED,
                 deferred: PHASES.RENDER_DEFERRED,
                 rejected: PHASES.RENDER_REJECTED,
                 noop: PHASES.RENDER_NOOP,
@@ -59,7 +56,7 @@
                 phase: true,
                 committed: true,
                 // Legacy input key: keep reserved so old renderCommit payloads do not
-                // leak an accepted field into diagnostic evidence.
+                // leak an accepted field into intel evidence.
                 accepted: true,
                 deferred: true,
                 rejected: true,
@@ -484,7 +481,7 @@
                     entryGeneration: finiteNumber(source.entryGeneration, finiteNumber(source.generation, commandGeneration)),
                     strategy: firstString(source.strategy, source.renderStrategy),
                     renderStrategy: firstString(source.renderStrategy, source.strategy),
-                    commandId: firstString(source.commandId, source.renderCommand && source.renderCommand.id),
+                    commandId: firstString(source.commandId, source.renderCommand && source.renderCommand.commandId),
                     commandGeneration,
                     translationReceived: firstString(source.translationReceived),
                     translationDrawn: firstString(source.translationDrawn),
@@ -687,13 +684,11 @@
             }
 
             function normalizeCommitStatus(status, phase) {
-                const value = firstString(status).replace(/_/g, '-').toLowerCase();
-                // Legacy input alias: remove after retained renderCommit payloads stop
-                // using accepted/rendered to mean committed pixels.
-                if (value === 'accepted' || value === 'rendered' || value === 'committed') return 'committed';
-                if (value === 'deferred' || value === 'queued' || value === 'pending') return 'deferred';
-                if (value === 'noop' || value === 'no-op' || value === 'skipped') return 'noop';
-                if (value === 'rejected' || value === 'failed') return 'rejected';
+                const value = firstString(status);
+                if (value === 'committed') return 'committed';
+                if (value === 'deferred') return 'deferred';
+                if (value === 'noop') return 'noop';
+                if (value === 'rejected') return 'rejected';
                 const normalizedPhase = normalizePhase(phase, '');
                 if (normalizedPhase === PHASES.RENDER_COMMITTED) return 'committed';
                 if (normalizedPhase === PHASES.RENDER_DEFERRED) return 'deferred';

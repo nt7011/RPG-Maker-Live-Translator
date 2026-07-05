@@ -8,10 +8,10 @@
 
     function createDrawEligibilityController(context = {}) {
         const facades = context.facades || {};
-        const { bitmapReplay = {}, textMetrics = {} } = facades;
-        const { isValidRect } = bitmapReplay;
+        const { bitmapGeometry = {}, textMetrics = {} } = facades;
+        const { isValidRect } = bitmapGeometry;
         const { estimateEntryBounds } = textMetrics;
-        requireFunction(isValidRect, 'bitmapReplay.isValidRect');
+        requireFunction(isValidRect, 'bitmapGeometry.isValidRect');
         requireFunction(estimateEntryBounds, 'textMetrics.estimateEntryBounds');
 
         function describeDrawableWindowTextGeometry(type, x, y, params = {}) {

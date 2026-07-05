@@ -1,32 +1,32 @@
-// Window text adapter support: redraw diagnostics and source-ink evidence.
+// Window text adapter support: redraw intel and source-ink evidence.
 (() => {
     'use strict';
 
     LiveTranslatorDefine({
-        name: 'adapters.windowText.redrawDiagnostics',
+        name: 'adapters.windowText.redrawIntel',
         factory() {
 
-    function createRedrawDiagnosticsController(context = {}) {
+    function createRedrawIntelController(context = {}) {
         const {
             measuredBounds,
-            cloneDiagnosticArea,
-            cloneDiagnosticRect,
-            roundDiagnosticNumber,
+            cloneIntelArea,
+            cloneIntelRect,
+            roundIntelNumber,
         } = context;
 
-        function buildRedrawDiagnosticSummary(input = {}) {
-            const snapshot = input.snapshotDiagnostics || {};
-            const restore = input.restoreDiagnostics || {};
+        function buildRedrawIntelSummary(input = {}) {
+            const snapshot = input.snapshotIntel || {};
+            const restore = input.restoreIntel || {};
             const restoreSnapshot = restore.snapshot || {};
             const nativeBackdrop = restoreSnapshot.nativeBackdrop || {};
-            const sourceInk = input.sourceInkDiagnostics || {};
+            const sourceInk = input.sourceInkIntel || {};
             const sourceInkSourceCap = input.sourceInkSourceCap || {};
             const sourceInkSourceExpansion = input.sourceInkSourceExpansion || {};
             const replayBeforeItems = input.replayBeforeItems || {};
             const replayAfterItems = input.replayAfterItems || {};
             return {
                 clearMode: String(input.clearMode || 'none'),
-                clearArea: formatDiagnosticAreaForSummary(input.clearArea),
+                clearArea: formatIntelAreaForSummary(input.clearArea),
                 snapshotAvailable: snapshot.available === true,
                 snapshotBitmapMatches: snapshot.bitmapMatches === true,
                 snapshotRestoreAttempted: snapshot.restoreAttempted === true,
@@ -36,7 +36,7 @@
                 snapshotPartialClear: snapshot.partialClear === true,
                 snapshotPartialClearRects: Number(snapshot.partialClearRects) || 0,
                 snapshotRestoreSkippedReason: String(snapshot.restoreSkippedReason || ''),
-                snapshotArea: formatDiagnosticAreaForSummary(snapshot.area),
+                snapshotArea: formatIntelAreaForSummary(snapshot.area),
                 snapshotRevision: formatSnapshotRevisionForSummary(snapshot),
                 restoreKind: String(restore.kind || ''),
                 restoreSource: String(restore.source || ''),
@@ -47,23 +47,23 @@
                 replayCounts: formatReplayCountsForSummary(input, replayBeforeItems, replayAfterItems),
                 replayBeforeMethods: formatReplayMethodsForSummary(replayBeforeItems),
                 replayAfterMethods: formatReplayMethodsForSummary(replayAfterItems),
-                replayRect: formatDiagnosticRectForSummary(input.replayRect),
-                replayDirtyRect: formatDiagnosticRectForSummary(input.replayDirtyRect),
-                replayClipRect: formatDiagnosticRectForSummary(input.replayClipRect),
-                drawSampleArea: formatDiagnosticRectForSummary(input.drawSampleArea),
+                replayRect: formatIntelRectForSummary(input.replayRect),
+                replayDirtyRect: formatIntelRectForSummary(input.replayDirtyRect),
+                replayClipRect: formatIntelRectForSummary(input.replayClipRect),
+                drawSampleArea: formatIntelRectForSummary(input.drawSampleArea),
                 supportsReplayClip: input.supportsReplayClip === true,
                 bitmapSurfaceYOffsetSource: String(input.bitmapSurfaceYOffsetSource || ''),
-                sourceInkBounds: formatDiagnosticRectForSummary(sourceInk.worldBounds),
+                sourceInkBounds: formatIntelRectForSummary(sourceInk.worldBounds),
                 sourceInkBottomEdge: sourceInk.touches && sourceInk.touches.bottom === true,
                 sourceInkSourceCapApplied: sourceInkSourceCap.applied === true,
                 sourceInkSourceCapRight: formatNullableNumberForSummary(sourceInkSourceCap.capRight),
                 sourceInkSourceExpandApplied: sourceInkSourceExpansion.applied === true,
                 sourceInkSourceExpandBottom: formatSourceInkExpansionBottomForSummary(sourceInkSourceExpansion),
-                sourceInkSourceExpandBounds: formatDiagnosticRectForSummary(sourceInkSourceExpansion.expandedBounds),
+                sourceInkSourceExpandBounds: formatIntelRectForSummary(sourceInkSourceExpansion.expandedBounds),
             };
         }
 
-        function getEntryPixelSnapshotDiagnostics(entry, contents, propertyName) {
+        function getEntryPixelSnapshotIntel(entry, contents, propertyName) {
             const snapshot = entry && propertyName ? entry[propertyName] : null;
             if (!snapshot) {
                 return {
@@ -85,33 +85,33 @@
             };
         }
 
-        function getSourceInkDiagnostics(entry) {
-            if (!measuredBounds || typeof measuredBounds.measureSnapshotInkDiagnostics !== 'function') {
+        function getSourceInkIntel(entry) {
+            if (!measuredBounds || typeof measuredBounds.measureSnapshotInkIntel !== 'function') {
                 return {
                     available: false,
                     changed: false,
                     reason: 'measured-bounds-unavailable',
                 };
             }
-            return measuredBounds.measureSnapshotInkDiagnostics(
+            return measuredBounds.measureSnapshotInkIntel(
                 entry && entry.backgroundSnapshot,
                 entry && entry.sourceSnapshot,
                 { maxPixels: 32768 }
             );
         }
 
-        function updateSourceInkObservation(entry, diagnostics) {
-            if (!entry || !diagnostics || diagnostics.available !== true) return false;
-            if (diagnostics.changed === true) {
+        function updateSourceInkObservation(entry, intel) {
+            if (!entry || !intel || intel.available !== true) return false;
+            if (intel.changed === true) {
                 entry.sourceInkObserved = true;
                 return true;
             }
             return false;
         }
 
-        function shouldSuppressRedrawForSourceInk(entry, diagnostics) {
-            if (!entry || !diagnostics || diagnostics.available !== true) return false;
-            if (diagnostics.changed !== false) return false;
+        function shouldSuppressRedrawForSourceInk(entry, intel) {
+            if (!entry || !intel || intel.available !== true) return false;
+            if (intel.changed !== false) return false;
             // A completed entry may be redrawn after its original source was
             // already proven visible. Only suppress entries that never showed
             // native ink; those are native no-op draws, not text to translate.
@@ -119,10 +119,10 @@
         }
 
         function formatReplayCountsForSummary(input, replayBeforeItems, replayAfterItems) {
-            const beforeCount = finiteDiagnosticCount(replayBeforeItems && replayBeforeItems.count);
-            const afterCount = finiteDiagnosticCount(replayAfterItems && replayAfterItems.count);
-            const beforeFiltered = finiteDiagnosticCount(input && input.replayBeforeFiltered);
-            const afterFiltered = finiteDiagnosticCount(input && input.replayAfterFiltered);
+            const beforeCount = finiteIntelCount(replayBeforeItems && replayBeforeItems.count);
+            const afterCount = finiteIntelCount(replayAfterItems && replayAfterItems.count);
+            const beforeFiltered = finiteIntelCount(input && input.replayBeforeFiltered);
+            const afterFiltered = finiteIntelCount(input && input.replayAfterFiltered);
             return [
                 `before=${beforeCount}`,
                 `after=${afterCount}`,
@@ -137,24 +137,24 @@
                 : {};
             return Object.keys(methods)
                 .sort()
-                .map((name) => `${name}:${finiteDiagnosticCount(methods[name])}`);
+                .map((name) => `${name}:${finiteIntelCount(methods[name])}`);
         }
 
         function formatSnapshotRevisionForSummary(snapshot) {
             return [
-                `capture=${formatNullableDiagnosticValue(snapshot && snapshot.contentsRevisionAtCapture)}`,
-                `redraw=${formatNullableDiagnosticValue(snapshot && snapshot.contentsRevisionAtRedraw)}`,
+                `capture=${formatNullableIntelValue(snapshot && snapshot.contentsRevisionAtCapture)}`,
+                `redraw=${formatNullableIntelValue(snapshot && snapshot.contentsRevisionAtRedraw)}`,
             ].join(';');
         }
 
-        function formatDiagnosticAreaForSummary(area) {
+        function formatIntelAreaForSummary(area) {
             if (!area) return '';
             const clone = cloneArea(area);
             if (!clone) return '';
             return `x=${clone.x},y=${clone.y},w=${clone.w},h=${clone.h}`;
         }
 
-        function formatDiagnosticRectForSummary(rect) {
+        function formatIntelRectForSummary(rect) {
             if (!rect) return '';
             const clone = cloneRect(rect);
             if (!clone) return '';
@@ -186,35 +186,35 @@
         }
 
         function cloneArea(area) {
-            return typeof cloneDiagnosticArea === 'function' ? cloneDiagnosticArea(area) : null;
+            return typeof cloneIntelArea === 'function' ? cloneIntelArea(area) : null;
         }
 
         function cloneRect(rect) {
-            return typeof cloneDiagnosticRect === 'function' ? cloneDiagnosticRect(rect) : null;
+            return typeof cloneIntelRect === 'function' ? cloneIntelRect(rect) : null;
         }
 
         function roundNumber(value) {
-            return typeof roundDiagnosticNumber === 'function' ? roundDiagnosticNumber(value) : value;
+            return typeof roundIntelNumber === 'function' ? roundIntelNumber(value) : value;
         }
 
         return {
-            buildRedrawDiagnosticSummary,
-            getEntryPixelSnapshotDiagnostics,
-            getSourceInkDiagnostics,
+            buildRedrawIntelSummary,
+            getEntryPixelSnapshotIntel,
+            getSourceInkIntel,
             updateSourceInkObservation,
             shouldSuppressRedrawForSourceInk,
         };
     }
 
-    function finiteDiagnosticCount(value) {
+    function finiteIntelCount(value) {
         const number = Number(value);
         return Number.isFinite(number) ? Math.max(0, Math.floor(number)) : 0;
     }
 
-    function formatNullableDiagnosticValue(value) {
+    function formatNullableIntelValue(value) {
         return value === null || value === undefined ? 'null' : String(value);
     }
-            return { create: createRedrawDiagnosticsController };
+            return { create: createRedrawIntelController };
         },
     });
 })();

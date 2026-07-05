@@ -12,7 +12,7 @@
         factory({ hookWrapper, conversionScope }) {
 
     function createController(scope = {}) {
-        const { globalScope, diag, adapterContract, surfaceOwnership } = scope;
+        const { globalScope, traceLog, adapterContract, surfaceOwnership } = scope;
         const { installGameInterpreterExecutionContextHook, installGameInterpreterChildOriginHook, installGameMessageAddOriginHook, installGameInterpreterMessageOriginHook, installGamePlayerTransferForesightHook } = scope.controllerFacades.foresightHooks;
         const { installGameMessageClearHook } = scope.controllerFacades.clear;
         const { installOrchestratorSubscription, getWindowId } = scope.controllerFacades.records;
@@ -25,11 +25,11 @@
          */
         function install() {
             if (typeof Window_Message === 'undefined' || !Window_Message || !Window_Message.prototype) {
-                diag('[GameMessage] Window_Message unavailable; skipping message hooks.');
+                traceLog('[GameMessage] Window_Message unavailable; skipping message hooks.');
                 return { status: 'skipped', reason: 'Window_Message is unavailable.' };
             }
             if (!hasTextOrchestrator()) {
-                diag('[GameMessage] Text orchestrator unavailable; skipping message hooks.');
+                traceLog('[GameMessage] Text orchestrator unavailable; skipping message hooks.');
                 return { status: 'skipped', reason: 'Text orchestrator is unavailable.' };
             }
 
@@ -271,7 +271,7 @@
         }
 
         /**
-         * Publish only a diagnostic marker. Cross-adapter ownership now flows
+         * Publish only a intel marker. Cross-adapter ownership now flows
          * through the adapter contract instead of a message-specific global.
          */
         function exposeAdapterApi() {

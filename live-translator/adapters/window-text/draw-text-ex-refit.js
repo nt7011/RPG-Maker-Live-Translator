@@ -10,19 +10,19 @@
         const services = context.services || {};
         const facades = context.facades || {};
         const { surface: surfaceService = {} } = services;
-        const { bitmapReplay = {}, diagnostics = {}, entryRecords = {}, renderCommands = {}, textConversion = {}, textMetrics = {} } = facades;
+        const { bitmapGeometry = {}, intel = {}, entryRecords = {}, renderCommands = {}, textConversion = {}, textMetrics = {} } = facades;
         const entryLifecycleState = context.entryLifecycleState || {};
-        const { isValidRect } = bitmapReplay;
+        const { isValidRect } = bitmapGeometry;
         const { windowEntryBelongsToContents } = surfaceService;
-        const { recordDecision, roundDiagnosticNumber } = diagnostics;
+        const { recordDecision, roundIntelNumber } = intel;
         const { getEntryStatus, isEntryCompleted } = entryRecords;
         const { redrawTranslatedText } = renderCommands;
         const { sanitizeDrawTextOutput } = textConversion;
         const { estimateEntryBounds } = textMetrics;
-        requireFunction(isValidRect, 'bitmapReplay.isValidRect');
+        requireFunction(isValidRect, 'bitmapGeometry.isValidRect');
         requireFunction(windowEntryBelongsToContents, 'services.surface.windowEntryBelongsToContents');
-        requireFunction(recordDecision, 'diagnostics.recordDecision');
-        requireFunction(roundDiagnosticNumber, 'diagnostics.roundDiagnosticNumber');
+        requireFunction(recordDecision, 'intel.recordDecision');
+        requireFunction(roundIntelNumber, 'intel.roundIntelNumber');
         requireFunction(getEntryStatus, 'entryRecords.getEntryStatus');
         requireFunction(isEntryCompleted, 'entryRecords.isEntryCompleted');
         requireFunction(redrawTranslatedText, 'renderCommands.redrawTranslatedText');
@@ -59,7 +59,7 @@
                     neighborSlotKey: neighborEntry.slotKey || '',
                     neighborType: neighborEntry.type || '',
                     neighborStatus: getEntryStatus(neighborEntry, ''),
-                    neighborLeft: roundDiagnosticNumber(neighborLeft),
+                    neighborLeft: roundIntelNumber(neighborLeft),
                     candidateSlotKey: candidate.slotKey || '',
                 };
                 recordDecision(candidate, 'draw.refit', 'same-line right text boundary detected', details);

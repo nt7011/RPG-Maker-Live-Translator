@@ -43,7 +43,7 @@
                 sourceContentsRole: entry.sourceContentsRole || '',
                 translationDrawn: renderedText,
                 translationReceived: entry.providerText || '',
-                renderPlan: copiedTargetRedrawPlan.diagnostics,
+                renderPlan: copiedTargetRedrawPlan.intel,
             };
             details.surfaceProof = copiedTargetProofSummary.createCopiedTargetSurfaceProof(
                 null,
@@ -58,7 +58,7 @@
         }
 
         function renderCopiedTargetsAfterWindowRedraw(input = {}) {
-            const { entry, renderedText, textFit, redrawDetails, diagnostics } = input;
+            const { entry, renderedText, textFit, redrawDetails, intel } = input;
             const copiedTargetRedrawPlan = createCopiedTargetRedrawPlan(entry, renderedText);
             const renderPlan = copiedTargetRedrawPlan.renderPlan;
             const copiedTargetRedraw = isPlannedCopiedTargetRedraw(renderPlan)
@@ -68,17 +68,17 @@
                 ))
                 : { redrawn: 0, proof: null };
 
-            attachCopiedTargetRedrawDiagnostics(
+            attachCopiedTargetRedrawIntel(
                 redrawDetails,
-                diagnostics,
-                copiedTargetRedrawPlan.diagnostics,
+                intel,
+                copiedTargetRedrawPlan.intel,
                 copiedTargetRedraw.redrawn,
                 copiedTargetRedraw.proof,
                 createRenderSurfaceProof
             );
             return {
                 copiedTargets: copiedTargetRedraw.redrawn,
-                diagnostics: copiedTargetRedrawPlan.diagnostics || null,
+                intel: copiedTargetRedrawPlan.intel || null,
                 renderPlan,
                 proof: copiedTargetRedraw.proof,
             };
@@ -147,17 +147,17 @@
             && renderPlan.steps.redrawCopiedTargets === true);
     }
 
-    function attachCopiedTargetRedrawDiagnostics(
+    function attachCopiedTargetRedrawIntel(
         redrawDetails,
-        diagnostics,
-        renderPlanDiagnostics,
+        intel,
+        renderPlanIntel,
         copiedTargetRedraws,
         copiedTargetProof,
         createRenderSurfaceProof
     ) {
-        if (renderPlanDiagnostics) {
-            if (redrawDetails) redrawDetails.copiedTargetRenderPlan = renderPlanDiagnostics;
-            if (diagnostics) diagnostics.copiedTargetRenderPlan = renderPlanDiagnostics;
+        if (renderPlanIntel) {
+            if (redrawDetails) redrawDetails.copiedTargetRenderPlan = renderPlanIntel;
+            if (intel) intel.copiedTargetRenderPlan = renderPlanIntel;
         }
         const copiedTargetRedrawnCount = Math.max(
             nonNegativeNumber(copiedTargetRedraws),
@@ -165,7 +165,7 @@
         );
         if (copiedTargetRedrawnCount > 0) {
             if (redrawDetails) redrawDetails.copiedTargets = copiedTargetRedrawnCount;
-            if (diagnostics) diagnostics.copiedTargets = copiedTargetRedrawnCount;
+            if (intel) intel.copiedTargets = copiedTargetRedrawnCount;
             if (copiedTargetProof) {
                 if (redrawDetails) {
                     redrawDetails.copiedTargetProof = copiedTargetProof;
@@ -175,7 +175,7 @@
                         createRenderSurfaceProof
                     );
                 }
-                if (diagnostics) diagnostics.copiedTargetProof = copiedTargetProof;
+                if (intel) intel.copiedTargetProof = copiedTargetProof;
             }
         }
     }

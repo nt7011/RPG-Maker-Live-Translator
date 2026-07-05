@@ -28,7 +28,7 @@
                 getLifecycleRecord: getLifecycleRecord,
                 getRenderGeneration: getRenderGeneration,
                 isRenderTargetCurrent: isRenderTargetCurrent,
-                onRenderQueued: applyRenderCommand,
+                onRenderCommandReady: applyRenderCommand,
                 onRenderRejected: handleRenderRejected,
                 onFailed(target, event, route) {
                     handleRequestFailed(target, event, route.recordId);
@@ -39,9 +39,9 @@
                 onMissingRecord(route, event, command) {
                     const recordId = route && route.recordId ? route.recordId : '';
                     if (!recordId) return;
-                    if (route.eventType === 'item.render_queued') {
+                    if (route.eventType === 'item.render_command_ready') {
                         retireDetachedRecord(recordId, 'message-detached-completed', {
-                            commandId: command && command.id ? command.id : '',
+                            commandId: command && command.commandId ? command.commandId : '',
                         });
                     } else if (route.eventType === 'item.failed') {
                         retireDetachedRecord(recordId, 'message-detached-failed', event && event.details || null);
@@ -226,7 +226,7 @@
         }
 
         /**
-         * Return a diagnostic type for one message window.
+         * Return a intel type for one message window.
          */
         function getWindowType(windowInstance) {
             return windowInstance && windowInstance.constructor && windowInstance.constructor.name
@@ -235,7 +235,7 @@
         }
 
         /**
-         * Observe text through the orchestrator and isolate diagnostics failures.
+         * Observe text through the orchestrator and isolate intel failures.
          */
         function observeMessageRecord(record, eventType) {
             if (!record || !record.observation) return null;
@@ -338,6 +338,7 @@
             const retired = adapterContract.retireItem(target, status || 'disappeared', Object.assign({}, options || {}, {
                 eventType: options.eventType || `item.${status || 'disappeared'}`,
                 message: reason || '',
+                policy: options.policy,
                 details,
                 recordDetached: options.recordDetached === true,
             }));
@@ -384,7 +385,7 @@
         }
 
         /**
-         * Detach a render target while preserving enough data for diagnostics.
+         * Detach a render target while preserving enough data for intel.
          */
         function forgetRenderTarget(windowInstance, reason, details = {}) {
             const renderSession = getMessageRenderSession(windowInstance);

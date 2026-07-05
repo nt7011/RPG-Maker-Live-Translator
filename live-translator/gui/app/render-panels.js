@@ -8,7 +8,7 @@ function refreshRuntimeFeed() {
         state.hookResults = [];
         state.hookSummary = null;
         state.textSummary = null;
-        state.diagnostics = null;
+        state.intel = null;
         state.drawCaptureTrace = null;
         state.foresight = null;
         state.activeTexts = [];
@@ -27,7 +27,7 @@ function refreshRuntimeFeed() {
                 ? gameWindow.LiveTranslatorHookInstallResults
                 : []);
         state.hookResults = results.map(normalizeHookFeedResult);
-        const snapshotOptions = getGuiDiagnosticsSnapshotRequest(refreshGuiPolicySnapshot());
+        const snapshotOptions = getGuiIntelSnapshotRequest(refreshGuiPolicySnapshot());
         const textSnapshot = readTextOrchestratorSnapshot(gameWindow, snapshotOptions);
         const hasTextFeed = Boolean(textSnapshot);
         const textFeed = normalizeTextOrchestratorSnapshot(textSnapshot);
@@ -35,7 +35,7 @@ function refreshRuntimeFeed() {
         state.detachedTexts = textFeed.detached;
         state.archivedTexts = textFeed.archived;
         state.textSummary = textFeed.summary;
-        state.diagnostics = normalizeDiagnosticsSnapshot(readTranslationIntelSnapshot(gameWindow, snapshotOptions));
+        state.intel = normalizeIntelSnapshot(readTranslationIntelSnapshot(gameWindow, snapshotOptions));
         state.drawCaptureTrace = normalizeDrawCaptureTraceSnapshot(gameWindow.LiveTranslatorDrawCaptureTraceSnapshot);
         state.foresight = normalizeForesightSnapshot(readForesightIntelSnapshot(gameWindow, snapshotOptions));
         state.hookSummary = snapshot && snapshot.summary
@@ -44,12 +44,12 @@ function refreshRuntimeFeed() {
                 ? Object.assign({}, gameWindow.LiveTranslatorHookInstallSummary)
                 : summarizeHookResults(state.hookResults));
         refreshGuiPolicySnapshot();
-        return state.hookResults.length > 0 || hasTextFeed || !!state.diagnostics || !!state.drawCaptureTrace || !!state.foresight;
+        return state.hookResults.length > 0 || hasTextFeed || !!state.intel || !!state.drawCaptureTrace || !!state.foresight;
     } catch (err) {
         state.hookResults = [];
         state.hookSummary = null;
         state.textSummary = null;
-        state.diagnostics = null;
+        state.intel = null;
         state.drawCaptureTrace = null;
         state.foresight = null;
         state.activeTexts = [];
@@ -77,7 +77,7 @@ function readForesightIntelSnapshot(gameWindow, options = {}) {
 
 function renderStatus(policySnapshot = refreshGuiPolicySnapshot()) {
     if (typeof syncFoldedPanelDefaults === 'function') syncFoldedPanelDefaults(policySnapshot);
-    renderDiagnosticsPanel(policySnapshot);
+    renderIntelPanel(policySnapshot);
     renderDrawCaptureTracePanel(policySnapshot);
     renderForesightPanel(policySnapshot);
 }
@@ -97,6 +97,8 @@ function renderRuntimePanelsForFeed(policySnapshot = refreshGuiPolicySnapshot(),
     if (force || hasRuntimePanelKeyChanged('textRecords', keys.textRecords)) {
         renderTextRecordSections(policySnapshot);
         rememberRuntimePanelKey('textRecords', keys.textRecords);
+    } else if (typeof syncTextRecordVolatileDom === 'function') {
+        syncTextRecordVolatileDom(createTextRecordRenderContext(policySnapshot));
     }
 }
 
@@ -115,9 +117,10 @@ function rememberRuntimePanelKey(name, key) {
 function createRuntimePanelRenderKeys(policySnapshot = getGuiPolicySnapshot()) {
     const effectivePolicy = getGuiEffectivePolicy(policySnapshot);
     const visibleHookResults = getVisibleHookResults(policySnapshot);
+    const textRecordRenderContext = createTextRecordRenderContext(policySnapshot);
     return {
         status: createRuntimePanelRenderKey({
-            diagnostics: createIntelPanelKeySource(state.diagnostics),
+            intel: createIntelPanelKeySource(state.intel),
             drawCaptureTrace: createDrawCapturePanelKeySource(state.drawCaptureTrace),
             foresight: createForesightPanelKeySource(state.foresight),
             intelPolicy: effectivePolicy.intel,
@@ -127,7 +130,7 @@ function createRuntimePanelRenderKeys(policySnapshot = getGuiPolicySnapshot()) {
         }),
         hooks: createRuntimePanelRenderKey({
             summary: getVisibleHookSummary(policySnapshot),
-            diagnosticsEnabled: effectivePolicy.diagnostics.enabled === true,
+            intelEnabled: effectivePolicy.diagnostics.enabled === true,
             results: visibleHookResults.map((item) => [
                 item && item.name,
                 item && item.displayName,
@@ -142,16 +145,27 @@ function createRuntimePanelRenderKeys(policySnapshot = getGuiPolicySnapshot()) {
                 detailsEnabled: effectivePolicy.textRecords.detailsEnabled,
                 inactiveDisplayLimit: effectivePolicy.textRecords.inactiveDisplayLimit,
                 showForesightSpoilers: effectivePolicy.textRecords.showForesightSpoilers,
+                selectedDetailKey: effectivePolicy.textRecords.selectedDetailKey,
             },
-            active: createTextRecordPanelKeySource(state.activeTexts),
-            detached: createTextRecordPanelKeySource(state.detachedTexts),
-            archived: createTextRecordPanelKeySource(state.archivedTexts),
+            active: createTextRecordPanelKeySource(state.activeTexts, {
+                bodyId: 'active-texts',
+            }, textRecordRenderContext),
+            detached: createTextRecordPanelKeySource(state.detachedTexts, {
+                bodyId: 'detached-texts',
+                limit: effectivePolicy.textRecords.inactiveDisplayLimit,
+                itemOptions: { inactive: true, lifecycleLabel: 'detached' },
+            }, textRecordRenderContext),
+            archived: createTextRecordPanelKeySource(state.archivedTexts, {
+                bodyId: 'archived-texts',
+                limit: effectivePolicy.textRecords.inactiveDisplayLimit,
+                itemOptions: { inactive: true, lifecycleLabel: 'archived' },
+            }, textRecordRenderContext),
         }),
     };
 }
 
-function createIntelPanelKeySource(diagnostics) {
-    const source = diagnostics || {};
+function createIntelPanelKeySource(intel) {
+    const source = intel || {};
     const provider = source.provider || {};
     const jobs = source.jobs || {};
     const summary = source.summary || {};
@@ -183,7 +197,7 @@ function createIntelPanelKeySource(diagnostics) {
             lastCapacityRefreshAt: provider.lastCapacityRefreshAt || '',
             lastCapacityRefreshError: provider.lastCapacityRefreshError || '',
         },
-        providerErrors: createLmStudioDiagnosticErrorKeySource(jobs),
+        providerErrors: createLmStudioIntelErrorKeySource(jobs),
         summary: {
             queued: summary.queued || 0,
             running: summary.running || 0,
@@ -196,7 +210,7 @@ function createIntelPanelKeySource(diagnostics) {
     };
 }
 
-function createLmStudioDiagnosticErrorKeySource(jobs) {
+function createLmStudioIntelErrorKeySource(jobs) {
     const source = jobs && typeof jobs === 'object' ? jobs : {};
     return ['running', 'queued', 'past'].map((name) => {
         const list = Array.isArray(source[name]) ? source[name] : [];
@@ -248,25 +262,29 @@ function createForesightPanelKeySource(snapshot) {
     };
 }
 
-function createTextRecordPanelKeySource(records) {
-    return (Array.isArray(records) ? records : []).map((item) => [
-        getTextRecordKey(item),
-        item && item.status,
-        item && item.lifecycleState,
-        item && item.displayLifecycle,
-        item && item.rawText,
-        item && item.original,
-        item && item.translation,
-        item && item.translationReceived,
-        item && item.translationDrawn,
-        item && item.updatedAt,
-        item && item.seenAt,
-        item && item.disappearedAt,
-        item && item.deactivatedAt,
-        item && item.metadata && item.metadata.foresightConsumed,
-        item && item.policy,
-        Array.isArray(item && item.history) ? item.history.length : 0,
-    ]);
+function createTextRecordPanelKeySource(records, options = {}, renderContext = createTextRecordRenderContext()) {
+    const rows = createTextRecordRows(getPrioritizedTextRecords(records || [], options.limit), options);
+    const activeIndex = findActiveTextRecordIndex(rows, renderContext);
+    return rows.map((row, index) => {
+        const itemOptions = Object.assign({
+            active: index === activeIndex,
+            detailKey: row.detailKey,
+            recordKey: row.recordKey,
+            domKey: row.domKey,
+        }, row.itemOptions);
+        return {
+            domKey: row.domKey,
+            recordKey: row.recordKey,
+            row: createTextRecordRowRenderKey(row.item, itemOptions, renderContext),
+            detail: index === activeIndex
+                ? createTextRecordDetailRenderKey(row.item, Object.assign({}, row.itemOptions, {
+                    detailKey: row.detailKey,
+                    recordKey: row.recordKey,
+                    domKey: getTextRecordDetailDomKey(row.recordKey),
+                }), renderContext)
+                : '',
+        };
+    });
 }
 
 function createRuntimePanelRenderKey(value) {
@@ -277,9 +295,9 @@ function createRuntimePanelRenderKey(value) {
     }
 }
 
-function renderDiagnosticsPanel(policySnapshot = refreshGuiPolicySnapshot()) {
-    const diagnostics = state.diagnostics;
-    const translatorStatus = createLmStudioStatusModel(diagnostics);
+function renderIntelPanel(policySnapshot = refreshGuiPolicySnapshot()) {
+    const intel = state.intel;
+    const translatorStatus = createLmStudioStatusModel(intel);
     renderLmStudioStatus(translatorStatus);
     renderLmStudioComplaint(translatorStatus);
     renderReservedLaneReminder(translatorStatus, policySnapshot);
@@ -292,10 +310,10 @@ function getLmStudioStatusSource() {
     };
 }
 
-function createLmStudioStatusModel(diagnostics, source = getLmStudioStatusSource()) {
+function createLmStudioStatusModel(intel, source = getLmStudioStatusSource()) {
     const configSource = source && typeof source === 'object' ? source : {};
-    const diagnosticProvider = diagnostics && diagnostics.provider ? diagnostics.provider : null;
-    const provider = diagnosticProvider || {};
+    const intelProvider = intel && intel.provider ? intel.provider : null;
+    const provider = intelProvider || {};
     const runtimeProvider = normalizeTranslatorProviderName(provider.kind || '');
     const configuredProvider = normalizeTranslatorProviderName(configSource.provider || '');
     const effectiveProvider = runtimeProvider && runtimeProvider !== 'unknown'
@@ -311,11 +329,11 @@ function createLmStudioStatusModel(diagnostics, source = getLmStudioStatusSource
         };
     }
 
-    const connectionError = findLmStudioConnectionError(diagnostics, configSource);
+    const connectionError = findLmStudioConnectionError(intel, configSource);
     const availabilityComplaint = findLmStudioAvailabilityComplaint(provider);
     const statusUpdatedAt = getLmStudioStatusUpdatedAt(provider);
     const jobError = provider.modelSelectionReady === true
-        ? findLatestLmStudioJobError(diagnostics && diagnostics.jobs, statusUpdatedAt)
+        ? findLatestLmStudioJobError(intel && intel.jobs, statusUpdatedAt)
         : '';
     const capacity = Number(provider.capacity) || 0;
     const concurrencyVisible = provider.capacityVerified === true && capacity > 0;
@@ -338,7 +356,7 @@ function createLmStudioStatusModel(diagnostics, source = getLmStudioStatusSource
         complaint,
         complaintVisible: !!complaint,
         laneVisible: !hasError && !complaint && concurrencyVisible,
-        provider: diagnosticProvider,
+        provider: intelProvider,
     };
 }
 
@@ -364,11 +382,11 @@ function normalizeStatusText(value) {
     return String(value || '').replace(/\s+/gu, ' ').trim();
 }
 
-function findLmStudioConnectionError(diagnostics, source) {
+function findLmStudioConnectionError(intel, source) {
     const configError = source && source.configError ? String(source.configError) : '';
     if (configError) return configError;
 
-    const provider = diagnostics && diagnostics.provider ? diagnostics.provider : {};
+    const provider = intel && intel.provider ? intel.provider : {};
     if (provider.apiResponding === true) return '';
     const providerError = provider.modelCatalogError || provider.lastCapacityRefreshError || '';
     return providerError ? String(providerError) : '';
@@ -649,12 +667,12 @@ function syncForesightMessageFilterToggle(policySnapshot = refreshGuiPolicySnaps
 }
 
 function createForesightDynamicRenderKey(policySnapshot = refreshGuiPolicySnapshot()) {
-    const diagnostics = state.diagnostics || {};
-    const summary = diagnostics.summary || {};
+    const intel = state.intel || {};
+    const summary = intel.summary || {};
     const textRecordPolicy = getGuiTextRecordPolicy(policySnapshot);
     return [
         textRecordPolicy.showForesightSpoilers ? 'spoilers:show' : 'spoilers:censor',
-        diagnostics.updatedAt || '',
+        intel.updatedAt || '',
         summary.queued || 0,
         summary.running || 0,
         summary.activeSubscribers || 0,
@@ -693,29 +711,29 @@ function setForesightCopyEnabled(enabled) {
     const foresightPolicy = getGuiForesightPolicy();
     button.hidden = !foresightPolicy.controlsEnabled;
     button.disabled = !enabled;
-    button.title = enabled ? 'Copy foresight diagnostics' : 'No foresight diagnostics to copy';
+    button.title = enabled ? 'Copy foresight status' : 'No foresight status to copy';
 }
 
 function renderCapacityStatus(provider) {
     const source = provider || {};
     if (source.lastCapacityRefreshError) {
-        setSummaryStatus('diag-capacity-status', 'bad', 'capacity fallback');
-        if (refs['diag-capacity-status']) refs['diag-capacity-status'].title = source.lastCapacityRefreshError;
+        setSummaryStatus('intel-capacity-status', 'bad', 'capacity fallback');
+        if (refs['intel-capacity-status']) refs['intel-capacity-status'].title = source.lastCapacityRefreshError;
         return;
     }
-    if (refs['diag-capacity-status']) refs['diag-capacity-status'].title = '';
+    if (refs['intel-capacity-status']) refs['intel-capacity-status'].title = '';
     if (source.refreshingCapacity) {
-        setSummaryStatus('diag-capacity-status', 'neutral', 'refreshing capacity');
+        setSummaryStatus('intel-capacity-status', 'neutral', 'refreshing capacity');
         return;
     }
     if (source.lastCapacityRefreshAt) {
-        setSummaryStatus('diag-capacity-status', 'ok', `capacity refreshed ${formatElapsedSince(source.lastCapacityRefreshAt)} ago`);
+        setSummaryStatus('intel-capacity-status', 'ok', `capacity refreshed ${formatElapsedSince(source.lastCapacityRefreshAt)} ago`);
         return;
     }
-    setSummaryStatus('diag-capacity-status', 'neutral', 'capacity pending');
+    setSummaryStatus('intel-capacity-status', 'neutral', 'capacity pending');
 }
 
-function renderDiagnosticJobList(bodyId, jobs, mode, policySnapshot = refreshGuiPolicySnapshot()) {
+function renderIntelJobList(bodyId, jobs, mode, policySnapshot = refreshGuiPolicySnapshot()) {
     const list = Array.isArray(jobs) ? jobs : [];
     const container = refs[bodyId];
     if (!container) return;
@@ -729,11 +747,11 @@ function renderDiagnosticJobList(bodyId, jobs, mode, policySnapshot = refreshGui
 
     container.innerHTML = '';
     list.forEach((job) => {
-        const key = getDiagnosticJobDetailKey(mode, job);
-        container.appendChild(createDiagnosticJobPill(job, mode, key, policySnapshot));
-        const jobPolicy = getGuiDiagnosticJobPolicy(policySnapshot);
+        const key = getIntelJobDetailKey(mode, job);
+        container.appendChild(createIntelJobPill(job, mode, key, policySnapshot));
+        const jobPolicy = getGuiIntelJobPolicy(policySnapshot);
         if (jobPolicy.detailsEnabled && jobPolicy.selectedDetailKey === key) {
-            container.appendChild(createDiagnosticJobExpanded(job, mode, key));
+            container.appendChild(createIntelJobExpanded(job, mode, key));
         }
     });
 }

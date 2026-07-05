@@ -22,7 +22,7 @@
                     if (hasHookInChain(Ctor.prototype.destroy, '__trPixiTextDestroyWrapped', DESTROY_HOOK_TOKEN)) return true;
                     const originalDestroy = Ctor.prototype.destroy;
                     const wrapped = function(...args) {
-                        retireTree(this, 'pixi-text-destroyed', label, 'removed');
+                            retireTree(this, 'pixi-text-destroyed', label, 'removed', { kind: 'retired' });
                         return originalDestroy.apply(this, args);
                     };
                     wrapped.__trOriginal = originalDestroy;
@@ -40,7 +40,7 @@
                         const originalRemoveChild = Ctor.prototype.removeChild;
                         const wrapped = function(...children) {
                             const result = originalRemoveChild.apply(this, children);
-                            children.forEach((child) => retireTree(child, 'pixi-text-removed', '', 'removed'));
+                            children.forEach((child) => retireTree(child, 'pixi-text-removed', '', 'removed', { kind: 'retired' }));
                             return result;
                         };
                         wrapped.__trOriginal = originalRemoveChild;
@@ -55,7 +55,7 @@
                         const wrapped = function(index) {
                             const child = this && Array.isArray(this.children) ? this.children[index] : null;
                             const result = originalRemoveChildAt.apply(this, arguments);
-                            retireTree(child || result, 'pixi-text-removed', '', 'removed');
+                            retireTree(child || result, 'pixi-text-removed', '', 'removed', { kind: 'retired' });
                             return result;
                         };
                         wrapped.__trOriginal = originalRemoveChildAt;
@@ -71,7 +71,7 @@
                             const removed = snapshotRemovedChildren(this, args);
                             const result = originalRemoveChildren.apply(this, args);
                             const children = Array.isArray(result) && result.length ? result : removed;
-                            children.forEach((child) => retireTree(child, 'pixi-text-removed', '', 'removed'));
+                            children.forEach((child) => retireTree(child, 'pixi-text-removed', '', 'removed', { kind: 'retired' }));
                             return result;
                         };
                         wrapped.__trOriginal = originalRemoveChildren;
@@ -84,7 +84,7 @@
                         && !hasHookInChain(Ctor.prototype.destroy, '__trPixiTextRemovalWrapped', REMOVAL_HOOK_TOKEN)) {
                         const originalDestroy = Ctor.prototype.destroy;
                         const wrapped = function(...args) {
-                            retireTree(this, 'pixi-container-destroyed', '', 'removed');
+                            retireTree(this, 'pixi-container-destroyed', '', 'removed', { kind: 'retired' });
                             return originalDestroy.apply(this, args);
                         };
                         wrapped.__trOriginal = originalDestroy;
@@ -96,14 +96,14 @@
                     return installed;
                 }
         
-        function retireTree(displayObject, reason, labelHint, status) {
+        function retireTree(displayObject, reason, labelHint, status, policy) {
                     if (!displayObject) return;
-                    retireCurrentItem(displayObject, reason, labelHint, status);
+                    retireCurrentItem(displayObject, reason, labelHint, status, policy);
                     const children = Array.isArray(displayObject.children) ? displayObject.children.slice() : [];
-                    children.forEach((child) => retireTree(child, reason, labelHint, status));
+                    children.forEach((child) => retireTree(child, reason, labelHint, status, policy));
                 }
         
-        function retireCurrentItem(displayObject, reason, labelHint = '', status = 'disappeared') {
+        function retireCurrentItem(displayObject, reason, labelHint = '', status = 'disappeared', policy) {
                     const state = getState(displayObject);
                     if (!state || !state.itemId) return false;
                     if (!isStateActive(state)) {
@@ -117,6 +117,7 @@
                     adapterContract.retireItem(state, status, {
                         eventType: status === 'stale' ? 'item.replaced' : `item.${status}`,
                         message: reason,
+                        policy,
                         details,
                     });
                     clearItemState(displayObject, reason);

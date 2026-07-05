@@ -1,17 +1,17 @@
-// Bitmap text adapter support: draw diagnostics.
+// Bitmap text adapter support: draw intel.
 // Hook installation stays in install.js; draw timing and attribution live here.
 (() => {
     'use strict';
 
     LiveTranslatorDefine({
-        name: 'adapters.bitmapText.drawDiagnostics',
+        name: 'adapters.bitmapText.drawIntel',
         requires: {
             sourceObservationContract: 'runtime.bitmap.sourceObservation',
         },
         factory({ sourceObservationContract }) {
 
     function createController(scope = {}) {
-        const { sanitizePerfLabel } = scope.controllerFacades.mutationDiagnostics;
+        const { sanitizePerfLabel } = scope.controllerFacades.mutationIntel;
         const {
             isDrawCaptureTraceEnabled,
             recordDrawTrace,
@@ -37,7 +37,7 @@
             perfTop('bitmap.drawText.method', methodName, 1, 'hook');
         }
 
-        function beginBitmapDrawHookDiagnostics(methodName) {
+        function beginBitmapDrawHookIntel(methodName) {
             const profilerOn = scope.isPerfEnabled();
             const hookStart = profilerOn ? perfNow() : null;
             if (profilerOn) recordBitmapDrawHookCall(methodName);
@@ -224,7 +224,7 @@
             if (bypassReason) perfTop('bitmap.drawText.hook.bypassReason', bypassReason, 1, 'hook');
         }
 
-        function finishBitmapDrawHookDiagnostics(input = {}) {
+        function finishBitmapDrawHookIntel(input = {}) {
             const source = input && typeof input === 'object' ? input : {};
             recordBitmapHookTiming(
                 source.hookStart,
@@ -295,12 +295,12 @@
         }
 
         return {
-            beginBitmapDrawHookDiagnostics,
+            beginBitmapDrawHookIntel,
             isBitmapDrawTraceEnabled,
             recordBitmapDrawEnterIfEnabled,
             recordBitmapDrawTransactionOutcome,
             createBitmapNativeDrawInvoker,
-            finishBitmapDrawHookDiagnostics,
+            finishBitmapDrawHookIntel,
         };
     }
 

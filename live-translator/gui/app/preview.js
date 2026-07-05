@@ -282,7 +282,7 @@
         setStatus('support-path-status', contextPolicy.supportPathTone, contextPolicy.supportPathText);
         setStatus('main-window-link', contextPolicy.closeWithGameTone, contextPolicy.closeWithGameText);
         setSummaryStatus('runtime-context-summary', contextPolicy.summaryTone, contextPolicy.summaryText);
-        renderDiagnosticsSummary();
+        renderIntelSummary();
     }
 
     function refreshPreviewConfigSummary() {
@@ -403,7 +403,7 @@
                     return createPreviewForesightSnapshot(current, request);
                 },
                 publish() {},
-                clearDiagnostics() {},
+                clearIntel() {},
                 clearSnapshot() {},
             },
             LiveTranslatorDrawCaptureTraceSnapshot: createPreviewDrawCaptureSnapshot(current),
@@ -415,7 +415,7 @@
                     return createPreviewDrawCaptureSnapshot(current);
                 },
                 publish() {},
-                clearIntel() {},
+                clearDiagnostics() {},
                 clearSnapshot() {},
             },
             LiveTranslatorGuiState: {
@@ -441,7 +441,7 @@
                     pastJobs: 20,
                 },
             },
-            diagnostics: {
+            intel: {
                 enabled: value.drawCapture === true,
                 drawCaptureTrace: {
                     enabled: value.drawCapture === true,
@@ -614,7 +614,8 @@
                 details: {
                     priority: source.priority,
                     policy: {
-                        lifecycleIntent: lifecycle,
+                        kind: lifecycle,
+                        translationAction: 'preserve',
                         priorityAction: 'set',
                         priority: source.priority,
                         reason: 'preview sample',
@@ -669,8 +670,8 @@
             : clampInteger(value.concurrency, 0, 12, DEFAULT_OPTIONS.concurrency);
         const running = capacity > 0 ? Math.min(capacity, value.recordPreset === 'busy' ? 3 : 1) : 0;
         const queued = value.recordPreset === 'busy' ? 4 : (value.recordPreset === 'empty' ? 0 : 1);
-        const jobs = createPreviewDiagnosticJobs(value, now, running, queued);
-        const provider = createPreviewDiagnosticProvider(value, now, capacity, running);
+        const jobs = createPreviewIntelJobs(value, now, running, queued);
+        const provider = createPreviewIntelProvider(value, now, capacity, running);
         return {
             updatedAt: now,
             provider,
@@ -726,7 +727,7 @@
         return value.recordPreset === 'busy' ? 5 : 2;
     }
 
-    function createPreviewDiagnosticProvider(value, now, capacity, running) {
+    function createPreviewIntelProvider(value, now, capacity, running) {
         if (value.provider !== 'local') {
             return {
                 kind: value.provider,
@@ -789,7 +790,7 @@
         return '';
     }
 
-    function createPreviewDiagnosticJobs(value, now, runningCount, queuedCount) {
+    function createPreviewIntelJobs(value, now, runningCount, queuedCount) {
         const running = runningCount > 0 ? [
             createPreviewJob('job-message-active', 'running', 'message', 'Good morning, traveler.', 'message-active', now - 2400, 100, true),
         ] : [];

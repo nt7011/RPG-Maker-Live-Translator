@@ -23,7 +23,7 @@ function renderHookResults(policySnapshot = getGuiPolicySnapshot()) {
             ? `${formatNumber(summary.installed)} installed, ${formatNumber(summary.skipped)} skipped, ${formatNumber(summary.failed)} failed`
             : '0 hooks'
     );
-    renderDiagnosticsSummary();
+    renderIntelSummary();
 
     if (!visibleHookResults.length) {
         body.innerHTML = '<tr><td colspan="3" class="empty">No hook installation records.</td></tr>';
@@ -42,11 +42,13 @@ function renderHookResults(policySnapshot = getGuiPolicySnapshot()) {
 
 function renderTextRecordSections(policySnapshot = refreshGuiPolicySnapshot()) {
     const renderContext = createTextRecordRenderContext(policySnapshot);
+    renderContext.reusableDetailNodes = collectTextRecordDetailNodesByRecordKey();
     pruneActiveTextRecordDetail(renderContext);
-    state.renderedTextRecordDetailKey = '';
     renderActiveTexts(renderContext);
     renderDetachedTexts(renderContext);
     renderArchivedTexts(renderContext);
+    cleanupTextRecordDetailRows(renderContext);
+    syncTextRecordVolatileDom(renderContext);
 }
 
 function renderActiveTexts(renderContext = createTextRecordRenderContext()) {
@@ -109,20 +111,40 @@ function renderTextRecordList(options, renderContext = createTextRecordRenderCon
     const detailInsertIndex = activeIndex >= 0
         ? getTextRecordDetailInsertIndex(body, activeIndex, rows.length)
         : -1;
-
-    body.innerHTML = '';
+    const desired = [];
     rows.forEach((row, index) => {
         const active = index === activeIndex;
-        body.appendChild(createTextRecordItem(row.item, Object.assign({
+        const itemOptions = Object.assign({
             active,
             detailKey: row.detailKey,
             recordKey: row.recordKey,
-        }, row.itemOptions), renderContext));
+            domKey: row.domKey,
+        }, row.itemOptions);
+        desired.push({
+            kind: 'row',
+            domKey: row.domKey,
+            recordKey: row.recordKey,
+            renderKey: createTextRecordRowRenderKey(row.item, itemOptions, renderContext),
+            item: row.item,
+            itemOptions,
+        });
         if (index === detailInsertIndex) {
-            body.appendChild(createTextRecordDetail(activeRow.item, activeRow.itemOptions, renderContext));
-            state.renderedTextRecordDetailKey = activeRow.detailKey;
+            const detailOptions = Object.assign({
+                detailKey: activeRow.detailKey,
+                recordKey: activeRow.recordKey,
+                domKey: getTextRecordDetailDomKey(activeRow.recordKey),
+            }, activeRow.itemOptions);
+            desired.push({
+                kind: 'detail',
+                domKey: detailOptions.domKey,
+                recordKey: activeRow.recordKey,
+                renderKey: createTextRecordDetailRenderKey(activeRow.item, detailOptions, renderContext),
+                item: activeRow.item,
+                itemOptions: detailOptions,
+            });
         }
     });
+    reconcileTextRecordListBody(body, desired, renderContext);
 }
 
 function syncTextRecordListBodyVisibility(options, hasRecords) {
@@ -145,9 +167,171 @@ function createTextRecordRows(records, options = {}) {
             item,
             itemOptions: getTextRecordOptions(item, options),
             recordKey,
+            domKey: getTextRecordDomKey(options.bodyId, recordKey, duplicateIndex),
             detailKey: getTextRecordDetailKey(options.bodyId, recordKey, duplicateIndex),
         };
     });
+}
+
+function reconcileTextRecordListBody(body, desiredEntries, renderContext) {
+    const desired = Array.isArray(desiredEntries) ? desiredEntries : [];
+    const desiredDomKeys = new Set(desired.map((entry) => entry.domKey).filter(Boolean));
+    const existing = indexExistingTextRecordNodes(body);
+    let previous = null;
+
+    removeTextRecordListUnmanagedChildren(body);
+    desired.forEach((entry) => {
+        const node = getReconciledTextRecordNode(entry, existing, renderContext);
+        if (!node) return;
+        if (node.parentNode !== body || entry.replaced === true || entry.created === true || entry.kind === 'detail') {
+            insertTextRecordNodeAfter(body, node, previous);
+        }
+        previous = node;
+    });
+
+    Array.from(body.children || []).forEach((child) => {
+        if (!isTextRecordManagedNode(child)) return;
+        const domKey = getTextRecordNodeDomKey(child);
+        if (desiredDomKeys.has(domKey)) return;
+        if (shouldKeepReusableSelectedDetailNode(child, renderContext)) return;
+        removeTextRecordNode(child);
+    });
+}
+
+function getReconciledTextRecordNode(entry, existing, renderContext) {
+    if (!entry || !entry.domKey) return null;
+    const nodeMap = entry.kind === 'detail' ? existing.details : existing.rows;
+    const reusable = entry.kind === 'detail'
+        ? (nodeMap.get(entry.domKey) || getReusableTextRecordDetailNode(entry.recordKey, renderContext))
+        : nodeMap.get(entry.domKey);
+    if (reusable && reusable.dataset && reusable.dataset.renderKey === entry.renderKey) {
+        applyTextRecordNodeDataset(reusable, entry);
+        if (entry.kind === 'detail') syncTextRecordDetailVolatileFields(reusable, entry.item, renderContext);
+        return reusable;
+    }
+    if (reusable) {
+        entry.replaced = true;
+        removeTextRecordNode(reusable);
+    } else {
+        entry.created = true;
+    }
+
+    const node = entry.kind === 'detail'
+        ? createTextRecordDetail(entry.item, entry.itemOptions, renderContext)
+        : createTextRecordItem(entry.item, entry.itemOptions, renderContext);
+    applyTextRecordNodeDataset(node, entry);
+    return node;
+}
+
+function indexExistingTextRecordNodes(body) {
+    const rows = new Map();
+    const details = new Map();
+    Array.from(body && body.children ? body.children : []).forEach((child) => {
+        if (isTextRecordRowNode(child)) rows.set(getTextRecordNodeDomKey(child), child);
+        if (isTextRecordDetailNode(child)) details.set(getTextRecordNodeDomKey(child), child);
+    });
+    return { rows, details };
+}
+
+function collectTextRecordDetailNodesByRecordKey() {
+    const map = new Map();
+    getTextRecordListBodies().forEach((body) => {
+        Array.from(body && body.children ? body.children : []).forEach((child) => {
+            if (!isTextRecordDetailNode(child) || !child.dataset || !child.dataset.recordKey) return;
+            if (!map.has(child.dataset.recordKey)) map.set(child.dataset.recordKey, child);
+        });
+    });
+    return map;
+}
+
+function getReusableTextRecordDetailNode(recordKey, renderContext) {
+    const nodes = renderContext && renderContext.reusableDetailNodes instanceof Map
+        ? renderContext.reusableDetailNodes
+        : null;
+    return nodes && recordKey ? nodes.get(recordKey) || null : null;
+}
+
+function applyTextRecordNodeDataset(node, entry) {
+    if (!node || !entry || !node.dataset) return;
+    node.dataset.domKey = entry.domKey || '';
+    node.dataset.recordKey = entry.recordKey || '';
+    node.dataset.renderKey = entry.renderKey || '';
+    if (entry.itemOptions && entry.itemOptions.detailKey) node.dataset.detailKey = entry.itemOptions.detailKey;
+}
+
+function insertTextRecordNodeAfter(body, node, previous) {
+    if (!body || !node) return;
+    const children = Array.from(body.children || []);
+    const previousIndex = previous && previous.parentNode === body ? children.indexOf(previous) : -1;
+    const reference = previousIndex >= 0 ? children[previousIndex + 1] || null : children[0] || null;
+    if (reference === node) return;
+    body.insertBefore(node, reference);
+}
+
+function removeTextRecordListUnmanagedChildren(body) {
+    Array.from(body && body.children ? body.children : []).forEach((child) => {
+        if (!isTextRecordManagedNode(child)) removeTextRecordNode(child);
+    });
+}
+
+function removeTextRecordNode(node) {
+    if (!node || !node.parentNode) return;
+    if (typeof node.parentNode.removeChild === 'function') {
+        node.parentNode.removeChild(node);
+        return;
+    }
+    if (Array.isArray(node.parentNode.children)) {
+        node.parentNode.children = node.parentNode.children.filter((child) => child !== node);
+        node.parentNode = null;
+    }
+}
+
+function cleanupTextRecordDetailRows(renderContext = createTextRecordRenderContext()) {
+    const selectedKey = getSelectedTextRecordKey();
+    let keptSelectedDetail = false;
+    getTextRecordListBodies().forEach((body) => {
+        Array.from(body && body.children ? body.children : []).forEach((child) => {
+            if (!isTextRecordDetailNode(child)) return;
+            const recordKey = child.dataset ? child.dataset.recordKey : '';
+            if (!selectedKey || recordKey !== selectedKey || keptSelectedDetail) {
+                removeTextRecordNode(child);
+                return;
+            }
+            keptSelectedDetail = true;
+            syncTextRecordDetailVolatileFields(child, getCurrentTextRecordByKey(recordKey), renderContext);
+        });
+    });
+}
+
+function shouldKeepReusableSelectedDetailNode(node, renderContext) {
+    if (!isTextRecordDetailNode(node) || !node.dataset) return false;
+    const selectedKey = getSelectedTextRecordKey();
+    return Boolean(selectedKey
+        && node.dataset.recordKey === selectedKey
+        && isTextRecordKeyVisible(selectedKey, renderContext));
+}
+
+function getTextRecordListBodies() {
+    return ['active-texts', 'detached-texts', 'archived-texts']
+        .map((id) => refs[id])
+        .filter(Boolean);
+}
+
+function isTextRecordManagedNode(node) {
+    return isTextRecordRowNode(node) || isTextRecordDetailNode(node);
+}
+
+function isTextRecordRowNode(node) {
+    return !!(node && node.classList && node.classList.contains('text-record'));
+}
+
+function isTextRecordDetailNode(node) {
+    return !!(node && node.classList && node.classList.contains('text-detail-row'));
+}
+
+function getTextRecordNodeDomKey(node) {
+    if (!node || !node.dataset) return '';
+    return node.dataset.domKey || node.dataset.detailKey || '';
 }
 
 function getPrioritizedTextRecords(records, limit) {
@@ -186,7 +370,11 @@ function isGameMessageRecord(item) {
 
 function createTextRecordRenderContext(policySnapshot = getGuiPolicySnapshot(), records = getForesightTextRecords()) {
     const allRecords = Array.isArray(records) ? records : [];
-    const policy = getGuiTextRecordPolicy(policySnapshot);
+    const basePolicy = getGuiTextRecordPolicy(policySnapshot);
+    const selectedDetailKey = typeof getSelectedTextRecordKey === 'function'
+        ? getSelectedTextRecordKey()
+        : (basePolicy.selectedDetailKey || '');
+    const policy = Object.assign({}, basePolicy, { selectedDetailKey });
     const foregroundSpoilerKeys = policy.showForesightSpoilers
         ? new Set()
         : getForegroundGameMessageSourceKeys(allRecords);
@@ -196,6 +384,191 @@ function createTextRecordRenderContext(policySnapshot = getGuiPolicySnapshot(), 
         records: allRecords,
         foregroundSpoilerKeys,
     };
+}
+
+function createTextRecordRowRenderKey(item, options = {}, renderContext = createTextRecordRenderContext()) {
+    const railInfo = getTextRecordTranslationRailInfo(item);
+    const censored = isTextRecordSpoilerCensoredForContext(item, renderContext);
+    const detailEnabled = isGuiTextRecordDetailAllowed(item, renderContext);
+    return createTextRecordStableRenderKey({
+        recordKey: options.recordKey || getTextRecordKey(item),
+        statusClass: normalizeStatusClass(item && item.status),
+        hookClass: normalizeHookClass(item && (item.hookKey || item.hook)),
+        translationClass: railInfo.state || 'neutral',
+        inactive: options.inactive === true,
+        active: options.active === true,
+        censored,
+        detailEnabled,
+        source: item ? item.rawText || item.original || item.visibleText || '' : '',
+        translation: item ? item.translation || '' : '',
+        rail: {
+            state: railInfo.state || 'neutral',
+            label: railInfo.label || 'WAIT',
+            title: railInfo.title || '',
+        },
+    });
+}
+
+function createTextRecordDetailRenderKey(item, options = {}, renderContext = createTextRecordRenderContext()) {
+    return createTextRecordStableRenderKey({
+        recordKey: options.recordKey || getTextRecordKey(item),
+        statusClass: normalizeStatusClass(item && item.status),
+        hookClass: normalizeHookClass(item && (item.hookKey || item.hook)),
+        inactive: options.inactive === true,
+        header: createTextRecordDetailHeaderKeySource(item, options),
+        meta: createTextRecordDetailMetaKeySource(item),
+        translationIntel: createTextRecordTranslationIntelKeySource(item, renderContext),
+        policyIntel: createTextRecordPolicyIntelKeySource(item),
+        history: isTextRecordHistoryVisible(renderContext) ? createTextRecordHistoryKeySource(item) : [],
+    });
+}
+
+function createTextRecordDetailHeaderKeySource(item, options = {}) {
+    const source = item || {};
+    const labels = [];
+    const lifecycleLabel = String(options.lifecycleLabel || source.lifecycleState || '').trim();
+    if (lifecycleLabel && lifecycleLabel !== 'active' && !labels.includes(lifecycleLabel)) labels.push(lifecycleLabel);
+    return {
+        hook: source.hook || '-',
+        status: source.status || 'detected',
+        labels,
+    };
+}
+
+function createTextRecordDetailMetaKeySource(item) {
+    const source = item || {};
+    const policy = getTextRecordRuntimePolicyIntel(source);
+    return {
+        firstSeenAt: source.firstSeenAt || '',
+        screen: source.screenState || (source.onScreen === false ? 'offscreen' : 'visible'),
+        disappearedAt: source.disappearedAt || '',
+        deactivatedAt: source.deactivatedAt || '',
+        lifecycle: source.lifecycleState || '',
+        priority: Number.isFinite(Number(source.priority)) ? Number(source.priority) : null,
+        policy: {
+            lifecycle: policy.lifecycle ? formatPolicySection(policy.lifecycle) : '',
+            priority: policy.priority ? formatPolicySection(policy.priority) : '',
+            request: policy.request ? formatPolicySection(policy.request) : '',
+        },
+        hook: source.hookKey || source.hook || '',
+        surface: source.surfaceType || source.windowType || source.ownerType || '',
+        method: source.methodName || '',
+        drawRun: source.drawRun ? formatDrawRun(source.drawRun) : '',
+        rawText: source.rawText && source.rawText !== source.original ? source.rawText : '',
+        convertedText: source.convertedText && source.convertedText !== source.original ? source.convertedText : '',
+        translationSource: source.translationSource || source.normalizedSource || '',
+        translationReceived: source.translationReceived || '',
+        translationDrawn: source.translationDrawn || '',
+        position: Number.isFinite(Number(source.x)) || Number.isFinite(Number(source.y))
+            ? [formatCoordinate(source.x), formatCoordinate(source.y)]
+            : [],
+        bounds: source.bounds ? formatBounds(source.bounds) : '',
+        metadata: createTextRecordMetadataKeySource(source.metadata),
+    };
+}
+
+function createTextRecordMetadataKeySource(metadata) {
+    const source = metadata && typeof metadata === 'object' ? metadata : {};
+    const result = {};
+    Object.keys(source).sort().forEach((key) => {
+        if (key === 'drawRun') return;
+        result[key] = source[key];
+    });
+    return result;
+}
+
+function createTextRecordPolicyIntelKeySource(item) {
+    const policy = getTextRecordRuntimePolicyIntel(item);
+    if (!policy || !Object.keys(policy).length) return null;
+    return {
+        headline: formatPolicyHeadline(policy),
+        rows: {
+            lifecycle: policy.lifecycle ? formatPolicySection(policy.lifecycle) : '',
+            priority: policy.priority ? formatPolicySection(policy.priority) : '',
+            request: policy.request ? formatPolicySection(policy.request) : '',
+            last: policy.last ? formatPolicySection(policy.last) : '',
+        },
+        events: Array.isArray(policy.events)
+            ? policy.events.slice(-6).map((event) => [
+                event && event.type || 'event',
+                event && event.message || '',
+                formatPolicySection(event && event.policy || {}),
+            ])
+            : [],
+    };
+}
+
+function createTextRecordTranslationIntelKeySource(item, renderContext = createTextRecordRenderContext()) {
+    const jobs = getMatchedIntelJobs(item);
+    if (!jobs.length) return null;
+    const primary = jobs[0];
+    return {
+        primary: createTextRecordIntelJobKeySource(primary, item, renderContext),
+        subscribers: getMatchedSubscriberRecords(primary, item).map((subscriber) => formatSubscriberRecord(subscriber)),
+        related: jobs.slice(1, 4).map((job) => `${job.id || '-'} | ${job.status || job.displayMode || '-'} | ${formatPriority(job)} | ${job.textPreview || '-'}`),
+        history: isTextRecordHistoryVisible(renderContext) ? createIntelHistoryKeySource(primary.history || []) : [],
+    };
+}
+
+function createTextRecordIntelJobKeySource(job) {
+    const source = job || {};
+    return {
+        id: source.id || '',
+        status: source.status || source.displayMode || '',
+        hook: source.hook || '',
+        priority: formatPriority(source),
+        stream: {
+            enabled: source.stream === true,
+            deltaCount: source.deltaCount || 0,
+            lastDeltaAt: source.lastDeltaAt || '',
+        },
+        subscribers: `${formatNumber(source.subscribers || 0)}/${formatNumber(source.totalSubscribers || 0)}`,
+        queuedAt: source.queuedAt || '',
+        startedAt: source.startedAt || '',
+        terminalAt: source.terminalAt || '',
+        queuePosition: source.queuePosition || '',
+        lastError: source.lastError || '',
+        terminalReason: source.terminalReason || '',
+    };
+}
+
+function createTextRecordHistoryKeySource(item) {
+    return getTextRecordHistory(item).map((entry) => ({
+        at: entry.at || '',
+        timeText: entry.at ? formatTime(entry.at) : '-',
+        type: entry.type || 'event',
+        message: entry.message || '',
+        details: formatDetails(entry.details),
+    }));
+}
+
+function createIntelHistoryKeySource(history) {
+    return (Array.isArray(history) ? history : []).map((event) => ({
+        at: event && event.at || '',
+        timeText: event && event.at ? formatTime(event.at) : '-',
+        type: event && event.type || 'event',
+        details: formatIntelEventDetails(event),
+    }));
+}
+
+function createTextRecordStableRenderKey(value) {
+    try {
+        return JSON.stringify(normalizeTextRecordRenderValue(value));
+    } catch (_) {
+        return String(Date.now());
+    }
+}
+
+function normalizeTextRecordRenderValue(value) {
+    if (Array.isArray(value)) return value.map(normalizeTextRecordRenderValue);
+    if (!value || typeof value !== 'object') return value === undefined ? null : value;
+    const result = {};
+    Object.keys(value).sort().forEach((key) => {
+        const entry = value[key];
+        if (typeof entry === 'function' || entry === undefined) return;
+        result[key] = normalizeTextRecordRenderValue(entry);
+    });
+    return result;
 }
 
 function isGuiTextRecordSpoilerCensored(item, records = getForesightTextRecords(), policySnapshot = null) {
@@ -274,7 +647,7 @@ function normalizeForesightSpoilerText(value) {
 function findActiveTextRecordIndex(rows, renderContext = createTextRecordRenderContext()) {
     return (rows || []).findIndex((row) => (
         isGuiTextRecordDetailAllowed(row.item, renderContext)
-        && shouldRenderActiveTextRecordDetail(row.detailKey, renderContext)
+        && shouldRenderActiveTextRecordDetail(row.recordKey, renderContext)
     ));
 }
 
@@ -363,7 +736,7 @@ function createForesightTranslationPillForContext(item, renderContext) {
             event.stopPropagation();
             const detailKey = findTextRecordDetailKeyForRecord(item, renderContext);
             if (!detailKey) return;
-            state.activeTextRecordDetailKey = detailKey;
+            setSelectedTextRecordKey(getTextRecordKey(item));
             renderTextRecordSections(refreshGuiPolicySnapshot());
             scrollTextRecordDetailIntoView(detailKey);
         });
@@ -398,6 +771,81 @@ function findTextRecordDetailKeyForRecord(record, renderContext = createTextReco
     return '';
 }
 
+function getCurrentTextRecordByKey(recordKey) {
+    const key = String(recordKey || '');
+    if (!key) return null;
+    return getForesightTextRecords().find((record) => getTextRecordKey(record) === key) || null;
+}
+
+function isTextRecordKeyVisible(recordKey, renderContext = createTextRecordRenderContext()) {
+    return getVisibleTextRecordKeys(renderContext).includes(String(recordKey || ''));
+}
+
+function getVisibleTextRecordKeys(renderContext = createTextRecordRenderContext()) {
+    const textRecordPolicy = renderContext.policy;
+    return []
+        .concat(createTextRecordRows(getPrioritizedTextRecords(state.activeTexts || []), { bodyId: 'active-texts' }))
+        .concat(createTextRecordRows(getPrioritizedTextRecords(state.detachedTexts || [], textRecordPolicy.inactiveDisplayLimit), {
+            bodyId: 'detached-texts',
+        }))
+        .concat(createTextRecordRows(getPrioritizedTextRecords(state.archivedTexts || [], textRecordPolicy.inactiveDisplayLimit), {
+            bodyId: 'archived-texts',
+        }))
+        .filter((row) => isGuiTextRecordDetailAllowed(row.item, renderContext))
+        .map((row) => row.recordKey)
+        .filter(Boolean);
+}
+
+function syncTextRecordVolatileDom(renderContext = createTextRecordRenderContext()) {
+    getTextRecordListBodies().forEach((body) => {
+        Array.from(body && body.children ? body.children : []).forEach((child) => {
+            if (!isTextRecordDetailNode(child) || !child.dataset) return;
+            syncTextRecordDetailVolatileFields(
+                child,
+                getCurrentTextRecordByKey(child.dataset.recordKey),
+                renderContext
+            );
+        });
+    });
+}
+
+function syncTextRecordDetailVolatileFields(detailNode, item) {
+    if (!detailNode || !item) return;
+    setTextRecordMetaValue(detailNode, 'First seen', item.firstSeenAt ? formatTime(item.firstSeenAt) : '-');
+    setTextRecordMetaValue(detailNode, 'Seen', item.seenAt ? formatTime(item.seenAt) : '-');
+    setTextRecordMetaValue(detailNode, 'Updated', item.updatedAt ? formatTime(item.updatedAt) : '-');
+
+    const primary = getMatchedIntelJobs(item)[0];
+    if (!primary) return;
+    setTextRecordMetaValue(detailNode, 'Stream', formatStreamState(primary));
+    setTextRecordMetaValue(detailNode, 'Queued', primary.queuedAt ? `${formatTime(primary.queuedAt)} (${formatElapsedSince(primary.queuedAt)} ago)` : '-');
+    setTextRecordMetaValue(detailNode, 'Started', primary.startedAt ? `${formatTime(primary.startedAt)} (${formatElapsedSince(primary.startedAt)} ago)` : '-');
+    if (primary.terminalAt) {
+        setTextRecordMetaValue(detailNode, 'Finished', `${formatTime(primary.terminalAt)} (${formatElapsedSince(primary.terminalAt)} ago)`);
+    }
+}
+
+function setTextRecordMetaValue(root, label, value) {
+    const item = findTextRecordMetaItem(root, label);
+    if (!item) return;
+    const valueNode = Array.from(item.children || []).find((child) => String(child.tagName || '').toUpperCase() === 'STRONG')
+        || Array.from(item.children || []).slice(-1)[0];
+    if (valueNode) valueNode.textContent = value === undefined || value === null || value === '' ? '-' : String(value);
+}
+
+function findTextRecordMetaItem(root, label) {
+    const wanted = String(label || '');
+    const stack = Array.from(root && root.children ? root.children : []);
+    while (stack.length) {
+        const current = stack.shift();
+        if (current && current.dataset && current.dataset.metaLabel === wanted) return current;
+        if (current && Array.isArray(current.children) && current.children.length) {
+            stack.unshift(...current.children);
+        }
+    }
+    return null;
+}
+
 function isSameTextRecord(left, right) {
     if (!left || !right) return false;
     if (left === right) return true;
@@ -419,11 +867,4 @@ function findElementByDataAttribute(key, value) {
     const selector = `[data-${key.replace(/[A-Z]/g, (match) => `-${match.toLowerCase()}`)}]`;
     return Array.from(document.querySelectorAll(selector))
         .find((element) => element && element.dataset && element.dataset[key] === value) || null;
-}
-
-function withDisplayLifecycle(record, lifecycle) {
-    return Object.assign({}, record, {
-        displayLifecycle: lifecycle,
-        lifecycleState: record && record.lifecycleState ? record.lifecycleState : lifecycle,
-    });
 }

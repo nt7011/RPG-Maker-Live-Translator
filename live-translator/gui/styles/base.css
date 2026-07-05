@@ -164,7 +164,7 @@
     --gui-hook-unknown-light: #7f8a99;
     --gui-hook-unknown-dark: #7f8b9a;
 
-    /* Diagnostic job states. */
+    /* Intel job states. */
     --gui-job-running-border-light: #50a5b1;
     --gui-job-running-border-dark: #4fadb9;
     --gui-job-running-bg-light: #dff7f8;

@@ -2,7 +2,7 @@
 //
 // Copied-target redraws have their own proof surface: materialized copy
 // targets, detached source entries, and staging-readiness decisions. This
-// module owns those data-only plans and diagnostics so the general render
+// module owns those data-only plans and intel so the general render
 // planner does not carry copied-target policy inline.
 (() => {
     'use strict';
@@ -40,7 +40,7 @@
                     }
                     const redrawOptions = createCopiedTargetRedrawOptions(materializedTargets);
                     const roleState = surfaceRoleState.describeWindowEntrySurface(entry);
-                    return attachPlanDiagnostics({
+                    return attachPlanIntel({
                         planId: createPlanId(),
                         type: 'windowCopiedTargetRedraw',
                         status: 'planned',
@@ -81,7 +81,7 @@
                         return createRejectedPlan(createPlanId(), 'bitmapCopiedTargetRedraw', 'missing-copied-targets', source);
                     }
                     const redrawOptions = createCopiedTargetRedrawOptions(materializedTargets);
-                    return attachPlanDiagnostics({
+                    return attachPlanIntel({
                         planId: createPlanId(),
                         type: 'bitmapCopiedTargetRedraw',
                         status: 'planned',
@@ -117,7 +117,7 @@
                     if (!hasCopiedTargets) {
                         return createRejectedPlan(createPlanId(), 'bitmapCopiedTargetRecovery', 'missing-copied-target-proof', source);
                     }
-                    return attachPlanDiagnostics({
+                    return attachPlanIntel({
                         planId: createPlanId(),
                         type: 'bitmapCopiedTargetRecovery',
                         status: 'planned',
@@ -155,7 +155,7 @@
                     if (!hasCopiedTargets) {
                         return createRejectedPlan(createPlanId(), 'windowCopiedTargetReadiness', 'missing-copied-target-proof', source);
                     }
-                    return attachPlanDiagnostics({
+                    return attachPlanIntel({
                         planId: createPlanId(),
                         type: 'windowCopiedTargetReadiness',
                         status: 'planned',
@@ -191,7 +191,7 @@
                         pendingInvalidation: source.pendingInvalidation === true,
                         screenState: source.screenState,
                     });
-                    return attachPlanDiagnostics({
+                    return attachPlanIntel({
                         planId: createPlanId(),
                         type: 'windowCopiedTargetRecovery',
                         status: 'planned',
@@ -291,7 +291,7 @@
             function createLiveWindowCurrentContentsRejectedPlan(planId, source = {}, text = undefined) {
                 const entry = source && source.entry || null;
                 const roleState = surfaceRoleState.describeWindowEntrySurface(entry);
-                return attachPlanDiagnostics({
+                return attachPlanIntel({
                     planId: stringify(planId || ''),
                     type: 'windowCopiedTargetRedraw',
                     status: 'rejected',
@@ -320,7 +320,7 @@
             }
 
             function createRejectedPlan(planId, type, reason, input = {}) {
-                return attachPlanDiagnostics({
+                return attachPlanIntel({
                     planId: stringify(planId || ''),
                     type: stringify(type || ''),
                     status: 'rejected',
@@ -339,30 +339,30 @@
                 });
             }
 
-            function attachPlanDiagnostics(plan) {
+            function attachPlanIntel(plan) {
                 if (!plan || typeof plan !== 'object') return plan;
-                plan.diagnostics = createPlanDiagnostics(plan);
+                plan.intel = createPlanIntel(plan);
                 return plan;
             }
 
-            function createPlanDiagnostics(plan) {
+            function createPlanIntel(plan) {
                 switch (stringify(plan && plan.type || '')) {
                 case 'windowCopiedTargetRedraw':
-                    return createWindowCopiedTargetRenderDiagnostics(plan);
+                    return createWindowCopiedTargetRenderIntel(plan);
                 case 'bitmapCopiedTargetRedraw':
-                    return createBitmapCopiedTargetRenderDiagnostics(plan);
+                    return createBitmapCopiedTargetRenderIntel(plan);
                 case 'bitmapCopiedTargetRecovery':
-                    return createBitmapCopiedTargetRecoveryDiagnostics(plan);
+                    return createBitmapCopiedTargetRecoveryIntel(plan);
                 case 'windowCopiedTargetReadiness':
-                    return createWindowCopiedTargetReadinessDiagnostics(plan);
+                    return createWindowCopiedTargetReadinessIntel(plan);
                 case 'windowCopiedTargetRecovery':
-                    return createWindowCopiedTargetRecoveryDiagnostics(plan);
+                    return createWindowCopiedTargetRecoveryIntel(plan);
                 default:
-                    return createBasePlanDiagnostics(plan);
+                    return createBasePlanIntel(plan);
                 }
             }
 
-            function createBasePlanDiagnostics(plan) {
+            function createBasePlanIntel(plan) {
                 return {
                     planId: stringify(plan && plan.planId || ''),
                     type: stringify(plan && plan.type || ''),
@@ -371,8 +371,8 @@
                 };
             }
 
-            function createWindowCopiedTargetRenderDiagnostics(plan) {
-                return Object.assign(createBasePlanDiagnostics(plan), {
+            function createWindowCopiedTargetRenderIntel(plan) {
+                return Object.assign(createBasePlanIntel(plan), {
                     copiedTargets: finiteNumber(plan && plan.copiedTargets, 0),
                     materializedTargets: Array.isArray(plan && plan.materializedTargets) ? plan.materializedTargets.length : 0,
                     steps: {
@@ -390,8 +390,8 @@
                 });
             }
 
-            function createBitmapCopiedTargetRenderDiagnostics(plan) {
-                return Object.assign(createBasePlanDiagnostics(plan), {
+            function createBitmapCopiedTargetRenderIntel(plan) {
+                return Object.assign(createBasePlanIntel(plan), {
                     copiedTargets: finiteNumber(plan && plan.copiedTargets, 0),
                     steps: {
                         redrawCopiedTargets: !!(plan && plan.steps && plan.steps.redrawCopiedTargets === true),
@@ -408,8 +408,8 @@
                 });
             }
 
-            function createBitmapCopiedTargetRecoveryDiagnostics(plan) {
-                return Object.assign(createBasePlanDiagnostics(plan), {
+            function createBitmapCopiedTargetRecoveryIntel(plan) {
+                return Object.assign(createBasePlanIntel(plan), {
                     materializedTargets: Array.isArray(plan && plan.materializedTargets) ? plan.materializedTargets.length : 0,
                     copiedTargets: finiteNumber(plan && plan.copiedTargets, 0),
                     hasCopiedTargets: !!(plan && plan.hasCopiedTargets === true),
@@ -425,8 +425,8 @@
                 });
             }
 
-            function createWindowCopiedTargetReadinessDiagnostics(plan) {
-                return Object.assign(createBasePlanDiagnostics(plan), {
+            function createWindowCopiedTargetReadinessIntel(plan) {
+                return Object.assign(createBasePlanIntel(plan), {
                     copiedTargets: finiteNumber(plan && plan.copiedTargets, 0),
                     materializedTargets: Array.isArray(plan && plan.materializedTargets) ? plan.materializedTargets.length : 0,
                     hasCopiedTargets: !!(plan && plan.hasCopiedTargets === true),
@@ -442,8 +442,8 @@
                 });
             }
 
-            function createWindowCopiedTargetRecoveryDiagnostics(plan) {
-                return Object.assign(createBasePlanDiagnostics(plan), {
+            function createWindowCopiedTargetRecoveryIntel(plan) {
+                return Object.assign(createBasePlanIntel(plan), {
                     materializedTargets: Array.isArray(plan && plan.materializedTargets) ? plan.materializedTargets.length : 0,
                     copiedTargets: finiteNumber(plan && plan.copiedTargets, 0),
                     hasCopiedTargets: !!(plan && plan.hasCopiedTargets === true),

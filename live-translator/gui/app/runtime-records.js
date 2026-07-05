@@ -18,16 +18,16 @@ function summarizeHookResults(results) {
     return summary;
 }
 
-function isDiagnosticHookResult(result) {
+function isIntelHookResult(result) {
     return String(result && result.category || '').trim().toLowerCase() === 'diagnostics';
 }
 
 function filterVisibleHookResults(results, policySnapshot = getGuiPolicySnapshot()) {
     const list = Array.isArray(results) ? results : [];
-    const diagnosticsEnabled = getGuiEffectivePolicy(policySnapshot).diagnostics.enabled === true;
-    return diagnosticsEnabled
+    const intelEnabled = getGuiEffectivePolicy(policySnapshot).diagnostics.enabled === true;
+    return intelEnabled
         ? list.slice()
-        : list.filter((result) => !isDiagnosticHookResult(result));
+        : list.filter((result) => !isIntelHookResult(result));
 }
 
 function getVisibleHookResults(policySnapshot = getGuiPolicySnapshot()) {
@@ -82,12 +82,9 @@ function normalizeTextOrchestratorSnapshot(snapshot) {
     const summary = summarizeOrchestratorTextRecords(active, detached, archived);
 
     return {
-        active: active
-            .map((record) => withDisplayLifecycle(record, 'active')),
-        detached: detached
-            .map((record) => withDisplayLifecycle(record, 'detached')),
-        archived: archived
-            .map((record) => withDisplayLifecycle(record, 'archived')),
+        active,
+        detached,
+        archived,
         summary: snapshot.summary && typeof snapshot.summary === 'object'
             ? Object.assign({}, snapshot.summary, summary)
             : summary,
@@ -131,7 +128,6 @@ function normalizeOrchestratorTextRecord(record, lifecycle) {
     normalized.active = source.active === true;
     normalized.policy = policy;
     normalized.lifecycleState = lifecycle;
-    normalized.displayLifecycle = lifecycle;
     return normalized;
 }
 
@@ -244,11 +240,14 @@ function normalizeTextRecordPolicy(source, history = null) {
         });
         for (let index = events.length - 1; index >= 0; index -= 1) {
             const eventPolicy = events[index].policy || {};
-            if (!policy.lifecycle && (eventPolicy.lifecycleIntent || eventPolicy.translationAction)) {
+            if (!policy.lifecycle && eventPolicy.kind) {
                 policy.lifecycle = {
-                    intent: eventPolicy.lifecycleIntent || '',
+                    kind: eventPolicy.kind || '',
                     translationAction: eventPolicy.translationAction || '',
                     priorityAction: eventPolicy.priorityAction || '',
+                    placementAction: eventPolicy.placementAction || '',
+                    slotAction: eventPolicy.slotAction || '',
+                    renderCommandAction: eventPolicy.renderCommandAction || '',
                     priority: eventPolicy.priority,
                     reason: eventPolicy.reason || events[index].message || '',
                 };
@@ -267,7 +266,7 @@ function normalizeTextRecordPolicy(source, history = null) {
     return Object.keys(policy).length ? policy : {};
 }
 
-function getTextRecordRuntimePolicyDiagnostics(item) {
+function getTextRecordRuntimePolicyIntel(item) {
     if (!item || typeof item !== 'object') return {};
     if (item.policy && typeof item.policy === 'object' && Object.keys(item.policy).length) {
         return clonePolicyObject(item.policy);
@@ -306,7 +305,6 @@ function extractTextRecordEventPolicy(entry, details) {
     if (details.lifecyclePolicy && typeof details.lifecyclePolicy === 'object') return Object.assign({}, details.lifecyclePolicy);
     if (details.priorityPolicy && typeof details.priorityPolicy === 'object') return Object.assign({}, details.priorityPolicy);
     const policy = {};
-    if (details.lifecycleIntent) policy.lifecycleIntent = details.lifecycleIntent;
     if (details.priority !== undefined && String(entry && entry.type || '') === 'item.priority_changed') {
         policy.priorityAction = Number(details.priority) <= 100 ? 'demote' : 'set';
         policy.priority = details.priority;

@@ -12,7 +12,7 @@
             const lifecycleReasons = lifecycleReasonsModule.reasons;
 
     function createController(scope = {}) {
-        const { globalScope, diag, preview, stripControls, registeredWindows, pruneDetachedRegisteredWindows, trackedMessageWindows, surfaceOwnership } = scope;
+        const { globalScope, traceLog, preview, stripControls, registeredWindows, pruneDetachedRegisteredWindows, trackedMessageWindows, surfaceOwnership } = scope;
         const { getGameMessageForWindow, isMessageWindowLike, markDedicatedMessageWindow } = scope.controllerFacades.install;
         const { createEscapeAwarePayload, getResolvedTextForWindow } = scope.controllerFacades.text;
         const { readMessageOriginText, readMessageTextData } = scope.controllerFacades.foresightContext;
@@ -737,7 +737,7 @@
             const finalText = payload ? payload.visible : stripControls(resolved).trim();
             if (!finalText || finalText === state.currentText) return;
             state.currentText = finalText;
-            diag(`[GameMessage] Final rendered text: "${preview(finalText)}"`);
+            traceLog(`[GameMessage] Final rendered text: "${preview(finalText)}"`);
             if (!state.translationRequested) {
                 markMessageTranslationRequested(windowInstance);
                 windowInstance.processCompleteMessage(payload || resolved, state.session);
@@ -862,7 +862,7 @@
             const finalText = payload ? payload.visible : stripControls(sourceText).trim();
             if (finalText && finalText !== activeState.currentText) {
                 activeState.currentText = finalText;
-                diag(`[GameMessage] Final rendered text: "${preview(finalText)}"`);
+                traceLog(`[GameMessage] Final rendered text: "${preview(finalText)}"`);
                 windowInstance.processCompleteMessage(payload || sourceText, activeState.session);
             } else if (payload) {
                 windowInstance.processCompleteMessage(payload, activeState.session);

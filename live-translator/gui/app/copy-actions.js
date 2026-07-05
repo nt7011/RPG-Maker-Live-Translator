@@ -2,13 +2,13 @@
 // These functions share state from gui/app/state.js and are loaded before app/index.js boots.
 'use strict';
 
-function copyForesightDiagnostics(feedbackTarget) {
-    const payload = buildForesightDiagnosticsCopyText();
+function copyForesightIntel(feedbackTarget) {
+    const payload = buildForesightIntelCopyText();
     writeClipboardText(payload)
         .then(() => flashCopyFeedback(feedbackTarget, 'Copied'))
         .catch((err) => {
             flashCopyFeedback(feedbackTarget, 'Failed');
-            addLog('warn', `Foresight diagnostics copy failed: ${formatError(err)}`);
+            addLog('warn', `Foresight status copy failed: ${formatError(err)}`);
         });
 }
 
@@ -123,7 +123,7 @@ function buildTextRecordCopyPayload(item) {
             type: normalizeHookClass(item.hookKey || item.hook),
         },
         status: item.status || 'detected',
-        lifecycleState: item.lifecycleState || item.displayLifecycle || '',
+        lifecycleState: item.lifecycleState || '',
         text: {
             original: item.original || '',
             translation: item.translation || '',
@@ -154,7 +154,7 @@ function buildTextRecordCopyPayload(item) {
             deactivatedAt: copyTimestamp(item.deactivatedAt),
         },
         metadata: item.metadata || {},
-        policy: getTextRecordRuntimePolicyDiagnostics(item),
+        policy: getTextRecordRuntimePolicyIntel(item),
         history,
     };
     return payload;

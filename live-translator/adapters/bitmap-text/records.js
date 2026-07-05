@@ -8,8 +8,9 @@
         requires: {
             bitmapRenderPlannerModule: 'runtime.bitmap.renderPlanner',
             copiedTargetProofSummary: 'runtime.bitmap.copiedTargetProofSummary',
+            sourceRunIdentity: 'runtime.bitmap.sourceRunIdentity',
         },
-        factory({ bitmapRenderPlannerModule, copiedTargetProofSummary }) {
+        factory({ bitmapRenderPlannerModule, copiedTargetProofSummary, sourceRunIdentity }) {
     function createController(scope = {}) {
         const { ADAPTER_ID, ADAPTER_LABEL, SURFACE_TYPE, RENDER_STRATEGY, BITMAP_PRIORITY } = scope;
         const renderTransaction = scope.renderTransaction;
@@ -21,6 +22,11 @@
             && typeof scope.bitmapRenderPlanner.createBitmapSourceEntryCopiedTargetRecoveryPlan === 'function'
             ? scope.bitmapRenderPlanner
             : bitmapRenderPlannerModule.create();
+        const {
+            collectSourceRunIds,
+            collectSourceSlotKeys,
+            sourceRunIdentitiesMatch,
+        } = sourceRunIdentity;
 
         function observeEntry(entry, status) {
             if (!entry || !entry.recordId) return null;
@@ -151,10 +157,10 @@
                 collectProjectedTargets: materializeCopiedBitmapTargetRedraws,
                 detachedEntry: isCopiedTargetDetachedEntry(entry),
             });
-            const copiedTargetRenderPlanDiagnostics = copiedTargetRenderPlan && copiedTargetRenderPlan.diagnostics || null;
-            let redrawDiagnostics = null;
+            const copiedTargetRenderPlanIntel = copiedTargetRenderPlan && copiedTargetRenderPlan.intel || null;
+            let redrawIntel = null;
             if (!isCopiedTargetDetachedEntry(entry)) {
-                redrawDiagnostics = executeBitmapFallbackRender(entry, restored, command);
+                redrawIntel = executeBitmapFallbackRender(entry, restored, command);
             }
             entry.renderedText = restored;
             const copiedTargetCompositionProofs = [];
@@ -175,7 +181,7 @@
                     translationDrawn: '',
                     copiedTargetRedraws,
                     copiedTargetProof,
-                    copiedTargetRenderPlan: copiedTargetRenderPlanDiagnostics,
+                    copiedTargetRenderPlan: copiedTargetRenderPlanIntel,
                 });
             }
             updateItem(entry, {
@@ -189,7 +195,7 @@
                 copiedTargetRedraws,
                 copiedTargetProof,
                 detachedCopiedTarget: isCopiedTargetDetachedEntry(entry) === true,
-                copiedTargetRenderPlan: copiedTargetRenderPlanDiagnostics,
+                copiedTargetRenderPlan: copiedTargetRenderPlanIntel,
             });
             return createBitmapRenderCommit('committed', 'bitmap-redraw-applied', entry, command, route, {
                 translationReceived: translated,
@@ -200,8 +206,8 @@
                 copiedTargetRedraws,
                 copiedTargetProof,
                 detachedCopiedTarget: isCopiedTargetDetachedEntry(entry) === true,
-                copiedTargetRenderPlan: copiedTargetRenderPlanDiagnostics,
-                redraw: redrawDiagnostics,
+                copiedTargetRenderPlan: copiedTargetRenderPlanIntel,
+                redraw: redrawIntel,
             });
         }
 
@@ -216,7 +222,7 @@
                 surfaceId: entry && entry.surfaceId || '',
                 slotKey: entry && entry.slotKey || '',
                 strategy: route && route.strategy || command.strategy || RENDER_STRATEGY,
-                commandId: command && command.id || '',
+                commandId: command && command.commandId || '',
                 commandGeneration: Number(route && route.commandGeneration) || Number(command && command.generation) || 0,
                 generation: entry && entry.surfaceRevision || 0,
                 translationReceived: details.translationReceived || '',
@@ -371,6 +377,15 @@
             const boundary = entry && entry.drawBoundary && typeof entry.drawBoundary === 'object'
                 ? entry.drawBoundary
                 : null;
+            const sourceRunId = firstSourceRunString(
+                entry && entry.sourceRunId,
+                boundary && boundary.runId
+            );
+            const sourceSlotKey = firstSourceRunString(
+                entry && entry.sourceSlotKey,
+                boundary && boundary.slotKey,
+                entry && entry.slotKey
+            );
             return {
                 sourceBitmap: entry && entry.bitmap || null,
                 sourceSurfaceId: firstSourceRunString(
@@ -378,14 +393,19 @@
                     boundary && boundary.surfaceId,
                     entry && entry.surfaceId
                 ),
-                sourceRunId: firstSourceRunString(
-                    entry && entry.sourceRunId,
-                    boundary && boundary.runId
+                sourceRunId,
+                sourceRunIds: collectSourceRunStrings(
+                    entry && entry.sourceRunIds,
+                    boundary && boundary.sourceRunIds,
+                    boundary && boundary.ledgerRunIds,
+                    sourceRunId
                 ),
-                sourceSlotKey: firstSourceRunString(
-                    entry && entry.sourceSlotKey,
-                    boundary && boundary.slotKey,
-                    entry && entry.slotKey
+                sourceSlotKey,
+                sourceSlotKeys: collectSourceRunStrings(
+                    entry && entry.sourceSlotKeys,
+                    boundary && boundary.sourceSlotKeys,
+                    boundary && boundary.slotKeys,
+                    sourceSlotKey
                 ),
             };
         }
@@ -400,6 +420,18 @@
                 : (projection && projection.sourceTextRun && typeof projection.sourceTextRun === 'object'
                     ? projection.sourceTextRun
                     : {});
+            const sourceRunId = firstSourceRunString(
+                request.sourceRunId,
+                projection.sourceRunId,
+                sourceTextRun.runId,
+                sourceTextRun.sourceRunId
+            );
+            const sourceSlotKey = firstSourceRunString(
+                request.sourceSlotKey,
+                projection.sourceSlotKey,
+                sourceTextRun.slotKey,
+                sourceTextRun.sourceSlotKey
+            );
             return {
                 sourceBitmap: request.sourceBitmap || projection.sourceBitmap || sourceTextRun.sourceBitmap || null,
                 sourceSurfaceId: firstSourceRunString(
@@ -408,13 +440,23 @@
                     sourceTextRun.surfaceId,
                     sourceTextRun.sourceSurfaceId
                 ),
-                sourceRunId: firstSourceRunString(
+                sourceRunId,
+                sourceRunIds: collectSourceRunStrings(
+                    request.sourceRunIds,
+                    projection.sourceRunIds,
+                    sourceTextRun.sourceRunIds,
+                    sourceTextRun.runIds,
                     request.sourceRunId,
                     projection.sourceRunId,
                     sourceTextRun.runId,
                     sourceTextRun.sourceRunId
                 ),
-                sourceSlotKey: firstSourceRunString(
+                sourceSlotKey,
+                sourceSlotKeys: collectSourceRunStrings(
+                    request.sourceSlotKeys,
+                    projection.sourceSlotKeys,
+                    sourceTextRun.sourceSlotKeys,
+                    sourceTextRun.slotKeys,
                     request.sourceSlotKey,
                     projection.sourceSlotKey,
                     sourceTextRun.slotKey,
@@ -427,18 +469,19 @@
             const sourceSurfaceId = normalizeSourceRunString(identity && identity.sourceSurfaceId);
             if (!sourceSurfaceId) return [];
             const keys = [];
-            const sourceRunId = normalizeSourceRunString(identity && identity.sourceRunId);
-            const sourceSlotKey = normalizeSourceRunString(identity && identity.sourceSlotKey);
-            if (sourceRunId) keys.push(`run:${sourceSurfaceId}:${sourceRunId}`);
-            if (sourceSlotKey) keys.push(`slot:${sourceSurfaceId}:${sourceSlotKey}`);
+            collectSourceRunIds(identity).forEach((sourceRunId) => {
+                keys.push(`run:${sourceSurfaceId}:${sourceRunId}`);
+            });
+            collectSourceSlotKeys(identity).forEach((sourceSlotKey) => {
+                keys.push(`slot:${sourceSurfaceId}:${sourceSlotKey}`);
+            });
             return keys;
         }
 
         function matchesEntrySourceRunLookup(entry, lookup) {
             const identity = createEntrySourceRunIdentity(entry);
             if (lookup.sourceSurfaceId && identity.sourceSurfaceId !== lookup.sourceSurfaceId) return false;
-            if (lookup.sourceRunId && identity.sourceRunId && identity.sourceRunId === lookup.sourceRunId) return true;
-            return !!(lookup.sourceSlotKey && identity.sourceSlotKey && identity.sourceSlotKey === lookup.sourceSlotKey);
+            return sourceRunIdentitiesMatch(identity, lookup);
         }
 
         function getSourceRunEntryIndex(create) {
@@ -465,6 +508,23 @@
             return '';
         }
 
+        function collectSourceRunStrings(...values) {
+            const result = [];
+            const seen = new Set();
+            const pushValue = (value) => {
+                if (Array.isArray(value)) {
+                    value.forEach(pushValue);
+                    return;
+                }
+                const normalized = normalizeSourceRunString(value);
+                if (!normalized || seen.has(normalized)) return;
+                seen.add(normalized);
+                result.push(normalized);
+            };
+            values.forEach(pushValue);
+            return result;
+        }
+
         function normalizeSourceRunString(value) {
             const normalized = stringify(value);
             return normalized ? normalized : '';
@@ -479,10 +539,13 @@
                     ownerType: entry.ownerType,
                     methodName: entry.methodName,
                 }, details || {});
-                scope.adapterContract.cancelItemTranslation(entry, reason, { abortJob: true });
                 scope.adapterContract.retireItem(entry, status || 'stale', {
                     eventType: status === 'stale' ? 'item.stale' : `item.${status}`,
                     message: reason,
+                    policy: {
+                        kind: 'retired',
+                        translationAction: 'cancel',
+                    },
                     details: eventDetails,
                 });
             }
@@ -499,7 +562,7 @@
             if (!entry || entry.stale) return false;
             const recoveryPlan = planBitmapCopiedTargetRecovery(entry);
             if (!recoveryPlan || recoveryPlan.status !== 'planned') return false;
-            const recoveryPlanDiagnostics = recoveryPlan.diagnostics || null;
+            const recoveryPlanIntel = recoveryPlan.intel || null;
             const unresolvedCommands = getUnresolvedRenderCommandsForEntry(entry);
             const renderRecovery = unresolvedCommands.length
                 ? createRenderCommandRecoveryDetails(
@@ -508,7 +571,7 @@
                     false
                 )
                 : null;
-            recordCopiedTargetDetachment(entry, reason || 'bitmap-source-invalidated', recoveryPlanDiagnostics);
+            recordCopiedTargetDetachment(entry, reason || 'bitmap-source-invalidated', recoveryPlanIntel);
             if (entry.state && entry.state.entries && entry.state.entries.get(entry.key) === entry) {
                 entry.state.entries.delete(entry.key);
             }
@@ -521,7 +584,7 @@
                     reason: reason || 'bitmap-source-invalidated',
                     screenState: 'copied-bitmap-target',
                     copiedTargets: Number(recoveryPlan.copiedTargets) || 0,
-                    copiedTargetRecoveryPlan: recoveryPlanDiagnostics,
+                    copiedTargetRecoveryPlan: recoveryPlanIntel,
                     sourceSurfaceId: entry.sourceSurfaceId || entry.surfaceId || '',
                     sourceRunId: entry.sourceRunId || '',
                     sourceSlotKey: entry.sourceSlotKey || '',
@@ -596,7 +659,7 @@
         }
 
         function getRenderCommandId(command) {
-            return String(command && (command.commandId || command.id) || '');
+            return String(command && command.commandId || '');
         }
 
         function resolveBitmapInvalidationRenderOutcome(reason) {
@@ -612,7 +675,7 @@
             return !!(detachment && detachment.detached === true);
         }
 
-        function recordCopiedTargetDetachment(entry, reason, recoveryPlanDiagnostics) {
+        function recordCopiedTargetDetachment(entry, reason, recoveryPlanIntel) {
             if (!entry) return;
             const lifecycle = entry.renderLifecycle && typeof entry.renderLifecycle === 'object'
                 ? entry.renderLifecycle
@@ -621,7 +684,7 @@
                 detached: true,
                 reason: reason || 'bitmap-source-invalidated',
                 at: Date.now(),
-                recoveryPlan: recoveryPlanDiagnostics || null,
+                recoveryPlan: recoveryPlanIntel || null,
             };
         }
 

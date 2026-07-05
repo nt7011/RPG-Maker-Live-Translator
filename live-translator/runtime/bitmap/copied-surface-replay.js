@@ -61,23 +61,23 @@
                     const restoreRect = cloneRect(input.restoreRect);
                     if (!restoreRect) return plan;
                     const edges = readCopyEdgesTo(input.targetBitmap);
-                    plan.diagnostics.copyEdgeCount = Array.isArray(edges) ? edges.length : 0;
+                    plan.intel.copyEdgeCount = Array.isArray(edges) ? edges.length : 0;
                     if (!Array.isArray(edges) || !edges.length) return plan;
                     edges.forEach((edge) => {
                         const admission = createCopyEdgeReplayAdmission(edge, targetSurfaceId, restoreRect);
                         if (!admission.accepted) {
-                            plan.diagnostics.rejectedEdgeCount += 1;
+                            plan.intel.rejectedEdgeCount += 1;
                             return;
                         }
-                        plan.diagnostics.currentEdgeCount += 1;
+                        plan.intel.currentEdgeCount += 1;
                         materializeReplayItemsForEdge(edge, restoreRect, plan).forEach((item) => {
                             if (item) plan.items.push(item);
                         });
                     });
                     plan.items = dedupeReplayItems(plan.items).sort(compareReplayItems);
                     plan.coverageRects = collectReplayCoverageRects(plan.items, restoreRect);
-                    plan.diagnostics.projectedItemCount = plan.items.length;
-                    plan.diagnostics.rejectedOpCount = plan.rejectedOps.length;
+                    plan.intel.projectedItemCount = plan.items.length;
+                    plan.intel.rejectedOpCount = plan.rejectedOps.length;
                     return plan;
                 }
 
@@ -130,7 +130,7 @@
                     const replayOps = Array.isArray(sourceSnapshot && sourceSnapshot.replayOps)
                         ? sourceSnapshot.replayOps
                         : [];
-                    plan.diagnostics.replayOpCount += replayOps.length;
+                    plan.intel.replayOpCount += replayOps.length;
                     if (!replayOps.length) return [];
                     const items = [];
                     replayOps.forEach((op) => {
@@ -178,7 +178,7 @@
                         rejectReplayOp(plan, 'non-replayable-op', edge, op, opRect);
                         return [];
                     }
-                    plan.diagnostics.replayableOpCount += 1;
+                    plan.intel.replayableOpCount += 1;
                     const survivingPieces = collectSurvivingReplaySourcePieces({
                         sourceSnapshot,
                         replayOp: op,
@@ -247,7 +247,7 @@
                     items: [],
                     coverageRects: [],
                     rejectedOps: [],
-                    diagnostics: {
+                    intel: {
                         copyEdgeCount: 0,
                         currentEdgeCount: 0,
                         rejectedEdgeCount: 0,

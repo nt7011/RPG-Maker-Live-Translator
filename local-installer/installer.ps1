@@ -2,10 +2,13 @@
 param(
     [string]$GameRoot = "",
     [string]$RuntimeSource = "",
+    [string]$DiagnosticsSource = "",
     [string]$SnapshotSource = "",
 
     [ValidateSet("debug", "snapshot")]
-    [string]$PluginProfile = "debug"
+    [string]$PluginProfile = "debug",
+
+    [switch]$IncludeDiagnostics
 )
 
 $ErrorActionPreference = "Stop"
@@ -97,6 +100,30 @@ function Resolve-OptionalSnapshotSource {
     return ""
 }
 
+function Resolve-OptionalDiagnosticsSource {
+    param(
+        [Parameter(Mandatory = $true)][string]$ResolvedRuntimeRoot,
+        [string]$ConfiguredDiagnosticsSource = "",
+        [bool]$Include = $false
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($ConfiguredDiagnosticsSource)) {
+        return Get-FullPath (Resolve-InputPath -BasePath (Get-Location).Path -Path $ConfiguredDiagnosticsSource)
+    }
+
+    if (-not $Include) {
+        return ""
+    }
+
+    $runtimeParent = Split-Path -Path $ResolvedRuntimeRoot -Parent
+    $diagnosticsCandidate = Get-FullPath (Join-Path -Path $runtimeParent -ChildPath "diagnostics")
+    if (Test-Path -LiteralPath $diagnosticsCandidate -PathType Container) {
+        return $diagnosticsCandidate
+    }
+
+    return ""
+}
+
 function Read-SnapshotManifest {
     param([Parameter(Mandatory = $true)][string]$SnapshotRoot)
 
@@ -119,19 +146,25 @@ function Read-SnapshotManifest {
     return $manifest
 }
 
-function Read-OptionalSupportManifest {
-    param([Parameter(Mandatory = $true)][string]$SupportRoot)
+function Read-DiagnosticsManifest {
+    param([Parameter(Mandatory = $true)][string]$DiagnosticsRoot)
 
-    $manifestPath = Join-Path -Path $SupportRoot -ChildPath "install-manifest.json"
+    $manifestPath = Join-Path -Path $DiagnosticsRoot -ChildPath "install-manifest.json"
     if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
-        throw "Optional support install-manifest.json not found at $manifestPath"
+        throw "diagnostics/install-manifest.json not found at $manifestPath"
     }
 
     $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
-    if (-not $manifest.supportDirectory) { throw "Optional support install-manifest.json missing supportDirectory" }
-    if (-not $manifest.fileInventory) { throw "Optional support install-manifest.json missing fileInventory section" }
+    if ([string]$manifest.module -ne "diagnostics") { throw "diagnostics/install-manifest.json missing module 'diagnostics'" }
+    if (-not $manifest.supportDirectory) { throw "diagnostics/install-manifest.json missing supportDirectory" }
+    if (-not $manifest.loader) { throw "diagnostics/install-manifest.json missing loader" }
+    if (-not $manifest.runtime) { throw "diagnostics/install-manifest.json missing runtime section" }
+    if (-not $manifest.runtime.PSObject.Properties["scriptLoadOrder"]) {
+        throw "diagnostics/install-manifest.json missing runtime.scriptLoadOrder"
+    }
+    if (-not $manifest.fileInventory) { throw "diagnostics/install-manifest.json missing fileInventory section" }
     if (-not $manifest.fileInventory.PSObject.Properties["sourceFiles"]) {
-        throw "Optional support install-manifest.json missing fileInventory.sourceFiles"
+        throw "diagnostics/install-manifest.json missing fileInventory.sourceFiles"
     }
 
     return $manifest
@@ -428,42 +461,47 @@ function Copy-OptionalSnapshotBundle {
     return $true
 }
 
-function Copy-OptionalSupportBundle {
+function Copy-OptionalDiagnosticsBundle {
     param(
-        [Parameter(Mandatory = $true)][string]$ResolvedSupportRoot,
+        [Parameter(Mandatory = $true)][string]$ResolvedDiagnosticsRoot,
         [Parameter(Mandatory = $true)][string]$PluginsDir
     )
 
-    if ([string]::IsNullOrWhiteSpace($ResolvedSupportRoot)) { return $false }
+    if ([string]::IsNullOrWhiteSpace($ResolvedDiagnosticsRoot)) { return $false }
 
-    $supportFull = Get-FullPath $ResolvedSupportRoot
-    if (-not (Test-Path -LiteralPath $supportFull -PathType Container)) {
-        return $false
+    $diagnosticsFull = Get-FullPath $ResolvedDiagnosticsRoot
+    if (-not (Test-Path -LiteralPath $diagnosticsFull -PathType Container)) {
+        throw "Diagnostics source does not exist: $diagnosticsFull"
     }
 
     $pluginsFull = Get-FullPath $PluginsDir
-    $supportManifest = Read-OptionalSupportManifest -SupportRoot $supportFull
-    $supportTargetFull = Resolve-ManifestChildPath `
-        -BaseDir $pluginsFull `
-        -RelativePath ([string]$supportManifest.supportDirectory) `
-        -Description "optional support directory"
-
-    if ((Test-IsUnderPath -Path $supportTargetFull -Parent $supportFull) -or
-        (Test-IsUnderPath -Path $supportFull -Parent $supportTargetFull)) {
-        throw "Optional support source and target must be separate directories."
+    $diagnosticsManifest = Read-DiagnosticsManifest -DiagnosticsRoot $diagnosticsFull
+    $loaderPath = Join-Path -Path $diagnosticsFull -ChildPath ([string]$diagnosticsManifest.loader)
+    if (-not (Test-Path -LiteralPath $loaderPath -PathType Leaf)) {
+        throw "$($diagnosticsManifest.loader) not found at $loaderPath"
     }
 
-    if (-not (Test-Path -LiteralPath $supportTargetFull -PathType Container)) {
-        New-Item -ItemType Directory -Path $supportTargetFull -Force | Out-Null
+    $diagnosticsTargetFull = Resolve-ManifestChildPath `
+        -BaseDir $pluginsFull `
+        -RelativePath ([string]$diagnosticsManifest.supportDirectory) `
+        -Description "diagnostics support directory"
+
+    if ((Test-IsUnderPath -Path $diagnosticsTargetFull -Parent $diagnosticsFull) -or
+        (Test-IsUnderPath -Path $diagnosticsFull -Parent $diagnosticsTargetFull)) {
+        throw "Diagnostics source and target must be separate directories."
+    }
+
+    if (-not (Test-Path -LiteralPath $diagnosticsTargetFull -PathType Container)) {
+        New-Item -ItemType Directory -Path $diagnosticsTargetFull -Force | Out-Null
     }
 
     Copy-ManifestFileList `
-        -SourceDir $supportFull `
-        -TargetDir $supportTargetFull `
-        -RelativePaths @($supportManifest.fileInventory.sourceFiles) `
-        -Description "$($supportManifest.supportDirectory) fileInventory.sourceFiles" `
+        -SourceDir $diagnosticsFull `
+        -TargetDir $diagnosticsTargetFull `
+        -RelativePaths @($diagnosticsManifest.fileInventory.sourceFiles) `
+        -Description "diagnostics fileInventory.sourceFiles" `
         -Required $true | Out-Null
-    Write-Host "Installed optional support bundle to $supportTargetFull" -ForegroundColor Cyan
+    Write-Host "Installed optional diagnostics plugin to $diagnosticsTargetFull" -ForegroundColor Cyan
     return $true
 }
 
@@ -1070,46 +1108,64 @@ function Sync-PluginEntries {
     $pluginsFileText = Read-PluginsFileText -Path $PluginsFile
     $pluginsContent = $pluginsFileText.Content
     $arrayLiteral = Find-PluginsArrayLiteral -PluginsContent $pluginsContent -PluginsFile $PluginsFile
-    $entries = Split-PluginsArrayEntries -ArrayContent $arrayLiteral.Inner
+    $entries = @(Split-PluginsArrayEntries -ArrayContent $arrayLiteral.Inner)
     $desiredNames = @($DesiredPlugins | ForEach-Object { [string]$_.Name } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $desiredNameKeys = @{}
+    foreach ($name in $desiredNames) {
+        $desiredNameKeys[$name.ToLowerInvariant()] = $true
+    }
 
     $keptEntries = @()
-    $presentDesired = @{}
-    $changed = $false
+    $existingDesiredEntries = @{}
     $removedNames = @()
 
     foreach ($entry in $entries) {
         $entryName = Get-PluginNameFromEntry -EntryText $entry
         if (Test-NameInList -Name $entryName -Names $RemovePluginNames) {
             $removedNames += $entryName
-            $changed = $true
             continue
         }
 
-        if (Test-NameInList -Name $entryName -Names $desiredNames) {
+        if (-not [string]::IsNullOrWhiteSpace($entryName) -and $desiredNameKeys.ContainsKey($entryName.ToLowerInvariant())) {
             $key = $entryName.ToLowerInvariant()
-            if ($presentDesired.ContainsKey($key)) {
+            if ($existingDesiredEntries.ContainsKey($key)) {
                 $removedNames += $entryName
-                $changed = $true
                 continue
             }
-            $presentDesired[$key] = $true
+            $existingDesiredEntries[$key] = $entry
+            continue
         }
 
         $keptEntries += $entry
     }
 
+    $managedEntries = @()
     $addedNames = @()
     foreach ($plugin in @($DesiredPlugins)) {
         $name = [string]$plugin.Name
         if ([string]::IsNullOrWhiteSpace($name)) { continue }
         $key = $name.ToLowerInvariant()
-        if ($presentDesired.ContainsKey($key)) { continue }
 
-        $keptEntries += New-PluginEntryJson -Name $name -Description ([string]$plugin.Description)
-        $presentDesired[$key] = $true
-        $addedNames += $name
+        if ($existingDesiredEntries.ContainsKey($key)) {
+            $managedEntries += [string]$existingDesiredEntries[$key]
+        } else {
+            $managedEntries += New-PluginEntryJson -Name $name -Description ([string]$plugin.Description)
+            $addedNames += $name
+        }
+    }
+
+    $updatedEntries = @($keptEntries + $managedEntries)
+    $changed = $removedNames.Count -gt 0 -or $addedNames.Count -gt 0
+    if (-not $changed -and $entries.Count -ne $updatedEntries.Count) {
         $changed = $true
+    }
+    if (-not $changed) {
+        for ($index = 0; $index -lt $entries.Count; $index++) {
+            if ($entries[$index].Trim() -ne $updatedEntries[$index].Trim()) {
+                $changed = $true
+                break
+            }
+        }
     }
 
     if (-not $changed) {
@@ -1123,8 +1179,8 @@ function Sync-PluginEntries {
     $prefix = $pluginsContent.Substring(0, $arrayLiteral.OpenIndex + 1)
     $suffix = $pluginsContent.Substring($arrayLiteral.CloseIndex)
     $newline = "`r`n"
-    $body = if ($keptEntries.Count -gt 0) {
-        $newline + (($keptEntries | ForEach-Object { "    " + $_.Trim() }) -join ("," + $newline)) + $newline
+    $body = if ($updatedEntries.Count -gt 0) {
+        $newline + (($updatedEntries | ForEach-Object { "    " + $_.Trim() }) -join ("," + $newline)) + $newline
     } else {
         ""
     }
@@ -1150,7 +1206,10 @@ $resolvedRuntimeSource = if ([string]::IsNullOrWhiteSpace($RuntimeSource)) {
     Get-FullPath (Resolve-InputPath -BasePath (Get-Location).Path -Path $RuntimeSource)
 }
 
-$resolvedDiagnosticsSource = Get-FullPath (Join-Path -Path (Split-Path -Path $resolvedRuntimeSource -Parent) -ChildPath "diagnostics")
+$resolvedDiagnosticsSource = Resolve-OptionalDiagnosticsSource `
+    -ResolvedRuntimeRoot $resolvedRuntimeSource `
+    -ConfiguredDiagnosticsSource $DiagnosticsSource `
+    -Include ([bool]$IncludeDiagnostics)
 
 $resolvedSnapshotSource = Resolve-OptionalSnapshotSource `
     -ResolvedRuntimeRoot $resolvedRuntimeSource `
@@ -1173,6 +1232,9 @@ try {
     }
 
     $manifest = Read-InstallManifest -ManifestPath $manifestPath
+    if ($IncludeDiagnostics -and [string]::IsNullOrWhiteSpace($resolvedDiagnosticsSource)) {
+        throw "Diagnostics include requires a diagnostics source folder."
+    }
     if ($PluginProfile -eq "snapshot" -and [string]::IsNullOrWhiteSpace($resolvedSnapshotSource)) {
         throw "Snapshot profile requires a snapshot source folder."
     }
@@ -1195,9 +1257,11 @@ try {
         -ResolvedRuntimeRoot $resolvedRuntimeSource `
         -SupportTargetDir $supportTargetFull `
         -Manifest $manifest
-    Copy-OptionalSupportBundle `
-        -ResolvedSupportRoot $resolvedDiagnosticsSource `
-        -PluginsDir $pluginsDirFull | Out-Null
+    if ($IncludeDiagnostics) {
+        Copy-OptionalDiagnosticsBundle `
+            -ResolvedDiagnosticsRoot $resolvedDiagnosticsSource `
+            -PluginsDir $pluginsDirFull | Out-Null
+    }
     if ($PluginProfile -eq "snapshot") {
         Write-Host "Snapshot profile enables the standard live-translator plugin entry before the snapshot harness." -ForegroundColor Cyan
     }
@@ -1223,6 +1287,13 @@ try {
         -SupportDirectory ([string]$manifest.supportDirectory) `
         -LoaderFile ([string]$manifest.loader)
     $legacyPluginEntryName = Get-LegacyPluginEntryName -LoaderFile ([string]$manifest.loader)
+    $diagnosticsPluginEntryName = "diagnostics/diagnostics-loader"
+    if ($IncludeDiagnostics) {
+        $diagnosticsManifest = Read-DiagnosticsManifest -DiagnosticsRoot $resolvedDiagnosticsSource
+        $diagnosticsPluginEntryName = Get-PluginEntryName `
+            -SupportDirectory ([string]$diagnosticsManifest.supportDirectory) `
+            -LoaderFile ([string]$diagnosticsManifest.loader)
+    }
     $snapshotPluginEntryName = ""
     if (-not [string]::IsNullOrWhiteSpace($resolvedSnapshotSource)) {
         $snapshotManifest = Read-SnapshotManifest -SnapshotRoot $resolvedSnapshotSource
@@ -1233,27 +1304,30 @@ try {
         $snapshotPluginEntryName = "snapshot/snapshot-loader"
     }
 
-    $desiredPlugins = if ($PluginProfile -eq "snapshot") {
-        @(
-            [pscustomobject]@{
-                Name = $pluginEntryName
-                Description = "Entry point for the live translation system"
-            },
-            [pscustomobject]@{
-                Name = $snapshotPluginEntryName
-                Description = "Snapshot capture and validation harness"
-            }
-        )
-    } else {
-        @([pscustomobject]@{
-                Name = $pluginEntryName
-                Description = "Entry point for the live translation system"
-            })
+    $desiredPlugins = @()
+    if ($IncludeDiagnostics) {
+        $desiredPlugins += [pscustomobject]@{
+            Name = $diagnosticsPluginEntryName
+            Description = "Dev diagnostics hooks for live-translator"
+        }
     }
-    $removePlugins = if ($PluginProfile -eq "snapshot") {
-        @($legacyPluginEntryName)
-    } else {
-        @($legacyPluginEntryName, $snapshotPluginEntryName)
+    $desiredPlugins += [pscustomobject]@{
+        Name = $pluginEntryName
+        Description = "Entry point for the live translation system"
+    }
+    if ($PluginProfile -eq "snapshot") {
+        $desiredPlugins += [pscustomobject]@{
+            Name = $snapshotPluginEntryName
+            Description = "Snapshot capture and validation harness"
+        }
+    }
+
+    $removePlugins = @($legacyPluginEntryName)
+    if (-not $IncludeDiagnostics) {
+        $removePlugins += $diagnosticsPluginEntryName
+    }
+    if ($PluginProfile -ne "snapshot") {
+        $removePlugins += $snapshotPluginEntryName
     }
 
     $createdPluginsBackup = Sync-PluginEntries `

@@ -12,7 +12,7 @@
         loadBefore: ['adapters.foresight'],
         run({ partsRegistry }) {
             const parts = partsRegistry.getParts();
-            const { DEFAULT_BUDGET, DEFAULT_MAX_SCAN_COMMANDS, MESSAGE_BUDGET_COST, BRANCH_BUDGET_STRATEGY, MAX_NESTED_LIST_DEPTH, MAX_NESTED_LISTS_PER_COMMAND, MAX_BRANCH_DEPTH, DIAGNOSTIC_ACTION_LIMIT, RECENT_SCAN_LIMIT, COMMAND_CATALOG_ASSET, BRANCH_MARKER_CODES, RESOLVABLE_CONTROL_FLOW_CODES, commandCatalog } = parts;
+            const { DEFAULT_BUDGET, DEFAULT_MAX_SCAN_COMMANDS, MESSAGE_BUDGET_COST, BRANCH_BUDGET_STRATEGY, MAX_NESTED_LIST_DEPTH, MAX_NESTED_LISTS_PER_COMMAND, MAX_BRANCH_DEPTH, INTEL_ACTION_LIMIT, RECENT_SCAN_LIMIT, COMMAND_CATALOG_ASSET, BRANCH_MARKER_CODES, RESOLVABLE_CONTROL_FLOW_CODES, commandCatalog } = parts;
             const { isEventScanBehavior } = parts.facades.catalog;
             const { createScanFrame } = parts.facades.nestedLists;
             const { createBudgetState } = parts.facades.budget;
@@ -34,14 +34,14 @@
                     });
                 }
 
-            function attachPathContextToBlock(block, path, diagnostics) {
+            function attachPathContextToBlock(block, path, intel) {
                     block.priorityDistance = Math.max(0, Math.floor(Number(path.messageDistance) || 0));
                     block.branchDepth = Math.max(0, Math.floor(Number(path.branchDepth) || 0));
                     block.branchPath = Array.isArray(path.branchPath) ? path.branchPath.slice() : [];
                     block.returnPriority = Math.max(0, Math.floor(Number(path.returnPriority) || 0));
                     attachHiddenArray(block, '__returnGuards', path.returnGuards);
-                    block.scanSequence = diagnostics.blockSequence;
-                    diagnostics.blockSequence += 1;
+                    block.scanSequence = intel.blockSequence;
+                    intel.blockSequence += 1;
                     return block;
                 }
 
@@ -163,9 +163,9 @@
                     });
                 }
 
-            function stopScanPath(path, diagnostics, stopReason, index, metadata = null, options = {}) {
+            function stopScanPath(path, intel, stopReason, index, metadata = null, options = {}) {
                     if (path) path.done = true;
-                    markBlockedReturnGuards(path, diagnostics, stopReason);
+                    markBlockedReturnGuards(path, intel, stopReason);
                     const stop = {
                         index: finiteNumber(index),
                         stopReason: nonEmptyString(stopReason) || 'barrier-command',
@@ -175,31 +175,31 @@
                         label: metadata ? metadata.label : '',
                         controlFlowTarget: options.controlFlowTarget,
                     };
-                    appendPathStop(diagnostics, stop);
-                    if (metadata && isBarrierStopReason(stop.stopReason) && diagnostics && diagnostics.barrierCode === null) {
-                        diagnostics.barrierCode = metadata.code;
-                        diagnostics.barrierLabel = metadata.label;
+                    appendPathStop(intel, stop);
+                    if (metadata && isBarrierStopReason(stop.stopReason) && intel && intel.barrierCode === null) {
+                        intel.barrierCode = metadata.code;
+                        intel.barrierLabel = metadata.label;
                     }
                     return { requeue: false, index };
                 }
 
-            function markBlockedReturnGuards(path, diagnostics, stopReason) {
+            function markBlockedReturnGuards(path, intel, stopReason) {
                     const reason = nonEmptyString(stopReason);
                     const returnStops = Array.isArray(path && path.returnStops) ? path.returnStops : [];
-                    if (!diagnostics || !reason || !returnStops.length || !isBarrierStopReason(reason)) return;
-                    if (!diagnostics.blockedReturnGuards || typeof diagnostics.blockedReturnGuards !== 'object') {
-                        diagnostics.blockedReturnGuards = {};
+                    if (!intel || !reason || !returnStops.length || !isBarrierStopReason(reason)) return;
+                    if (!intel.blockedReturnGuards || typeof intel.blockedReturnGuards !== 'object') {
+                        intel.blockedReturnGuards = {};
                     }
                     returnStops.forEach((stop) => {
                         const guardId = Math.max(0, Math.floor(Number(stop && stop.guardId) || 0));
-                        if (guardId) diagnostics.blockedReturnGuards[String(guardId)] = reason;
+                        if (guardId) intel.blockedReturnGuards[String(guardId)] = reason;
                     });
                 }
 
-            function appendPathStop(diagnostics, stop) {
-                    if (!diagnostics) return;
-                    if (!Array.isArray(diagnostics.pathStops)) diagnostics.pathStops = [];
-                    diagnostics.pathStops.push({
+            function appendPathStop(intel, stop) {
+                    if (!intel) return;
+                    if (!Array.isArray(intel.pathStops)) intel.pathStops = [];
+                    intel.pathStops.push({
                         index: finiteNumber(stop && stop.index),
                         stopReason: nonEmptyString(stop && stop.stopReason) || '',
                         stopReasonLabel: getStopReasonLabel(stop && stop.stopReason),

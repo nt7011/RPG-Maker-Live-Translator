@@ -27,20 +27,35 @@
             getGuiViewState,
             getGuiEffectivePolicy,
             refreshGuiPolicySnapshot,
-            deriveDiagnosticsSummaryModel,
+            deriveIntelSummaryModel,
             filterVisibleHookResults,
-            getGuiDiagnosticsSnapshotRequest,
+            getGuiIntelSnapshotRequest,
             isGuiTextRecordSpoilerCensored,
-            syncRuntimeDiagnosticsForGuiState,
+            syncRuntimeIntelForGuiState,
             buildDrawCaptureTraceCopyPayload,
-            buildForesightDiagnosticsCopyPayload,
+            buildForesightIntelCopyPayload,
             buildTextRecordCopyPayload,
-            getTextRecordRuntimePolicyDiagnostics,
+            getTextRecordRuntimePolicyIntel,
             getTextRecordTranslationRailInfo,
+            createTextRecordRenderContext,
+            createRuntimePanelRenderKeys,
+            createTextRecordPanelKeySource,
+            createTextRecordRowRenderKey,
+            createTextRecordDetailRenderKey,
+            renderTextRecordSections,
+            createTextRecordDetail,
             syncTextRecordListBodyVisibility,
             createLmStudioStatusModel,
             formatLmStudioModelLabel,
             formatLmStudioComplaint,
+            patchGuiStateForTest(value) {
+                Object.assign(state, value || {});
+                return state;
+            },
+            patchGuiRefsForTest(value) {
+                Object.assign(refs, value || {});
+                return refs;
+            },
         };
     }
 

@@ -11,7 +11,7 @@
     LiveTranslatorDefine({
         name: 'runtime.bitmapServices',
         requires: {
-            operationDiagnostics: 'runtime.operationDiagnostics',
+            operationIntel: 'runtime.operationIntel',
             surfaceLedgerModule: 'runtime.bitmap.surfaceLedger',
             surfaceLedgerBoundaryModule: 'runtime.bitmap.surfaceLedgerBoundary',
             copyProjectionServicesModule: 'runtime.bitmap.copyProjectionServices',
@@ -28,11 +28,11 @@
             serviceFacetsModule: 'runtime.bitmap.serviceFacets',
             bitmapRunAssembler: 'runtime.bitmap.runAssembler',
         },
-        factory({ operationDiagnostics, surfaceLedgerModule, surfaceLedgerBoundaryModule, copyProjectionServicesModule, hookCaptureModule, adapterCoordinationModule, mutationJournalModule, defaultMutationParticipantsModule, inlineReplacementIndexModule, bitmapDirtyMarkerModule, replayProviderRegistryModule, renderGuardStateModule, mutationInterestRegistryModule, drawUnitPipelineModule, serviceFacetsModule, bitmapRunAssembler }) {
+        factory({ operationIntel, surfaceLedgerModule, surfaceLedgerBoundaryModule, copyProjectionServicesModule, hookCaptureModule, adapterCoordinationModule, mutationJournalModule, defaultMutationParticipantsModule, inlineReplacementIndexModule, bitmapDirtyMarkerModule, replayProviderRegistryModule, renderGuardStateModule, mutationInterestRegistryModule, drawUnitPipelineModule, serviceFacetsModule, bitmapRunAssembler }) {
 
             function createBitmapServices(options = {}) {
                 const logger = options.logger || console;
-                const reportServiceError = operationDiagnostics.createOperationErrorReporter({
+                const reportServiceError = operationIntel.createOperationErrorReporter({
                     component: 'BitmapServices',
                     operationLabel: 'Bitmap service',
                     metricBase: 'bitmapServices.error',

@@ -213,7 +213,7 @@
             if (policy && policy.suppressSourceObservation) {
                 return sourceObservationContract.createSourceObservation(
                     'suppressed',
-                    policy.diagnosticReason || policy.reason || 'source-observation-suppressed'
+                    policy.intelReason || policy.reason || 'source-observation-suppressed'
                 );
             }
             return sourceObservationContract.createSourceObservation('observed', '');

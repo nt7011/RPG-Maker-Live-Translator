@@ -7,11 +7,11 @@
         name: 'runtime.textOrchestrator.lifecycle',
         factory() {
             function createController(scope = {}) {
-                const { firstString, normalizeInputRecord, applyPatch, normalizeId, normalizeStatus, statusFromTranslationEvent, mergeDetails, cloneItem, createLifecycleResult, mergeProviderDispatchPolicy, normalizeTranslationService, preview, textEligibility, textLifecycle, events } = scope;
+                const { firstString, normalizeInputRecord, applyPatch, normalizeId, normalizeStatus, statusFromTranslationEvent, mergeDetails, cloneItem, createOperationResult, mergeProviderDispatchPolicy, normalizeTranslationService, preview, textEligibility, textLifecycle, events } = scope;
                 const { resolveLifecyclePolicy, applyLifecyclePolicy, applyObservationPolicy, applyObservationPriorityPolicy } = scope.controllerFacades.policy;
                 const { validateObservationOwnership } = scope.controllerFacades.ownership;
                 const { cancelItemTranslation } = scope.controllerFacades.translationState;
-                const { rejectOpenRenderCommands } = scope.controllerFacades.render;
+                const { rejectOpenRenderCommands, getUnresolvedRenderCommandsForItem, rebaseRenderCommand } = scope.controllerFacades.render;
                 const { upsertItem, createEmptyItem, getItemById, placeInactiveItem, releaseSlotIndexesForItem, claimSlotSignature, resetItemForSourceReplacement, setItemRenderCycleFromObservation, markItemRenderCycleTranslationKnown } = scope.controllerFacades.items;
                 const { recordEvent } = scope.controllerFacades.events;
                 const { resolveObservationIdentity, getRestoredItemStatus, shouldPreserveRefreshStatus } = scope.controllerFacades.identity;
@@ -52,8 +52,7 @@
                     source.id = id;
                     if (identity.refreshed && identity.current) {
                         const hasExplicitStatus = !!(input
-                            && (Object.prototype.hasOwnProperty.call(input, 'status')
-                                || Object.prototype.hasOwnProperty.call(input, 'translationStatus')));
+                            && Object.prototype.hasOwnProperty.call(input, 'status'));
                         if (!hasExplicitStatus || shouldPreserveRefreshStatus(identity.current, source.status)) {
                             source.status = identity.current.status || source.status;
                         }
@@ -62,8 +61,7 @@
                         source.status = getRestoredItemStatus(identity.current);
                     }
                     const statusWasProvided = !!(input
-                        && (Object.prototype.hasOwnProperty.call(input, 'status')
-                            || Object.prototype.hasOwnProperty.call(input, 'translationStatus')));
+                        && Object.prototype.hasOwnProperty.call(input, 'status'));
                     if (statusWasProvided) {
                         const incomingStatus = normalizeStatus(source.status, 'detected');
                         const beforeNativePaint = isBeforeNativePaint(source);
@@ -93,6 +91,7 @@
                         retireItem(identity.replaced.id, 'stale', {
                             eventType: 'item.replaced',
                             message: 'same slot replaced',
+                            policy: { kind: 'slot-replaced' },
                             details: {
                                 replacedBy: id,
                                 slotKey: source.slotKey,
@@ -141,8 +140,7 @@
                     if (!key) return null;
                     const rawPatch = patch && typeof patch === 'object' ? patch : {};
                     const source = normalizeInputRecord(Object.assign({}, rawPatch, { id: key }));
-                    if (!Object.prototype.hasOwnProperty.call(rawPatch, 'status')
-                        && !Object.prototype.hasOwnProperty.call(rawPatch, 'translationStatus')) {
+                    if (!Object.prototype.hasOwnProperty.call(rawPatch, 'status')) {
                         delete source.status;
                     }
                     const item = upsertItem(key, source);
@@ -179,14 +177,13 @@
                  * Deactivate an item and move it to detached items or archives.
                  *
                  * Retiring releases any slot signatures owned by the item so a future
-                 * observation in the same slot can become current. This does not cancel
-                 * a translation handle by itself; callers that own disappearance should
-                 * call cancelItemTranslation first when cancellation is desired.
+                 * observation in the same slot can become current. Translation cancellation
+                 * is part of the explicit lifecycle policy supplied by the caller.
                  */
                 function retireItem(id, status, optionsForEvent = {}) {
                     const key = normalizeId(id);
                     if (!key) {
-                        return createLifecycleResult('missing-id', {
+                        return createOperationResult('missing-id', {
                             handled: false,
                             changed: false,
                             terminal: true,
@@ -195,6 +192,50 @@
                     }
                     const existing = getItemById(key) || createEmptyItem(key);
                     const lifecyclePolicy = resolveLifecyclePolicy(existing, status, optionsForEvent);
+                    if (!lifecyclePolicy || lifecyclePolicy.valid === false) {
+                        const eventDetails = lifecyclePolicy && lifecyclePolicy.details ? lifecyclePolicy.details : optionsForEvent.details;
+                        recordEvent('item.lifecycle_policy_invalid', existing, {
+                            message: lifecyclePolicy && lifecyclePolicy.reason ? lifecyclePolicy.reason : 'invalid-lifecycle-policy',
+                            details: eventDetails,
+                        });
+                        return createOperationResult('invalid-lifecycle-policy', {
+                            handled: false,
+                            changed: false,
+                            terminal: true,
+                            recordId: key,
+                            id: key,
+                            reason: lifecyclePolicy && lifecyclePolicy.reason ? lifecyclePolicy.reason : 'invalid-lifecycle-policy',
+                            item: cloneItem(existing),
+                        });
+                    }
+                    const terminalPolicyError = validateTerminalLifecyclePolicy(lifecyclePolicy);
+                    if (terminalPolicyError) {
+                        const eventDetails = mergeDetails(optionsForEvent.details, lifecyclePolicy.details, {
+                            policy: {
+                                kind: lifecyclePolicy.kind,
+                                invalid: true,
+                                reason: terminalPolicyError.reason,
+                                actionField: terminalPolicyError.field,
+                                actionValue: terminalPolicyError.value,
+                                placementAction: lifecyclePolicy.placementAction,
+                                slotAction: lifecyclePolicy.slotAction,
+                                renderCommandAction: lifecyclePolicy.renderCommandAction,
+                            },
+                        });
+                        recordEvent('item.lifecycle_policy_invalid', existing, {
+                            message: terminalPolicyError.reason,
+                            details: eventDetails,
+                        });
+                        return createOperationResult('invalid-lifecycle-policy', {
+                            handled: false,
+                            changed: false,
+                            terminal: true,
+                            recordId: key,
+                            id: key,
+                            reason: terminalPolicyError.reason,
+                            item: cloneItem(existing),
+                        });
+                    }
                     const eventDetails = mergeDetails(optionsForEvent.details, lifecyclePolicy.details);
                     applyLifecyclePolicy(existing, lifecyclePolicy);
                     applyPatch(existing, normalizeInputRecord({ id: key, status }));
@@ -216,7 +257,7 @@
                         details: eventDetails,
                     });
                     const item = cloneItem(existing);
-                    return createLifecycleResult('retired', {
+                    return createOperationResult('retired', {
                         handled: true,
                         changed: true,
                         terminal: true,
@@ -231,6 +272,325 @@
                     });
                 }
 
+                function validateTerminalLifecyclePolicy(policy) {
+                    if (!policy) {
+                        return {
+                            reason: 'invalid-lifecycle-policy',
+                            field: '',
+                            value: '',
+                        };
+                    }
+                    if (policy.placementAction !== 'retire') {
+                        return createTerminalPolicyError('placementAction', policy.placementAction);
+                    }
+                    if (policy.slotAction !== 'release') {
+                        return createTerminalPolicyError('slotAction', policy.slotAction);
+                    }
+                    if (policy.renderCommandAction !== 'reject') {
+                        return createTerminalPolicyError('renderCommandAction', policy.renderCommandAction);
+                    }
+                    return null;
+                }
+
+                function createTerminalPolicyError(field, value) {
+                    return {
+                        reason: 'non-terminal-lifecycle-policy',
+                        field,
+                        value: firstString(value),
+                    };
+                }
+
+                function invalidateRenderTarget(id, details = {}) {
+                    return applyRenderTargetLifecycle(id, 'render-target-invalidated', details, {
+                        status: 'render-target-invalidated',
+                        eventType: 'item.render_target_invalidated',
+                        defaultMessage: 'render-target-invalidated',
+                    });
+                }
+
+                function retargetRenderTarget(id, details = {}) {
+                    return applyRenderTargetLifecycle(id, 'render-target-replaced', details, {
+                        status: 'render-target-retargeted',
+                        eventType: 'item.render_target_retargeted',
+                        defaultMessage: 'render-target-replaced',
+                    });
+                }
+
+                function applyRenderTargetLifecycle(id, kind, details = {}, resultOptions = {}) {
+                    const key = normalizeId(id);
+                    if (!key) {
+                        return createOperationResult('missing-id', {
+                            handled: false,
+                            changed: false,
+                            terminal: false,
+                            reason: 'missing-id',
+                        });
+                    }
+                    const existing = getItemById(key);
+                    if (!existing) {
+                        return createOperationResult('missing-record', {
+                            handled: false,
+                            changed: false,
+                            terminal: false,
+                            recordId: key,
+                            id: key,
+                            reason: 'missing-record',
+                        });
+                    }
+                    const source = details && typeof details === 'object' ? details : { message: String(details || '') };
+                    const lifecyclePolicy = resolveLifecyclePolicy(existing, '', {
+                        message: firstString(source.message, source.reason, resultOptions.defaultMessage),
+                        details: source.details && typeof source.details === 'object'
+                            ? source.details
+                            : source,
+                        policy: Object.assign({}, source.policy && typeof source.policy === 'object' ? source.policy : {}, { kind }),
+                    });
+                    if (!lifecyclePolicy || lifecyclePolicy.valid === false) {
+                        return createOperationResult('invalid-lifecycle-policy', {
+                            handled: false,
+                            changed: false,
+                            terminal: false,
+                            recordId: key,
+                            id: key,
+                            reason: lifecyclePolicy && lifecyclePolicy.reason ? lifecyclePolicy.reason : 'invalid-lifecycle-policy',
+                            item: cloneItem(existing),
+                        });
+                    }
+                    const renderCommandPlan = validateRenderTargetCommandPolicy(existing, lifecyclePolicy, source);
+                    if (renderCommandPlan && renderCommandPlan.valid === false) {
+                        recordEvent('item.lifecycle_policy_invalid', existing, {
+                            message: renderCommandPlan.reason,
+                            details: mergeDetails(source.details, lifecyclePolicy.details, {
+                                policy: {
+                                    kind: lifecyclePolicy.kind,
+                                    invalid: true,
+                                    reason: renderCommandPlan.reason,
+                                    actionField: renderCommandPlan.field,
+                                    actionValue: renderCommandPlan.value,
+                                    renderCommandAction: lifecyclePolicy.renderCommandAction,
+                                },
+                            }),
+                        });
+                        return createOperationResult('invalid-lifecycle-policy', {
+                            handled: false,
+                            changed: false,
+                            terminal: false,
+                            recordId: key,
+                            id: key,
+                            reason: renderCommandPlan.reason,
+                            item: cloneItem(existing),
+                        });
+                    }
+                    let eventDetails = mergeDetails(source.details, lifecyclePolicy.details, {
+                        renderTargetLifecycle: {
+                            kind,
+                            terminal: false,
+                        },
+                    });
+                    applyLifecyclePolicy(existing, lifecyclePolicy);
+                    const renderTarget = rememberRenderTargetLifecycle(existing, kind, source, lifecyclePolicy);
+                    const renderCommands = applyRenderTargetCommandPolicy(existing, lifecyclePolicy, source, eventDetails, renderCommandPlan);
+                    eventDetails = mergeDetails(eventDetails, {
+                        renderTarget,
+                        renderCommands,
+                    });
+                    existing.updatedAt = Date.now();
+                    recordEvent(resultOptions.eventType, existing, {
+                        message: firstString(source.message, source.reason, resultOptions.defaultMessage),
+                        details: eventDetails,
+                    });
+                    return createOperationResult(resultOptions.status, {
+                        handled: true,
+                        changed: true,
+                        terminal: false,
+                        recordId: key,
+                        id: key,
+                        reason: firstString(source.message, source.reason, resultOptions.defaultMessage),
+                        item: cloneItem(existing),
+                        active: existing.active !== false,
+                        detached: existing.detached === true,
+                        archived: existing.archived === true,
+                    });
+                }
+
+                function rememberRenderTargetLifecycle(item, kind, source = {}, policy = {}) {
+                    if (!item) return null;
+                    const details = source && source.details && typeof source.details === 'object'
+                        ? source.details
+                        : {};
+                    const previous = item.renderTarget && typeof item.renderTarget === 'object'
+                        ? item.renderTarget
+                        : {};
+                    const targetSurfaceId = firstString(
+                        source.targetSurfaceId,
+                        source.surfaceId,
+                        details.targetSurfaceId,
+                        details.surfaceId,
+                        previous.targetSurfaceId,
+                        item.surfaceId
+                    );
+                    const target = mergeDetails(previous, {
+                        kind,
+                        state: kind === 'render-target-replaced' ? 'replaced' : 'invalidated',
+                        reason: firstString(source.message, source.reason, details.reason, kind),
+                        targetSurfaceId,
+                        surfaceId: targetSurfaceId,
+                        generation: resolveRenderTargetGeneration(item, source),
+                        previousContentsRevision: finitePolicyNumber(source.previousContentsRevision, details.previousContentsRevision),
+                        nextContentsRevision: finitePolicyNumber(source.nextContentsRevision, details.nextContentsRevision),
+                        renderCommandAction: policy.renderCommandAction || 'preserve',
+                        updatedAt: Date.now(),
+                    });
+                    item.renderTarget = target;
+                    return target;
+                }
+
+                function validateRenderTargetCommandPolicy(item, policy = {}, source = {}) {
+                    const action = policy.renderCommandAction || 'preserve';
+                    if (action !== 'rebase') {
+                        return {
+                            valid: true,
+                            action,
+                            commands: [],
+                        };
+                    }
+                    const commands = typeof getUnresolvedRenderCommandsForItem === 'function'
+                        ? getUnresolvedRenderCommandsForItem(item.id)
+                        : [];
+                    if (!commands.length) {
+                        return {
+                            valid: true,
+                            action,
+                            commands,
+                        };
+                    }
+                    const targetSurfaceId = resolveRetargetSurfaceId(item, source);
+                    if (!targetSurfaceId) {
+                        return createRenderCommandPolicyError('render-rebase-target-surface-required', 'targetSurfaceId', '');
+                    }
+                    const targetGeneration = resolveRenderTargetGeneration(item, source);
+                    if (!targetGeneration) {
+                        return createRenderCommandPolicyError('render-rebase-target-generation-required', 'targetGeneration', targetGeneration);
+                    }
+                    for (let index = 0; index < commands.length; index += 1) {
+                        const command = commands[index];
+                        const commandId = firstString(command && command.commandId);
+                        if (!commandId) return createRenderCommandPolicyError('render-rebase-command-id-required', 'commandId', '');
+                        if (!firstString(command && command.strategy)) return createRenderCommandPolicyError('render-rebase-command-strategy-required', 'strategy', '');
+                        if (!firstString(command && command.text)) return createRenderCommandPolicyError('render-rebase-command-text-required', 'text', '');
+                        if (!finitePolicyNumber(command && command.generation, command && command.commandGeneration)) {
+                            return createRenderCommandPolicyError('render-rebase-command-generation-required', 'commandGeneration', 0);
+                        }
+                    }
+                    return {
+                        valid: true,
+                        action,
+                        commands,
+                        targetSurfaceId,
+                        targetGeneration,
+                    };
+                }
+
+                function createRenderCommandPolicyError(reason, field, value) {
+                    return {
+                        valid: false,
+                        reason,
+                        field,
+                        value: firstString(value),
+                    };
+                }
+
+                function applyRenderTargetCommandPolicy(item, policy = {}, source = {}, eventDetails = {}, plan = null) {
+                    const action = policy.renderCommandAction || 'preserve';
+                    if (action === 'preserve') {
+                        return {
+                            action,
+                            changed: false,
+                            count: 0,
+                        };
+                    }
+                    const reason = firstString(source.message, source.reason, action === 'reject' ? 'render-target-invalidated' : 'render-target-rebased');
+                    if (action === 'reject') {
+                        const count = rejectOpenRenderCommands(item, reason, eventDetails);
+                        return {
+                            action,
+                            changed: count > 0,
+                            count,
+                        };
+                    }
+                    if (action === 'rebase') {
+                        const commands = plan && Array.isArray(plan.commands)
+                            ? plan.commands
+                            : (typeof getUnresolvedRenderCommandsForItem === 'function'
+                            ? getUnresolvedRenderCommandsForItem(item.id)
+                            : []);
+                        const targetSurfaceId = plan && plan.targetSurfaceId
+                            ? plan.targetSurfaceId
+                            : resolveRetargetSurfaceId(item, source);
+                        const targetGeneration = plan && plan.targetGeneration
+                            ? plan.targetGeneration
+                            : resolveRenderTargetGeneration(item, source);
+                        let count = 0;
+                        commands.forEach((command) => {
+                            const result = rebaseRenderCommand(item.id, {
+                                commandId: firstString(command.commandId),
+                                reason,
+                                targetSurfaceId,
+                                targetGeneration,
+                                details: eventDetails,
+                            });
+                            if (result && result.rebased === true) count += 1;
+                        });
+                        return {
+                            action,
+                            changed: count > 0,
+                            count,
+                        };
+                    }
+                    return {
+                        action,
+                        changed: false,
+                        count: 0,
+                    };
+                }
+
+                function resolveRetargetSurfaceId(item, source = {}) {
+                    const details = source && source.details && typeof source.details === 'object'
+                        ? source.details
+                        : {};
+                    return firstString(
+                        source.targetSurfaceId,
+                        source.surfaceId,
+                        details.targetSurfaceId,
+                        details.surfaceId,
+                        item && item.renderTarget && item.renderTarget.targetSurfaceId,
+                        item && item.surfaceId
+                    );
+                }
+
+                function resolveRenderTargetGeneration(item, source = {}) {
+                    const details = source && source.details && typeof source.details === 'object'
+                        ? source.details
+                        : {};
+                    return finitePolicyNumber(
+                        source.targetGeneration,
+                        source.newGeneration,
+                        source.generation,
+                        details.targetGeneration,
+                        details.newGeneration,
+                        details.nextContentsRevision,
+                        item && item.generation
+                    );
+                }
+
+                function finitePolicyNumber(...values) {
+                    for (let index = 0; index < values.length; index += 1) {
+                        const number = Number(values[index]);
+                        if (Number.isFinite(number) && number > 0) return Math.floor(number);
+                    }
+                    return 0;
+                }
+
                 function applyRetiredVisibility(item, details = {}) {
                     if (!item) return;
                     item.visible = false;
@@ -242,7 +602,7 @@
                  * Record that an adapter rendered text.
                  *
                  * Draw events usually carry translationDrawn and sometimes the raw
-                 * translationReceived. The orchestrator keeps both so diagnostics can
+                 * translationReceived. The orchestrator keeps both so intel can
                  * distinguish provider output from the text actually put on screen.
                  */
                 function recordDraw(id, eventName = 'draw', details = null) {
@@ -267,7 +627,7 @@
                  * Record an explanatory decision without otherwise changing item data.
                  *
                  * Hooks use this for skipped activation, priority joins, redraw choices,
-                 * and other useful diagnostics that are not lifecycle states.
+                 * and other useful intel that are not lifecycle states.
                  */
                 function recordDecision(id, type, message = '', details = null) {
                     return updateItem(id, {}, {
@@ -337,6 +697,8 @@
                     observeRecord,
                     updateItem,
                     retireItem,
+                    invalidateRenderTarget,
+                    retargetRenderTarget,
                     recordDraw,
                     recordDecision,
                     recordTranslationEvent,

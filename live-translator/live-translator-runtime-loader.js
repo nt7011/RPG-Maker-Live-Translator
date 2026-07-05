@@ -511,6 +511,20 @@
         return configuredLogger;
     }
 
+    async function waitForOptionalDiagnostics(logger) {
+        const scope = getGlobalScope();
+        const ready = scope.LiveTranslatorDiagnosticsReady;
+        if (!ready || typeof ready.then !== 'function') return;
+
+        if (logger && typeof logger.info === 'function') {
+            logger.info('[LiveTranslatorLoader] Waiting for diagnostics plugin.');
+        }
+        await ready;
+        if (logger && typeof logger.info === 'function') {
+            logger.info('[LiveTranslatorLoader] Diagnostics plugin ready.');
+        }
+    }
+
     async function bootstrap() {
         // Phase 0: confirm RPG Maker provided a browser document and the current plugin script.
         if (typeof document === 'undefined') {
@@ -577,6 +591,7 @@
                 manifest,
                 resolveRuntimeScriptOptions(loaderOptions, window.LiveTranslatorSettings)
             );
+            await waitForOptionalDiagnostics(logger);
             await scriptInjector.injectSupportScripts(scriptPlan.postAssetScripts);
 
             // Phase 9: mark the loader ready only after every declared phase has completed.

@@ -41,6 +41,17 @@
                 return normalizeObject(settings.intel) || {};
             }
 
+            function isDiagnosticsEnabled(options = {}) {
+                const settings = resolveSettings(options);
+                const diagnostics = normalizeObject(settings.diagnostics) || {};
+                return diagnostics.enabled === true && isDiagnosticsRuntimeAvailable(options);
+            }
+
+            function isDiagnosticsRuntimeAvailable(options = {}) {
+                const scope = resolveScope(options);
+                return !!normalizeObject(scope && scope.LiveTranslatorDiagnosticsHooks);
+            }
+
             function isGuiSurfaceActive(options = {}) {
                 if (options.forceIntelSurface === true || options.forceSurface === true) return true;
                 const scope = resolveScope(options);
@@ -86,6 +97,7 @@
 
             function getPolicy(options = {}) {
                 const publish = shouldPublish(options);
+                const captureDiagnostics = publish && isDiagnosticsEnabled(options);
                 return {
                     publish,
                     capture: publish,
@@ -93,8 +105,10 @@
                     includeActiveItems: publish,
                     includeDetachedItems: publish,
                     includeArchivedItems: publish,
-                    captureEvents: false,
-                    captureForesightMetadata: false,
+                    captureEvents: captureDiagnostics,
+                    captureHistories: publish,
+                    captureRenderQueue: captureDiagnostics,
+                    captureForesightMetadata: captureDiagnostics,
                     captureForesightMessages: publish,
                     limits: publish ? resolveLimits(options) : Object.assign({}, DEFAULT_LIMITS),
                 };
@@ -121,6 +135,8 @@
                 shouldPublish,
                 shouldCapture,
                 resolveLimits,
+                isDiagnosticsEnabled,
+                isDiagnosticsRuntimeAvailable,
                 isGuiSurfaceActive,
                 isCaptureWhenGuiClosedEnabled,
                 isSurfaceEnabled,

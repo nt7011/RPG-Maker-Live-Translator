@@ -232,7 +232,7 @@
                 return {
                     logger,
                     dbg: (...args) => logger.debug('[DBG]', ...args),
-                    diag: (...args) => logger.trace('[DIAG]', ...args),
+                    traceLog: (...args) => logger.trace('[TRACE]', ...args),
                     getFastTimestamp,
                     isLoggingEnabled,
                     preview: defaultPreview,

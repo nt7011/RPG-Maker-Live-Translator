@@ -2,17 +2,17 @@
 // These functions share state from gui/app/state.js and are loaded before app/index.js boots.
 'use strict';
 
-function buildForesightDiagnosticsCopyText(snapshot = state.foresight, textRecords = getForesightTextRecords()) {
-    return JSON.stringify(buildForesightDiagnosticsCopyPayload(snapshot, textRecords), null, 2);
+function buildForesightIntelCopyText(snapshot = state.foresight, textRecords = getForesightTextRecords()) {
+    return JSON.stringify(buildForesightIntelCopyPayload(snapshot, textRecords), null, 2);
 }
 
-function buildForesightDiagnosticsCopyPayload(snapshot = state.foresight, textRecords = getForesightTextRecords()) {
-    const model = createForesightDiagnosticsModel(snapshot, textRecords);
+function buildForesightIntelCopyPayload(snapshot = state.foresight, textRecords = getForesightTextRecords()) {
+    const model = createForesightIntelModel(snapshot, textRecords);
     const foresightPolicy = getGuiForesightPolicy();
     const records = collectForesightModelRecords(model);
     return {
         copiedAt: copyTimestamp(Date.now()),
-        kind: 'foresight-diagnostics',
+        kind: 'foresight-intel',
         summary: model.summary || {},
         snapshot: {
             updatedAt: copyTimestamp(model.snapshotUpdatedAt),
@@ -30,7 +30,7 @@ function buildForesightDiagnosticsCopyPayload(snapshot = state.foresight, textRe
     };
 }
 
-function createForesightDiagnosticsModel(snapshot, textRecords) {
+function createForesightIntelModel(snapshot, textRecords) {
     const foresightPolicy = getGuiForesightPolicy();
     const viewer = globalThis.LiveTranslatorForesightTreeViewer
         || (globalThis.window && globalThis.window.LiveTranslatorForesightTreeViewer);
@@ -213,7 +213,7 @@ function buildForesightLinkedRecordCopyPayload(item) {
             type: normalizeHookClass(item.hookKey || item.hook),
         },
         status: item.status || 'detected',
-        lifecycleState: item.lifecycleState || item.displayLifecycle || '',
+        lifecycleState: item.lifecycleState || '',
         translationRail: {
             state: railInfo.state || 'neutral',
             label: railInfo.label || '',
@@ -254,7 +254,7 @@ function extractForesightRecordMetadata(item) {
         commonEventName: metadata.commonEventName || '',
         messageStartIndex: metadata.messageStartIndex === undefined ? null : metadata.messageStartIndex,
         messageNextIndex: metadata.messageNextIndex === undefined ? null : metadata.messageNextIndex,
-        diagnostics: metadata.foresightDiagnostics || null,
+        intel: metadata.foresightIntel || null,
     };
 }
 

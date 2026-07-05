@@ -12,7 +12,7 @@
         loadBefore: ['adapters.foresight'],
         run({ partsRegistry }, { scope: globalScope }) {
             const parts = partsRegistry.getParts();
-            const { DEFAULT_BUDGET, DEFAULT_MAX_SCAN_COMMANDS, MESSAGE_BUDGET_COST, BRANCH_BUDGET_STRATEGY, MAX_NESTED_LIST_DEPTH, MAX_NESTED_LISTS_PER_COMMAND, MAX_BRANCH_DEPTH, DIAGNOSTIC_ACTION_LIMIT, RECENT_SCAN_LIMIT, COMMAND_CATALOG_ASSET, BRANCH_MARKER_CODES, RESOLVABLE_CONTROL_FLOW_CODES, commandCatalog } = parts;
+            const { DEFAULT_BUDGET, DEFAULT_MAX_SCAN_COMMANDS, MESSAGE_BUDGET_COST, BRANCH_BUDGET_STRATEGY, MAX_NESTED_LIST_DEPTH, MAX_NESTED_LISTS_PER_COMMAND, MAX_BRANCH_DEPTH, INTEL_ACTION_LIMIT, RECENT_SCAN_LIMIT, COMMAND_CATALOG_ASSET, BRANCH_MARKER_CODES, RESOLVABLE_CONTROL_FLOW_CODES, commandCatalog } = parts;
             const { getEventCommandMetadata } = parts.facades.catalog;
             const { cloneScanFrames } = parts.facades.pathState;
             const { readMovementRouteCommand } = parts.facades.movementFlow;
@@ -449,10 +449,10 @@
                     return true;
                 }
 
-            function readTransparentCommand(list, index, expectedIndent, frames, diagnostics = null) {
+            function readTransparentCommand(list, index, expectedIndent, frames, intel = null) {
                     const command = list[index];
                     const metadata = getEventCommandMetadata(command && command.code);
-                    if (metadata.scanBehavior === 'movement-route') return readMovementRouteCommand(list, index, expectedIndent, metadata, diagnostics);
+                    if (metadata.scanBehavior === 'movement-route') return readMovementRouteCommand(list, index, expectedIndent, metadata, intel);
                     if (metadata.scanBehavior === 'advance') {
                         const nested = readEmbeddedNestedListCommand(list, index, metadata, frames);
                         if (nested) return nested;
@@ -461,7 +461,7 @@
                             nextIndex: index + 1,
                             kind: 'command',
                             metadata,
-                            consumedCommands: diagnostics && diagnostics.captureCommandActions === false
+                            consumedCommands: intel && intel.captureCommandActions === false
                                 ? []
                                 : createConsumedEventCommands(list, index, index + 1),
                         };
@@ -472,7 +472,7 @@
                             ? 'orphan-continuation'
                             : 'barrier-command',
                         metadata,
-                        consumedCommands: diagnostics && diagnostics.captureCommandActions === false
+                        consumedCommands: intel && intel.captureCommandActions === false
                             ? []
                             : createConsumedEventCommands(list, index, index + 1),
                     };

@@ -24,6 +24,8 @@
                 setItemVisibility: 'setItemVisibility',
                 backgroundItem: 'backgroundItem',
                 retireItem: 'retireItem',
+                invalidateRenderTarget: 'invalidateRenderTarget',
+                retargetRenderTarget: 'retargetRenderTarget',
                 recordDecision: 'recordDecision',
                 describeTextEligibility: 'describeTextEligibility',
                 claimSurface: 'claimSurface',

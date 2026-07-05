@@ -1,5 +1,5 @@
 // Translation manager support: scheduler policy.
-// Owns queue lane policy, matching, capacity, and diagnostics state.
+// Owns queue lane policy, matching, capacity, and intel state.
 (() => {
     'use strict';
 

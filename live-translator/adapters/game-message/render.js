@@ -45,8 +45,9 @@
             };
 
             if (!prepared || !prepared.ok || !restoredVisible) {
-                skipRender(record, windowInstance, payload, sessionId, prepared && prepared.reason ? prepared.reason : 'restored text empty', renderDetails);
-                return true;
+                const reason = prepared && prepared.reason ? prepared.reason : 'restored text empty';
+                skipRender(record, windowInstance, payload, sessionId, reason, renderDetails);
+                return createRenderDecision('committed', reason, renderDetails);
             }
             const matchedOriginal = restoredVisible === payload.visible;
             const appliedDetails = Object.assign({}, renderDetails, {
@@ -74,17 +75,25 @@
             if (drawn) {
                 markMessageRendered(record, prepared.text, appliedDetails);
                 clearCurrentRequestToken(windowInstance);
-                return true;
+                return createRenderDecision('committed', 'message-redraw-applied', appliedDetails);
             } else if (!getPendingMessageRedrawSession(windowInstance)) {
                 markRenderFailed(record, 'message redraw failed', renderDetails);
                 clearCurrentRequestToken(windowInstance);
-                return false;
+                return createRenderDecision('rejected', 'message-redraw-failed', renderDetails);
             }
             clearCurrentRequestToken(windowInstance);
             return {
                 status: 'deferred',
                 reason: pendingRenderDecision && pendingRenderDecision.reason || 'message-redraw-deferred',
                 details: pendingRenderDecision && pendingRenderDecision.details || appliedDetails,
+            };
+        }
+
+        function createRenderDecision(status, reason, details = null) {
+            return {
+                status,
+                reason,
+                details: details && typeof details === 'object' ? details : {},
             };
         }
 
@@ -185,7 +194,7 @@
         }
 
         /**
-         * Mark a render/request failure for diagnostics.
+         * Mark a render/request failure for intel.
          */
         function markRenderFailed(record, reason, details = {}) {
             updateItem(record, { status: 'failed' }, 'item.render_failed', Object.assign({ reason }, details || {}));
@@ -215,7 +224,9 @@
             const detachedDetails = Object.assign({}, detached);
             delete detachedDetails.record;
             const mergedDetails = Object.assign({}, detachedDetails, details || {});
-            retireItem(detached.record || recordId, 'disappeared', reason || 'message-detached-completed', mergedDetails);
+            retireItem(detached.record || recordId, 'disappeared', reason || 'message-detached-completed', mergedDetails, {
+                policy: { kind: 'retired' },
+            });
             return true;
         }
 

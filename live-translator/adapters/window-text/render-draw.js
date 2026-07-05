@@ -11,20 +11,22 @@
             drawTextExRendererModule: 'adapters.windowText.drawTextExRenderer',
             copiedTargetRenderModule: 'adapters.windowText.copiedTargetRender',
             renderCommitProofModule: 'adapters.windowText.renderCommitProof',
-            redrawDiagnosticsModule: 'adapters.windowText.redrawDiagnostics',
+            redrawIntelModule: 'adapters.windowText.redrawIntel',
             renderSurfaceBindingsModule: 'adapters.windowText.renderSurfaceBindings',
             renderGeometryModule: 'adapters.windowText.renderGeometry',
             renderScopesModule: 'adapters.windowText.renderScopes',
             renderPerfModule: 'adapters.windowText.renderPerf',
         },
-        factory({ measuredBounds, bitmapRenderExecutorModule, completedSubstitutionModule, drawTextExRendererModule, copiedTargetRenderModule, renderCommitProofModule, redrawDiagnosticsModule, renderSurfaceBindingsModule, renderGeometryModule, renderScopesModule, renderPerfModule }) {
+        factory({ measuredBounds, bitmapRenderExecutorModule, completedSubstitutionModule, drawTextExRendererModule, copiedTargetRenderModule, renderCommitProofModule, redrawIntelModule, renderSurfaceBindingsModule, renderGeometryModule, renderScopesModule, renderPerfModule }) {
 
     function createRenderDrawController(context = {}) {
     const { logger, telemetry, generateKey, preview, perf, textCodec, textScaleOthers, ADAPTER_ID, RENDER_STRATEGY, entryLifecycleState } = context;
     const { draw: drawService, replay: replayService } = context.services;
     const {
+                bitmapGeometry,
+                bitmapInkMeasurement,
                 bitmapReplay,
-                diagnostics,
+                intel,
                 entryLifecycle,
                 entryRecords,
                 renderCompletion,
@@ -41,12 +43,12 @@
                 recordDrawTrace,
                 windowTraceDetails,
                 recordDecision,
-                roundDiagnosticNumber,
-                cloneDiagnosticRect,
-                cloneDiagnosticArea,
-                getSnapshotDiagnostics,
-                summarizeReplayItemsForDiagnostics,
-            } = diagnostics;
+                roundIntelNumber,
+                cloneIntelRect,
+                cloneIntelArea,
+                getSnapshotIntel,
+                summarizeReplayItemsForIntel,
+            } = intel;
     const { getCurrentEntry, getTextEntryKey, resolveWindowData, resolveTargetWindow } = entryLifecycle;
     const { updateOrchestratorItem, completePendingRenderCommand, rejectPendingRender } = renderCompletion;
     const { dropScheduledRenderRetry } = renderReadinessSchedule;
@@ -63,8 +65,12 @@
     const {
                 mergeBounds,
                 isValidRect,
+            } = bitmapGeometry;
+    const {
                 calculateBitmapSurfaceTextYOffset,
                 estimateBitmapSurfaceTextBounds,
+            } = bitmapInkMeasurement;
+    const {
                 withWindowRedrawClear,
                 withWindowContents,
                 isUsableBitmap,
@@ -113,7 +119,7 @@
                 getTextEntryKey,
                 getWindowTypeName,
                 isUsableBitmap,
-                roundDiagnosticNumber,
+                roundIntelNumber,
             });
     const copiedTargetRenderer = copiedTargetRenderModule.create({
                 generateKey,
@@ -125,11 +131,11 @@
                 recordDecision,
                 createRenderSurfaceProof: renderCommitProof.createRenderSurfaceProof,
             });
-    const redrawDiagnostics = redrawDiagnosticsModule.create({
+    const redrawIntel = redrawIntelModule.create({
                 measuredBounds,
-                cloneDiagnosticArea,
-                cloneDiagnosticRect,
-                roundDiagnosticNumber,
+                cloneIntelArea,
+                cloneIntelRect,
+                roundIntelNumber,
             });
     const renderScopes = renderScopesModule.create({
                 replayService,
@@ -163,8 +169,8 @@
                 measureDrawTextExHeightForEntry,
                 windowEntryBelongsToContents,
                 getEntryStatus: entryRecords.getEntryStatus,
-                cloneDiagnosticRect,
-                roundDiagnosticNumber,
+                cloneIntelRect,
+                roundIntelNumber,
                 perfStart,
                 perfCount,
                 perfTop,
@@ -373,9 +379,9 @@
                     });
                 }
 
-                let sourceInkDiagnostics = redrawDiagnostics.getSourceInkDiagnostics(entry);
-                redrawDiagnostics.updateSourceInkObservation(entry, sourceInkDiagnostics);
-                if (redrawDiagnostics.shouldSuppressRedrawForSourceInk(entry, sourceInkDiagnostics)) {
+                let sourceInkIntel = redrawIntel.getSourceInkIntel(entry);
+                redrawIntel.updateSourceInkObservation(entry, sourceInkIntel);
+                if (redrawIntel.shouldSuppressRedrawForSourceInk(entry, sourceInkIntel)) {
                     redrawOutcome = 'sourceNoInk';
                     perfCount('windowText.redraw.sourceNoInk');
                     perfTop('windowText.redraw.outcome', redrawOutcome);
@@ -383,7 +389,7 @@
                     return rejectTerminalRedraw(entry, 'source-draw-empty', 'window redraw skipped because native source draw produced no ink', {
                         windowType: getWindowTypeName(targetWindow, windowData),
                         method: entry.type || '',
-                        sourceInk: sourceInkDiagnostics,
+                        sourceInk: sourceInkIntel,
                     });
                 }
                 clearTerminalRedrawSuppression(entry);
@@ -398,9 +404,9 @@
                 let replayAfterFiltered = 0;
                 let replayDirtyRect = null;
                 let replayClipRect = null;
-                let replayRectForDiagnostics = null;
-                let windowReplayRectForDiagnostics = null;
-                let replayStateDiagnostics = null;
+                let replayRectForIntel = null;
+                let windowReplayRectForIntel = null;
+                let replayStateIntel = null;
                 let supportsReplayClip = false;
                 let replayCollectError = false;
                 let usedBackgroundSnapshot = false;
@@ -411,10 +417,10 @@
                 let snapshotPartialClearCount = 0;
                 let replayBeforeAppliedCount = 0;
                 let clearMode = 'none';
-                let restoreDiagnostics = null;
-                let replayPlanDiagnostics = null;
+                let restoreIntel = null;
+                let replayPlanIntel = null;
                 let bitmapRedrawPlan = null;
-                let renderPlanDiagnostics = null;
+                let renderPlanIntel = null;
                 let clearArea = null;
                 let originalBounds = null;
                 let translatedBounds = null;
@@ -444,7 +450,7 @@
                 try {
                     if (contents && storedDrawState) applyBitmapDrawState(contents, storedDrawState);
                     if (contents) {
-                        const boundsInfo = renderGeometry.calculateRedrawBounds(targetWindow, windowData, contents, entry, renderedText, sourceInkDiagnostics);
+                        const boundsInfo = renderGeometry.calculateRedrawBounds(targetWindow, windowData, contents, entry, renderedText, sourceInkIntel);
                         clearArea = boundsInfo.clearArea;
                         originalBounds = boundsInfo.originalBounds;
                         translatedBounds = boundsInfo.translatedBounds;
@@ -471,16 +477,16 @@
                                 clearArea,
                                 protectedWindowEntries,
                             });
-                            replayPlanDiagnostics = replayPlan && replayPlan.diagnostics || null;
+                            replayPlanIntel = replayPlan && replayPlan.intel || null;
                             replayBefore = replayPlan.replayBefore;
                             replayAfter = replayPlan.replayAfter;
                             replayBeforeFiltered = replayPlan.replayBeforeFiltered;
                             replayAfterFiltered = replayPlan.replayAfterFiltered;
                             replayDirtyRect = replayPlan.replayDirtyRect;
                             replayClipRect = replayPlan.replayClipRect;
-                            replayRectForDiagnostics = cloneDiagnosticRect(replayPlan.replayRect);
-                            windowReplayRectForDiagnostics = cloneDiagnosticRect(replayPlan.windowReplayRect);
-                            replayStateDiagnostics = replayPlan.replayStateDiagnostics;
+                            replayRectForIntel = cloneIntelRect(replayPlan.replayRect);
+                            windowReplayRectForIntel = cloneIntelRect(replayPlan.windowReplayRect);
+                            replayStateIntel = replayPlan.replayStateIntel;
                             supportsReplayClip = replayPlan.supportsReplayClip;
                             replayCollectError = replayPlan.replayCollectError;
                         }
@@ -504,9 +510,9 @@
                             pendingInvalidation,
                         });
                         bitmapRedrawPlan = renderPlan;
-                        renderPlanDiagnostics = renderPlan && renderPlan.diagnostics || null;
+                        renderPlanIntel = renderPlan && renderPlan.intel || null;
                         const snapshotRestorePlan = renderPlan.snapshotRestorePlan || {};
-                        restoreDiagnostics = renderPlan && renderPlan.restoreDiagnostics || null;
+                        restoreIntel = renderPlan && renderPlan.restoreIntel || null;
                         snapshotRestoreSkippedReason = snapshotRestorePlan.skippedReason
                             ? snapshotRestorePlan.skippedReason
                             : snapshotRestoreSkippedReason;
@@ -576,7 +582,7 @@
                         return false;
                     }
 
-                    const snapshotDiagnostics = Object.assign(getSnapshotDiagnostics(entry, contents), {
+                    const snapshotIntel = Object.assign(getSnapshotIntel(entry, contents), {
                         restoreAttempted: snapshotRestoreAttempted,
                         restoreSkippedReason: snapshotRestoreSkippedReason,
                         restoreSucceeded: usedBackgroundSnapshot,
@@ -586,41 +592,41 @@
                         partialClearRects: snapshotPartialClearCount,
                         contentsRevisionAtRedraw: windowData.contentsRevision || 0,
                     });
-                    const sourceSnapshotDiagnostics = redrawDiagnostics.getEntryPixelSnapshotDiagnostics(entry, contents, 'sourceSnapshot');
-                    sourceInkDiagnostics = sourceInkDiagnostics || redrawDiagnostics.getSourceInkDiagnostics(entry);
-                    const replayBeforeItems = summarizeReplayItemsForDiagnostics(replayBefore);
-                    const replayAfterItems = summarizeReplayItemsForDiagnostics(replayAfter);
-                    const diagnostics = {
+                    const sourceSnapshotIntel = redrawIntel.getEntryPixelSnapshotIntel(entry, contents, 'sourceSnapshot');
+                    sourceInkIntel = sourceInkIntel || redrawIntel.getSourceInkIntel(entry);
+                    const replayBeforeItems = summarizeReplayItemsForIntel(replayBefore);
+                    const replayAfterItems = summarizeReplayItemsForIntel(replayAfter);
+                    const intel = {
                         clearMode,
-                        clearArea: cloneDiagnosticArea(clearArea),
+                        clearArea: cloneIntelArea(clearArea),
                         originalBounds,
                         uncappedOriginalBounds,
-                        translatedBounds: cloneDiagnosticRect(translatedBounds),
+                        translatedBounds: cloneIntelRect(translatedBounds),
                         bitmapSurfaceOriginalBounds,
                         uncappedBitmapSurfaceOriginalBounds,
                         bitmapSurfaceTranslatedBounds,
-                        bitmapSurfaceYOffset: roundDiagnosticNumber(bitmapSurfaceYOffset),
+                        bitmapSurfaceYOffset: roundIntelNumber(bitmapSurfaceYOffset),
                         bitmapSurfaceYOffsetSource: entry && entry.bitmapSurfaceYOffsetCache
                             ? String(entry.bitmapSurfaceYOffsetCache.source || '')
                             : '',
                         mergedBounds,
-                        calcTextHeight: roundDiagnosticNumber(calcTextHeight),
-                        replayRect: replayRectForDiagnostics,
-                        replayDirtyRect: cloneDiagnosticRect(replayDirtyRect),
-                        replayClipRect: cloneDiagnosticRect(replayClipRect),
-                        windowReplayRect: windowReplayRectForDiagnostics,
+                        calcTextHeight: roundIntelNumber(calcTextHeight),
+                        replayRect: replayRectForIntel,
+                        replayDirtyRect: cloneIntelRect(replayDirtyRect),
+                        replayClipRect: cloneIntelRect(replayClipRect),
+                        windowReplayRect: windowReplayRectForIntel,
                         supportsReplayClip,
                         replayCollectError,
                         drawOrder: {
                             current: currentDrawOrder,
-                            state: replayStateDiagnostics,
+                            state: replayStateIntel,
                         },
-                        snapshot: snapshotDiagnostics,
-                        replayPlan: replayPlanDiagnostics,
-                        renderPlan: renderPlanDiagnostics,
-                        restore: restoreDiagnostics,
-                        sourceSnapshot: sourceSnapshotDiagnostics,
-                        sourceInk: sourceInkDiagnostics,
+                        snapshot: snapshotIntel,
+                        replayPlan: replayPlanIntel,
+                        renderPlan: renderPlanIntel,
+                        restore: restoreIntel,
+                        sourceSnapshot: sourceSnapshotIntel,
+                        sourceInk: sourceInkIntel,
                         sourceInkSourceCap,
                         textFit: renderGeometry.summarizeHorizontalTextFit(textFit),
                         sourceInkSourceExpansion,
@@ -655,26 +661,26 @@
                         replayAfter: replayAfter.length,
                         translationDrawn: renderedText,
                         translationReceived: entry.providerText || '',
-                        diagnosticSummary: redrawDiagnostics.buildRedrawDiagnosticSummary({
+                        intelSummary: redrawIntel.buildRedrawIntelSummary({
                             clearMode,
                             clearArea,
-                            snapshotDiagnostics,
-                            sourceInkDiagnostics,
+                            snapshotIntel,
+                            sourceInkIntel,
                             replayBeforeItems,
                             replayAfterItems,
                             replayBeforeFiltered,
                             replayAfterFiltered,
-                            restoreDiagnostics,
-                            replayRect: replayRectForDiagnostics,
+                            restoreIntel,
+                            replayRect: replayRectForIntel,
                             replayDirtyRect,
                             replayClipRect,
                             drawSampleArea: mergedBounds,
                             supportsReplayClip,
-                            bitmapSurfaceYOffsetSource: diagnostics.bitmapSurfaceYOffsetSource,
+                            bitmapSurfaceYOffsetSource: intel.bitmapSurfaceYOffsetSource,
                             sourceInkSourceCap,
                             sourceInkSourceExpansion,
                         }),
-                        diagnostics,
+                        intel,
                     };
     
                     redrawDetails.surfaceProof = commitProof.surfaceProof;
@@ -684,7 +690,7 @@
                         renderedText,
                         textFit,
                         redrawDetails,
-                        diagnostics,
+                        intel,
                     });
                     if (contents && prevDrawState) applyBitmapDrawState(contents, prevDrawState);
     

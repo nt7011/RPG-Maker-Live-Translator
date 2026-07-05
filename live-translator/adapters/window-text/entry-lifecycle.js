@@ -13,10 +13,11 @@
     function createEntryLifecycleController(context = {}) {
     const { telemetry, pruneDetachedRegisteredWindows, generateKey, entriesByRecordId, detachedEntriesByRecordId, ADAPTER_ID, DETACHED_ENTRY_LIMIT, entryLifecycleState } = context;
     const { lifecycle: lifecycleService, surface: surfaceService, replay: replayService } = context.services;
-    const { bitmapReplay, entryRecords, renderCompletion, textMetrics } = context.facades;
+    const { bitmapReplay, drawIdentity, entryRecords, renderCompletion, textMetrics } = context.facades;
     const { getEntryStatus, isEntryActive, forgetEntrySourceRun } = entryRecords;
     const { updateOrchestratorItem, rejectPendingRender } = renderCompletion;
     const { estimateEntryBounds, createSlotKey, getWindowTypeName } = textMetrics;
+    const { createDrawSlotIdentity, entryMatchesDrawSlot, getEntrySlotKey, entriesShareLogicalDrawSlot, isSameLogicalDrawSlot } = drawIdentity;
     const { materializeCopiedRenderTargetsForEntry, isWindowRedrawClearActive } = bitmapReplay;
     const bitmapRenderPlanner = context.bitmapRenderPlanner
         && typeof context.bitmapRenderPlanner.createWindowSourceEntryCopiedTargetRecoveryPlan === 'function'
@@ -32,16 +33,35 @@
 
     function findExistingEntry(windowData, type, rawText, convertedTrimmed, x, y, params = null) {
                 if (!windowData || !windowData.texts) return null;
-                const slotKey = createSlotKey(type, x, y, params);
+                const drawSlot = createDrawSlotIdentity(type, x, y, params);
+                const slotKey = drawSlot.slotKey;
                 const key = generateKey(type, x, y, windowData.windowType, convertedTrimmed, slotKey);
                 const entry = windowData.texts.get(key);
-                if (!entry || entryLifecycleState.isStale(entry)) return null;
-                if ((entry.slotKey || createSlotKey(entry.type, entry.position && entry.position.x, entry.position && entry.position.y, entry.originalParams)) !== slotKey) {
-                    return null;
-                }
-                return entry.rawText === rawText && entry.convertedText === convertedTrimmed ? entry : null;
+                if (matchesObservedEntry(entry, type, rawText, convertedTrimmed, slotKey)) return entry;
+                return findExistingEntryByCanonicalSlot(windowData, type, rawText, convertedTrimmed, drawSlot);
             }
-    
+
+    function findExistingEntryByCanonicalSlot(windowData, type, rawText, convertedTrimmed, drawSlot) {
+                if (!windowData || !windowData.texts || typeof windowData.texts.forEach !== 'function') return null;
+                if (!(drawSlot && drawSlot.canonicalSlotKey)) return null;
+                let match = null;
+                try {
+                    windowData.texts.forEach((entry) => {
+                        if (match) return;
+                        if (!matchesObservedEntry(entry, type, rawText, convertedTrimmed, null)) return;
+                        if (isSameLogicalDrawSlot(getEntrySlotKey(entry), drawSlot.canonicalSlotKey)) match = entry;
+                    });
+                } catch (_) {}
+                return match;
+            }
+
+    function matchesObservedEntry(entry, type, rawText, convertedTrimmed, slotKey = null) {
+                if (!entry || entryLifecycleState.isStale(entry)) return false;
+                if (String(entry.type || '') !== String(type || '')) return false;
+                if (slotKey && getEntrySlotKey(entry) !== slotKey) return false;
+                return entry.rawText === rawText && entry.convertedText === convertedTrimmed;
+            }
+
     // Retire by the proof the caller actually has. Empty, missing, or
     // non-renderable draws only clear one exact slot. A visible replacement draw
     // may legitimately change width while still owning the same anchor.
@@ -56,16 +76,13 @@
     function retireMatchingEntries(windowData, type, x, y, exceptEntry = null, reason = 'window-entry-replaced', params = null, matchMode = RETIRE_MATCH_EXACT_SLOT) {
                 if (!windowData || !windowData.texts || typeof windowData.texts.forEach !== 'function') return 0;
                 const stale = [];
-                const slotKey = createSlotKey(type, x, y, params);
+                const drawSlot = createDrawSlotIdentity(type, x, y, params);
                 const replacementDraw = matchMode === RETIRE_MATCH_REPLACEMENT_DRAW;
                 try {
                     windowData.texts.forEach((entry, key) => {
                         if (!entry || entryLifecycleState.isStale(entry)) return;
                         if (exceptEntry && entry === exceptEntry) return;
-                        const entrySlotKey = entry.slotKey
-                            || createSlotKey(entry.type, entry.position && entry.position.x, entry.position && entry.position.y, entry.originalParams);
-                        if (entrySlotKey === slotKey
-                            || (replacementDraw && isSameWindowReplacementAnchor(entry, type, x, y, params))) {
+                        if (entryMatchesDrawSlot(entry, drawSlot, { replacementDraw })) {
                             stale.push({ entry, key });
                         }
                     });
@@ -78,45 +95,6 @@
                     }
                 });
                 return stale.length;
-            }
-
-    // A visible replacement draw is stronger proof than an empty, offscreen, or
-    // measurement draw. Width may change when a plugin recomputes a label, but
-    // the same method/anchor/alignment still means the new label owns the slot.
-    function isSameWindowReplacementAnchor(entry, type, x, y, params = null) {
-                if (!entry || !isWindowOriginEntry(entry) || !isWindowOriginParams(params)) return false;
-                if (String(entry.type || '') !== String(type || '')) return false;
-                if (!sameReplacementCoordinate(entry.position && entry.position.x, x)) return false;
-                if (!sameReplacementCoordinate(entry.position && entry.position.y, y)) return false;
-                return normalizeReplacementAlign(entry.originalParams) === normalizeReplacementAlign(params);
-            }
-
-    function isWindowOriginEntry(entry) {
-                const origin = entry && entry.drawOrigin && typeof entry.drawOrigin === 'object'
-                    ? entry.drawOrigin
-                    : null;
-                return !origin || !origin.type || origin.type === 'window';
-            }
-
-    function isWindowOriginParams(params) {
-                const origin = params && params.drawOrigin && typeof params.drawOrigin === 'object'
-                    ? params.drawOrigin
-                    : null;
-                return !origin || !origin.type || origin.type === 'window';
-            }
-
-    function sameReplacementCoordinate(left, right) {
-                const leftNumber = Number(left);
-                const rightNumber = Number(right);
-                if (!Number.isFinite(leftNumber) || !Number.isFinite(rightNumber)) return String(left || '') === String(right || '');
-                return Math.round(leftNumber * 1000) === Math.round(rightNumber * 1000);
-            }
-
-    function normalizeReplacementAlign(params) {
-                const align = params && Object.prototype.hasOwnProperty.call(params, 'align')
-                    ? String(params.align || '').trim().toLowerCase()
-                    : '';
-                return align || 'left';
             }
 
     function shouldDeferWindowEntryReplacement(windowData, entry) {
@@ -260,6 +238,7 @@
                 lifecycleService.retireItem(entry, 'disappeared', {
                     eventType: 'item.disappeared',
                     message: reason || '',
+                    policy: { kind: 'retired' },
                     details,
                 });
                 entryLifecycleState.setSurfaceVisible(entry, false, {
@@ -299,7 +278,7 @@
                 windowData.renderReadinessSchedule.set(queueKey, record);
                 if (entry._queueLogged) return true;
                 // The adapter schedules a readiness wakeup, but snapshots
-                // still consume the stable draw.queued diagnostic event.
+                // still consume the stable draw.queued intel event.
                 telemetry.logDraw('queue', entry.renderedText || entry.convertedText, entry.position.x, entry.position.y, {
                     windowType: getWindowTypeName(targetWindow, windowData),
                 });
@@ -342,7 +321,42 @@
     
     function getCurrentEntry(windowData, entry) {
                 const key = entry && (entry.key || getTextEntryKey(windowData, entry));
-                return key && windowData && windowData.texts ? windowData.texts.get(key) : null;
+                if (!key || !windowData || !windowData.texts) return null;
+                const current = windowData.texts.get(key) || null;
+                if (current !== entry) return current;
+                return findNewerCanonicalSlotOwner(windowData, entry) || current;
+            }
+
+    function findNewerCanonicalSlotOwner(windowData, entry) {
+                if (!windowData || !windowData.texts || typeof windowData.texts.forEach !== 'function' || !entry) return null;
+                const entrySlotKey = getEntrySlotKey(entry);
+                if (!entrySlotKey) return null;
+                let owner = null;
+                try {
+                    windowData.texts.forEach((candidate) => {
+                        if (owner || !candidate || candidate === entry || entryLifecycleState.isStale(candidate)) return;
+                        if (String(candidate.type || '') !== String(entry.type || '')) return;
+                        if (!entriesShareLogicalDrawSlot(candidate, entry)) return;
+                        if (compareEntryFreshness(candidate, entry) >= 0) owner = candidate;
+                    });
+                } catch (_) {}
+                return owner;
+            }
+
+    function compareEntryFreshness(left, right) {
+                const drawOrderDiff = compareNumericIdentity(left && left.drawOrder, right && right.drawOrder);
+                if (drawOrderDiff !== 0) return drawOrderDiff;
+                const revisionDiff = compareNumericIdentity(left && left.surfaceRevision, right && right.surfaceRevision);
+                if (revisionDiff !== 0) return revisionDiff;
+                return compareNumericIdentity(left && left.timestamp, right && right.timestamp);
+            }
+
+    function compareNumericIdentity(left, right) {
+                const leftNumber = Number(left) || 0;
+                const rightNumber = Number(right) || 0;
+                if (leftNumber > rightNumber) return 1;
+                if (leftNumber < rightNumber) return -1;
+                return 0;
             }
     
     function getTextEntryKey(windowData, entry) {
@@ -398,7 +412,7 @@
                         key,
                         entry,
                         allowDetachedReattach,
-                        detachedRecoveryPlan: recoveryPlan && recoveryPlan.diagnostics || null,
+                        detachedRecoveryPlan: recoveryPlan && recoveryPlan.intel || null,
                     });
                 });
 
@@ -461,6 +475,7 @@
                     eventType: surfaceInvalidated ? 'item.surface_invalidated' : 'item.disappeared',
                     message: reason || '',
                     recordDetached: shouldRememberDetachedEntryWithoutActiveRecord(eventDetails),
+                    policy: { kind: 'retired' },
                     details: eventDetails,
                 });
                 return forgetEntryRecord(entry, reason, eventDetails);
@@ -514,7 +529,7 @@
             }
 
     function getRenderCommandId(command) {
-                return String(command && (command.commandId || command.id) || '');
+                return String(command && command.commandId || '');
             }
 
     function canRecoverDetachedWindowEntryAfterMutation(entry, options = {}) {
@@ -553,7 +568,7 @@
                         pendingTranslation: true,
                     },
                 };
-                plan.diagnostics = createLifecycleRecoveryDiagnostics(plan);
+                plan.intel = createLifecycleRecoveryIntel(plan);
                 return plan;
             }
 
@@ -605,11 +620,11 @@
                     steps: {},
                     proof: {},
                 };
-                plan.diagnostics = createLifecycleRecoveryDiagnostics(plan);
+                plan.intel = createLifecycleRecoveryIntel(plan);
                 return plan;
             }
 
-    function createLifecycleRecoveryDiagnostics(plan) {
+    function createLifecycleRecoveryIntel(plan) {
                 if (!plan) return null;
                 return {
                     planId: plan.planId || '',

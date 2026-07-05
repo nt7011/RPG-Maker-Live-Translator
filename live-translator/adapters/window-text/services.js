@@ -51,6 +51,12 @@
             retireItem(entry, status, options) {
                 return adapterContract.retireItem(entry, status, options);
             },
+            invalidateRenderTarget(entry, details) {
+                return adapterContract.invalidateRenderTarget(entry, details || {});
+            },
+            retargetRenderTarget(entry, details) {
+                return adapterContract.retargetRenderTarget(entry, details || {});
+            },
             recordDecision(entry, type, message, details) {
                 return adapterContract.recordDecision(entry, type, message, details);
             },
@@ -172,7 +178,7 @@
             applyBitmapDrawState: context.applyBitmapDrawState,
             createWindowTextScaleScope: context.createWindowTextScaleScope,
             preview: context.preview,
-            diag: context.diag,
+            traceLog: context.traceLog,
             dbg: context.dbg,
             drawCaptureTrace: context.drawCaptureTrace,
         });
@@ -184,7 +190,7 @@
 
         const snapshot = Object.freeze({
             maxBackgroundSnapshotPixels: context.MAX_BACKGROUND_SNAPSHOT_PIXELS,
-            redrawDiagnosticItemLimit: context.REDRAW_DIAGNOSTIC_ITEM_LIMIT,
+            redrawIntelItemLimit: context.REDRAW_INTEL_ITEM_LIMIT,
         });
 
         return Object.freeze({

@@ -190,7 +190,9 @@
                     if (isWindowEntryActive(entry)) {
                         retireWindowEntry(entry, staleReason, Object.assign({}, entryDetails, {
                             wasCompleted: isWindowEntryCompleted(entry),
-                        }));
+                        }), {
+                            policy: { kind: 'retired' },
+                        });
                     }
                     forgetWindowEntryRecord(entry, staleReason, entryDetails);
                     entryLifecycle.setSurfaceVisible(entry, false, {
@@ -467,7 +469,7 @@
             });
             rejectWindowPendingRender(entry, staleReason, entryDetails);
             retireWindowEntry(entry, staleReason, entryDetails, {
-                cancelTranslation: false,
+                policy: { kind: 'retired' },
             });
             // Completed hidden window text already has a cached translation and
             // is no longer an on-screen owner. Future redraws can hydrate from

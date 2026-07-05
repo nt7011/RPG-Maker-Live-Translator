@@ -37,7 +37,7 @@
             }
 
             if (displayObject._destroyed) {
-                retireCurrentItem(displayObject, 'pixi-text-destroyed', state.label, 'removed');
+                retireCurrentItem(displayObject, 'pixi-text-destroyed', state.label, 'removed', { kind: 'retired' });
                 return;
             }
 

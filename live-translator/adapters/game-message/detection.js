@@ -8,7 +8,7 @@
         factory() {
 
     function createController(scope = {}) {
-        const { MESSAGE_RENDER_STRATEGY, MESSAGE_ACTIVE_PRIORITY, FORESIGHT_BASE_PRIORITY, diag, preview, telemetry, adapterContract } = scope;
+        const { MESSAGE_RENDER_STRATEGY, MESSAGE_ACTIVE_PRIORITY, FORESIGHT_BASE_PRIORITY, traceLog, preview, telemetry, adapterContract } = scope;
         const { markDedicatedMessageWindow } = scope.controllerFacades.install;
         const { createEscapeAwarePayload } = scope.controllerFacades.text;
         const { isSessionCurrent, resetStreamState, beginMessageStreamPreview, setMessageTranslationSession, markMessageTranslationRequested, getMessageRenderSession, setMessageRequestSession } = scope.controllerFacades.session;
@@ -33,13 +33,13 @@
                     });
                 const eligibility = describeMessageEligibility(payload);
                 if (!payload || !payload.visible) {
-                    diag('[GameMessage] Skipping translation: empty message');
+                    traceLog('[GameMessage] Skipping translation: empty message');
                     return;
                 }
 
                 const normalizedSource = payload.normalizedTranslationSource || String(payload.translationSource || '').trim();
                 if (!eligibility.eligible) {
-                    diag(`[GameMessage] Skipping translation: "${preview(payload.visible)}"`);
+                    traceLog(`[GameMessage] Skipping translation: "${preview(payload.visible)}"`);
                     detectSkippedMessageRecord(windowInstance, payload, sessionId, eligibility.reason || 'translation skipped', {
                         reason: eligibility.reason || 'translation skipped',
                         category: eligibility.category || '',
@@ -154,8 +154,8 @@
                     branchDepth: block.branchDepth,
                     branchPath: block.branchPath,
                     priorityOffset: block.priorityOffset,
-                    diagnostics: block.foresightDiagnostics || null,
-                    budget: block.foresightBudget || (block.foresightDiagnostics && block.foresightDiagnostics.budget) || null,
+                    intel: block.foresightIntel || null,
+                    budget: block.foresightBudget || (block.foresightIntel && block.foresightIntel.budget) || null,
                     messageStartIndex: block.startIndex,
                     messageNextIndex: block.nextIndex,
                 })) {

@@ -74,7 +74,7 @@
             function copyCopiedTextProjectionRecord(record = {}, options = {}) {
                 if (!record || typeof record !== 'object') return null;
                 const payload = createCopiedTextProjectionPayload(record, options);
-                return {
+                const copied = {
                     projectionId: stringify(record.projectionId || options.projectionId || ''),
                     providerToken: stringify(record.providerToken || options.providerToken || ''),
                     sourceAdapter: stringify(record.sourceAdapter || record.adapterId || options.sourceAdapter || ''),
@@ -104,6 +104,9 @@
                     textType: stringify(record.textType || record.entryType || record.drawTextType || options.textType || ''),
                     methodName: stringify(record.methodName || options.methodName || ''),
                 };
+                copyStringArrayField(copied, 'sourceRunIds', record.sourceRunIds || options.sourceRunIds);
+                copyStringArrayField(copied, 'sourceSlotKeys', record.sourceSlotKeys || options.sourceSlotKeys);
+                return copied;
             }
 
             function hasCopiedTextProjectionPayload(record) {
@@ -144,6 +147,16 @@
                 return value && typeof value === 'object' && !Array.isArray(value)
                     ? clonePlainValue(value)
                     : null;
+            }
+
+            function copyStringArrayField(target, key, values) {
+                const output = [];
+                if (!Array.isArray(values)) return;
+                values.forEach((value) => {
+                    const text = stringify(value);
+                    if (text && output.indexOf(text) < 0) output.push(text);
+                });
+                if (output.length) target[key] = output;
             }
 
             function clonePlainValue(value, seen = null) {

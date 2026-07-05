@@ -5,7 +5,10 @@
 
     LiveTranslatorDefine({
         name: 'runtime.translationIntel',
-        factory(_dependencies, { scope: globalScope }) {
+        requires: {
+            jobHistory: 'runtime.translationManager.jobHistory',
+        },
+        factory({ jobHistory }, { scope: globalScope }) {
             const EVENT_LIMIT = 120;
             const JOB_LIMIT = 80;
             const PAST_JOB_LIMIT = 80;
@@ -29,9 +32,8 @@
             });
 
             function resolveJobHistoryStore(globalScopeRef, options) {
-                const hooks = globalScopeRef && globalScopeRef.LiveTranslatorDiagnosticsHooks;
-                const factory = hooks && typeof hooks.createTranslationJobHistoryStore === 'function'
-                    ? hooks.createTranslationJobHistoryStore
+                const factory = jobHistory && typeof jobHistory.createTranslationJobHistoryStore === 'function'
+                    ? jobHistory.createTranslationJobHistoryStore
                     : null;
                 if (!factory) return noopJobHistoryStore;
                 try {
@@ -181,33 +183,37 @@
                 }
 
                 function record(type, details = {}) {
-                    if (!isSurfaceEnabled()) {
+                    const capture = getCapturePolicy();
+                    if (!capture.surface) {
                         clearCapturedIntel();
                         return null;
                     }
-                    if (!shouldCaptureEvents()) {
+                    if (!capture.captureEvents && !capture.captureHistories) {
                         schedulePublish();
                         return null;
                     }
                     const event = sanitize(Object.assign({
-                        id: `diag:${++eventSequence}`,
+                        id: `intel:${++eventSequence}`,
                         at: Date.now(),
                         type: String(type || 'event'),
                     }, details || {}), SANITIZE_DEPTH);
-                    events.push(event);
-                    recordJobHistoryEvent(event);
+                    if (capture.captureEvents) {
+                        events.push(event);
+                        while (events.length > EVENT_LIMIT) events.shift();
+                    }
+                    if (capture.captureHistories) recordJobHistoryEvent(event);
                     capturedIntelDirty = true;
-                    while (events.length > EVENT_LIMIT) events.shift();
                     schedulePublish();
                     return event;
                 }
 
                 function recordLazy(type, detailsFactory) {
-                    if (!isSurfaceEnabled()) {
+                    const capture = getCapturePolicy();
+                    if (!capture.surface) {
                         clearCapturedIntel();
                         return null;
                     }
-                    if (!shouldCaptureEvents()) {
+                    if (!capture.captureEvents && !capture.captureHistories) {
                         schedulePublish();
                         return null;
                     }
@@ -355,8 +361,8 @@
                 }
 
                 function snapshotJob(job, queuePosition = null, optionsArg = {}) {
-                    const includeDetails = optionsArg.captureHistories === true;
-                    const includeHistory = includeDetails && optionsArg.includeHistory !== false;
+                    const includeDetails = optionsArg.captureEvents === true;
+                    const includeHistory = optionsArg.captureHistories === true && optionsArg.includeHistory !== false;
                     const activeSubscribers = getActiveSubscribers(job);
                     const terminalAt = job.terminalAt || job.completedAt || job.failedAt || job.canceledAt || null;
                     return {
@@ -418,11 +424,12 @@
                 }
 
                 function snapshotPastJob(job, optionsArg = {}) {
-                    const includeDetails = optionsArg.captureHistories === true;
-                    if (includeDetails) return Object.assign({}, job, {
+                    const includeDetails = optionsArg.captureEvents === true;
+                    const includeHistory = optionsArg.captureHistories === true;
+                    if (includeDetails || includeHistory) return Object.assign({}, job, {
                         subscriberRecords: Array.isArray(job.subscriberRecords) ? job.subscriberRecords.slice() : [],
-                        metadata: job.metadata && typeof job.metadata === 'object' ? Object.assign({}, job.metadata) : {},
-                        history: getJobHistory(job.id, optionsArg),
+                        metadata: includeDetails && job.metadata && typeof job.metadata === 'object' ? Object.assign({}, job.metadata) : {},
+                        history: includeHistory ? getJobHistory(job.id, optionsArg) : [],
                     });
                     const light = Object.assign({}, job);
                     light.metadata = {};
@@ -431,7 +438,7 @@
                     return light;
                 }
 
-                function getPrecacheDiagnostics() {
+                function getPrecacheIntel() {
                     if (!precacheStore || typeof precacheStore.getStats !== 'function') {
                         return {
                             active: false,
@@ -528,7 +535,7 @@
                         cache: {
                             completed: completedSize,
                             diskEnabled: disk.enabled === true,
-                            precache: getPrecacheDiagnostics(),
+                            precache: getPrecacheIntel(),
                         },
                         jobs: {
                             queued: queuedForDispatch.slice(0, limit).map((job, index) => snapshotJob(job, index + 1, policy)),
@@ -566,6 +573,16 @@
                 function recordJobHistoryEvent(event) {
                     if (!jobHistoryStore || typeof jobHistoryStore.recordJobEvent !== 'function') return false;
                     return jobHistoryStore.recordJobEvent(event);
+                }
+
+                function getCapturePolicy() {
+                    const policy = getSnapshotPolicy();
+                    const surface = policy.surface === true;
+                    return {
+                        surface,
+                        captureEvents: surface && policy.captureEvents === true,
+                        captureHistories: surface && policy.captureHistories === true,
+                    };
                 }
 
                 function clearJobHistories() {

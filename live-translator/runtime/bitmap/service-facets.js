@@ -237,7 +237,7 @@
                     hasPendingDrawUnits: drawUnits.hasPendingDrawUnits,
                 });
 
-                const diagnosticsFacet = freezeApi({
+                const intelFacet = freezeApi({
                     getSurfaceLedgerSnapshot: surfaceLedger.getSurfaceLedgerSnapshot,
                     getSurfaceTextRuns: surfaceLedger.getSurfaceTextRuns,
                     getProjectionState: surfaceLedger.getProjectionState,
@@ -260,8 +260,8 @@
                     forSpriteAdapter() {
                         return spriteFacet;
                     },
-                    forDiagnostics() {
-                        return diagnosticsFacet;
+                    forIntel() {
+                        return intelFacet;
                     },
                 });
             }

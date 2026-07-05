@@ -62,7 +62,7 @@
         }
         
         /**
-         * Publish diagnostics/test helpers. Runtime bitmap draw routing arrives
+         * Publish intel/test helpers. Runtime bitmap draw routing arrives
          * through the adapter contract surface-draw subscription above.
          */
         function exposeAdapterApi() {
@@ -128,7 +128,7 @@
                 renderStrategy: scope.RENDER_STRATEGY,
                 getRenderGeneration: getRenderGeneration,
                 isRenderTargetCurrent: isRenderTargetCurrent,
-                onRenderQueued: applyRenderCommand,
+                onRenderCommandReady: applyRenderCommand,
                 onRenderRejected: handleRenderRejected,
                 onSkipped(record, event) {
                     markRecordTerminal(record, 'skipped', event.message || 'translation skipped');

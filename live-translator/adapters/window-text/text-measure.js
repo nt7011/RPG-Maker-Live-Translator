@@ -489,14 +489,43 @@
                 return parts.join(':');
             }
 
-    function createDrawParameterSlotSignature(params) {
+    function createCanonicalSlotKey(type, x, y, params = null) {
+                const parts = [
+                    type || 'text',
+                    normalizeSlotNumber(x),
+                    normalizeSlotNumber(y),
+                ];
+                const signature = createDrawParameterSlotSignature(params, {
+                    includeLineHeight: false,
+                });
+                if (signature) parts.push(signature);
+                return parts.join(':');
+            }
+
+    function canonicalizeSlotKey(slotKey) {
+                const value = String(slotKey || '');
+                if (!value) return '';
+                return value
+                    .split(':')
+                    .filter((part) => !/^lh=/u.test(part))
+                    .join(':');
+            }
+
+    function slotKeysReferToSameDraw(left, right) {
+                const leftKey = canonicalizeSlotKey(left);
+                const rightKey = canonicalizeSlotKey(right);
+                return !!(leftKey && rightKey && leftKey === rightKey);
+            }
+
+    function createDrawParameterSlotSignature(params, options = null) {
                 if (!params || typeof params !== 'object') return '';
+                const includeLineHeight = !options || options.includeLineHeight !== false;
                 const parts = [];
                 if (hasOwn(params, 'maxWidth') && params.maxWidthInferred !== true) {
                     const maxWidth = normalizeOptionalSlotNumber(params.maxWidth);
                     if (maxWidth) parts.push(`w=${maxWidth}`);
                 }
-                if (hasOwn(params, 'lineHeight')) {
+                if (includeLineHeight && hasOwn(params, 'lineHeight')) {
                     const lineHeight = normalizeOptionalSlotNumber(params.lineHeight);
                     if (lineHeight) parts.push(`lh=${lineHeight}`);
                 }
@@ -579,7 +608,7 @@
                 return 'left';
             }
     
-        return { estimateEntryBounds, measurePlainTextWidth, estimateDrawTextExFallbackWidth, estimateDrawTextExFallbackHeight, estimateMaxDrawTextExFallbackHeight, getDrawTextExLineCount, getLineHeight, getWindowIconWidth, countDrawTextExIcons, prepareTranslationSource, restoreTranslatedWindowText, sanitizeDrawTextOutput, convertWindowText, describeWindowTextEligibility, describeEntryEligibility, isDedicatedMessageWindow, getSurfaceId, getIdentitySurfaceId, createSlotKey, createWindowTextRecordId, safeRecordIdPart, hashTextForRecordId, normalizeSlotNumber, getWindowTypeName, normalizeDrawTextAlignValue };
+        return { estimateEntryBounds, measurePlainTextWidth, estimateDrawTextExFallbackWidth, estimateDrawTextExFallbackHeight, estimateMaxDrawTextExFallbackHeight, getDrawTextExLineCount, getLineHeight, getWindowIconWidth, countDrawTextExIcons, prepareTranslationSource, restoreTranslatedWindowText, sanitizeDrawTextOutput, convertWindowText, describeWindowTextEligibility, describeEntryEligibility, isDedicatedMessageWindow, getSurfaceId, getIdentitySurfaceId, createSlotKey, createCanonicalSlotKey, canonicalizeSlotKey, slotKeysReferToSameDraw, createWindowTextRecordId, safeRecordIdPart, hashTextForRecordId, normalizeSlotNumber, getWindowTypeName, normalizeDrawTextAlignValue };
     }
             return { create: createTextMeasureController };
         },

@@ -68,7 +68,7 @@
         const {
             logger = console,
             dbg = () => {},
-            diag = () => {},
+            traceLog = () => {},
             preview = (text) => String(text ?? ''),
             textCodec,
             createTextSource,
@@ -163,8 +163,8 @@
 
         function installTextDestroyHook(Ctor, label) { return getLifecycleController().installTextDestroyHook(Ctor, label); }
         function installContainerRemovalHooks(Ctor) { return getLifecycleController().installContainerRemovalHooks(Ctor); }
-        function retireTree(displayObject, reason, labelHint, status) { return getLifecycleController().retireTree(displayObject, reason, labelHint, status); }
-        function retireCurrentItem(displayObject, reason, labelHint = '', status = 'disappeared') { return getLifecycleController().retireCurrentItem(displayObject, reason, labelHint, status); }
+        function retireTree(displayObject, reason, labelHint, status, policy) { return getLifecycleController().retireTree(displayObject, reason, labelHint, status, policy); }
+        function retireCurrentItem(displayObject, reason, labelHint = '', status = 'disappeared', policy) { return getLifecycleController().retireCurrentItem(displayObject, reason, labelHint, status, policy); }
         function clearItemState(displayObject, reason, options = {}) { return getLifecycleController().clearItemState(displayObject, reason, options); }
 
         function getTextScaleController() {
@@ -215,7 +215,7 @@
         function install() {
             const PIXIObj = globalScope.PIXI || globalScope.Pixi || globalScope.pixi;
             if (!PIXIObj) {
-                diag('[PIXI] Not found, skipping PIXI text hooks');
+                traceLog('[PIXI] Not found, skipping PIXI text hooks');
                 return {
                     status: 'skipped',
                     reason: 'PIXI is unavailable.',
@@ -233,7 +233,7 @@
             try { hookedAny = installTextSetter(PIXIObj.Text, 'PIXI.Text') || hookedAny; } catch (error) { warn('[PIXI] Failed to hook PIXI.Text.', error); }
             try { hookedAny = installTextSetter(PIXIObj.BitmapText, 'PIXI.BitmapText') || hookedAny; } catch (error) { warn('[PIXI] Failed to hook PIXI.BitmapText.', error); }
             if (!hookedAny) {
-                diag('[PIXI] No text classes hooked');
+                traceLog('[PIXI] No text classes hooked');
                 return {
                     status: 'skipped',
                     reason: 'No writable PIXI.Text/PIXI.BitmapText text setters found.',
@@ -262,7 +262,7 @@
 
             const found = findDescriptor(Ctor.prototype, 'text');
             if (!found || typeof found.desc.set !== 'function') {
-                diag(`[PIXI] ${label}.text setter not found; skipping`);
+                traceLog(`[PIXI] ${label}.text setter not found; skipping`);
                 return false;
             }
             if (found.desc.set.__trPixiTextSetterWrapped === SETTER_HOOK_TOKEN) {
@@ -329,7 +329,7 @@
         // and translation request. The adapter keeps the original PIXI text on
         // screen until a render command arrives.
         function handleNativeTextAssignment(displayObject, text, label, writeNativeText) {
-            retireCurrentItem(displayObject, 'pixi-text-replaced', label, 'stale');
+            retireCurrentItem(displayObject, 'pixi-text-replaced', label, 'stale', { kind: 'slot-replaced' });
 
             const state = ensureState(displayObject, label);
             state.surfaceRevision += 1;

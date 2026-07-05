@@ -22,7 +22,7 @@
         const { drawTranslatedEntry } = renderDraw;
         const {
             mergeBounds,
-            cloneDiagnosticRect,
+            cloneIntelRect,
             estimateBitmapSurfaceTextBounds,
             getBitmapSnapshotContext,
             getEntryContentsRevision,
@@ -39,7 +39,7 @@
         requireFunction(isEntryCompleted, 'entryRecords.isEntryCompleted');
         requireFunction(drawTranslatedEntry, 'renderDraw.drawTranslatedEntry');
         requireFunction(mergeBounds, 'bitmapTools.mergeBounds');
-        requireFunction(cloneDiagnosticRect, 'bitmapTools.cloneDiagnosticRect');
+        requireFunction(cloneIntelRect, 'bitmapTools.cloneIntelRect');
         requireFunction(estimateBitmapSurfaceTextBounds, 'bitmapTools.estimateBitmapSurfaceTextBounds');
         requireFunction(getBitmapSnapshotContext, 'bitmapTools.getBitmapSnapshotContext');
         requireFunction(getEntryContentsRevision, 'bitmapTools.getEntryContentsRevision');
@@ -129,7 +129,7 @@
                     y: area.y,
                     w: area.w,
                     h: area.h,
-                    bounds: cloneDiagnosticRect(snapshotBounds),
+                    bounds: cloneIntelRect(snapshotBounds),
                     contentsRevision: getEntryContentsRevision(entry),
                     capturedAt: Date.now(),
                     imageData,
@@ -166,7 +166,7 @@
                     y: area.y,
                     w: area.w,
                     h: area.h,
-                    bounds: cloneDiagnosticRect(bounds),
+                    bounds: cloneIntelRect(bounds),
                     contentsRevision: getEntryContentsRevision(entry),
                     capturedAt: Date.now(),
                     imageData,

@@ -161,7 +161,7 @@
                         throw new Error('[LiveTranslator] adapter boundary factory is required before hook installation.');
                     }
 
-                    const { logger, dbg, diag, preview, telemetry } = loggerContext;
+                    const { logger, dbg, traceLog, preview, telemetry } = loggerContext;
                     const createLiveTranslatorPerf = resolvePerformanceProfilerFactory();
                     const perf = createLiveTranslatorPerf({
                         settings,
@@ -201,7 +201,7 @@
                     const hookOptions = {
                         logger,
                         dbg,
-                        diag,
+                        traceLog,
                         preview,
                         textCodec: hookContext.textCodec,
                         stripControls: hookContext.stripControls,
@@ -280,7 +280,7 @@
                             restoreText: hookContext.restoreText,
                             preview,
                             settings,
-                            diag,
+                            traceLog,
                             dbg,
                             perf,
                             drawCaptureTrace,

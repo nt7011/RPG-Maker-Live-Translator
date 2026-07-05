@@ -12,7 +12,7 @@
             const { hasHookInChain } = hookWrapper;
 
     function createController(scope = {}) {
-        const { MESSAGE_ACTIVE_PRIORITY, MESSAGE_BACKGROUND_PRIORITY, logger, diag, preview, detachedRecords } = scope;
+        const { MESSAGE_ACTIVE_PRIORITY, MESSAGE_BACKGROUND_PRIORITY, logger, traceLog, preview, detachedRecords } = scope;
         const { clearMessageOrigin } = scope.controllerFacades.foresightContext;
         const { getWindowType, backgroundItem, setRecordPriority, setRecordVisibility, retireItem, resolveMessageRecord, forgetRenderTarget } = scope.controllerFacades.records;
         const { getMessageScreenState } = scope.controllerFacades.render;
@@ -36,19 +36,19 @@
                 clearMessageOrigin(this);
                 clearForesightSnapshot();
                 const windows = collectWindowsForGameMessage(this);
-                let diagnosticState = null;
+                let intelState = null;
                 windows.forEach((windowInstance) => {
-                    diagnosticState = resetWindowMessageState(windowInstance) || diagnosticState;
+                    intelState = resetWindowMessageState(windowInstance) || intelState;
                 });
-                if (!diagnosticState) {
+                if (!intelState) {
                     scope.fallbackMessageState.currentText = '';
                     scope.fallbackMessageState.isActive = false;
                     scope.fallbackMessageState.lastUpdate = Date.now();
                     scope.fallbackMessageState.session += 1;
-                    diagnosticState = scope.fallbackMessageState;
+                    intelState = scope.fallbackMessageState;
                 }
-                diag('Game_Message.clear() - Message cleared');
-                showDiagnostics(diagnosticState);
+                traceLog('Game_Message.clear() - Message cleared');
+                showIntel(intelState);
                 return result;
             };
             Game_Message.prototype.clear.__trOriginal = original;
@@ -65,7 +65,7 @@
         /**
          * Print low-level message adapter state when trace logging is enabled.
          */
-        function showDiagnostics(state = scope.fallbackMessageState) {
+        function showIntel(state = scope.fallbackMessageState) {
             try {
                 if (!logger || typeof logger.shouldLog !== 'function' || !logger.shouldLog('trace')) return;
                 const status = state.isActive ? 'active' : 'cleared';
@@ -116,7 +116,9 @@
             if (hasActiveRequest) {
                 backgroundItem(detachedRecord, reason, baseDetails);
             } else {
-                retireItem(detachedRecord, 'disappeared', reason, baseDetails);
+                retireItem(detachedRecord, 'disappeared', reason, baseDetails, {
+                    policy: { kind: 'retired' },
+                });
                 detachedRecords.delete(detachedRecordId);
             }
             clearRecordFields(windowInstance);
@@ -172,7 +174,7 @@
             installGameMessageClearHook,
             hasHookInChain,
             clearForesightSnapshot,
-            showDiagnostics,
+            showIntel,
             clearRecordFields,
             detachCurrentMessageRecord,
             shouldRetainMessageRenderTarget,

@@ -32,7 +32,7 @@
                         getLifecycleRecord: getLifecycleRecord,
                         getRenderGeneration: getRenderGeneration,
                         isRenderTargetCurrent: isRenderTargetCurrent,
-                        onRenderQueued: applyRenderCommand,
+                        onRenderCommandReady: applyRenderCommand,
                         onRenderRejected: handleRenderRejected,
                         onFailed(target) {
                             markTerminalState(target, 'failed');
@@ -79,19 +79,24 @@
                         displayObject,
                         `pixi-render-${reason}`,
                         state.label,
-                        isRenderApplicationFailure(reason) ? 'failed' : 'stale'
+                        isRenderApplicationFailure(reason) ? 'failed' : 'stale',
+                        { kind: 'retired' }
                     );
                 }
         
         function applyRenderCommand(target, command = {}) {
                     const displayObject = target && target.displayObject;
                     const state = target && target.state;
-                    if (!displayObject || !state) return false;
+                    if (!displayObject || !state) {
+                        return createRenderDecision('rejected', 'missing-pixi-render-target');
+                    }
                     const translated = typeof command.text === 'string' ? command.text : '';
                     const restored = restoreTranslatedText(translated, state);
                     if (restored.trim() === String(state.originalText || '').trim()) {
                         markRenderSkipped(displayObject, state, translated);
-                        return true;
+                        return createRenderDecision('committed', 'pixi-text-render-skipped', {
+                            translationReceived: translated,
+                        });
                     }
         
                     writeTextThroughWrappedSetter(displayObject, restored, true);
@@ -108,7 +113,20 @@
                             ? command.metadata.translationReceived
                             : translated,
                     });
-                    return true;
+                    return createRenderDecision('committed', 'pixi-text-rendered', {
+                        translationReceived: command.metadata
+                            ? command.metadata.translationReceived
+                            : translated,
+                        translationDrawn: restored,
+                    });
+                }
+
+        function createRenderDecision(status, reason, details = null) {
+                    return {
+                        status,
+                        reason,
+                        details: details && typeof details === 'object' ? details : {},
+                    };
                 }
         
         function restoreTranslatedText(translated, state) {
@@ -130,6 +148,7 @@
                     adapterContract.retireItem(state, 'skipped', {
                         eventType: 'item.skipped',
                         message: 'pixi-text-render-skipped',
+                        policy: { kind: 'retired' },
                         details: {
                             reason: 'translated text matched original',
                             source: ADAPTER_ID,

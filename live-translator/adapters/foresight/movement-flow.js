@@ -12,15 +12,15 @@
         loadBefore: ['adapters.foresight'],
         run({ partsRegistry }) {
             const parts = partsRegistry.getParts();
-            const { DEFAULT_BUDGET, DEFAULT_MAX_SCAN_COMMANDS, MESSAGE_BUDGET_COST, BRANCH_BUDGET_STRATEGY, MAX_NESTED_LIST_DEPTH, MAX_NESTED_LISTS_PER_COMMAND, MAX_BRANCH_DEPTH, DIAGNOSTIC_ACTION_LIMIT, RECENT_SCAN_LIMIT, COMMAND_CATALOG_ASSET, BRANCH_MARKER_CODES, RESOLVABLE_CONTROL_FLOW_CODES, commandCatalog } = parts;
+            const { DEFAULT_BUDGET, DEFAULT_MAX_SCAN_COMMANDS, MESSAGE_BUDGET_COST, BRANCH_BUDGET_STRATEGY, MAX_NESTED_LIST_DEPTH, MAX_NESTED_LISTS_PER_COMMAND, MAX_BRANCH_DEPTH, INTEL_ACTION_LIMIT, RECENT_SCAN_LIMIT, COMMAND_CATALOG_ASSET, BRANCH_MARKER_CODES, RESOLVABLE_CONTROL_FLOW_CODES, commandCatalog } = parts;
             const { getEventCommandMetadata, getMovementRouteCommandMetadata, isEventScanBehavior } = parts.facades.catalog;
             const { createConsumedEventCommands, createRouteCommandActions } = parts.facades.intel;
             const { reasonFromLabel, finiteNumber, nonEmptyString } = parts.facades.utils;
 
-            function readMovementRouteCommand(list, index, expectedIndent, metadata, diagnostics = null) {
+            function readMovementRouteCommand(list, index, expectedIndent, metadata, intel = null) {
                     const routeCommands = getMovementRouteCommands(list, index, expectedIndent);
                     const nextIndex = getMovementRouteNextIndex(list, index, expectedIndent);
-                    const captureActions = !(diagnostics && diagnostics.captureCommandActions === false);
+                    const captureActions = !(intel && intel.captureCommandActions === false);
                     const routeCommandActions = captureActions ? createRouteCommandActions(routeCommands) : [];
                     if (!routeCommands.length) {
                         return {

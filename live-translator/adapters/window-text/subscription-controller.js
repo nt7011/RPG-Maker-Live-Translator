@@ -26,7 +26,7 @@
                     isRenderTargetCurrent: isRenderTargetCurrent,
                     resolveRenderCommandRebase: resolveRenderCommandRebase,
                     resolveRecord: resolveSubscriptionRecord,
-                    onRenderQueued: applyRenderCommand,
+                    onRenderCommandReady: applyRenderCommand,
                     onRenderRejected: handleRenderRejected,
                     onMissingRecord(route, event) {
                         handleMissingRecordEvent(route, event);
@@ -40,7 +40,7 @@
                     onEvent(entry, event) {
                         const type = event && event.type ? String(event.type) : '';
                         const details = event && event.details && typeof event.details === 'object' ? event.details : {};
-                        if (isDetachedStoredTranslationEvent(event, details)) {
+                        if (isDetachedStoredTranslationEvent(event)) {
                             handleMissingRecordEvent(createDetachedStoredTranslationRoute(event), event);
                             return;
                         }
@@ -85,21 +85,13 @@
             }
 
     function handleMissingRecordEvent(route, event) {
-                const type = event && event.type ? String(event.type) : '';
-                if (type !== 'item.translation_stored') return false;
+                if (!isDetachedStoredTranslationEvent(event)) return false;
                 const details = event && event.details && typeof event.details === 'object' ? event.details : {};
-                if (!isDetachedStoredTranslationEvent(event, details)) return false;
                 return renderDetachedTranslation(route, event, details);
             }
 
-    function isDetachedStoredTranslationEvent(event, details = null) {
-                if (!event || String(event.type || '') !== 'item.translation_stored') return false;
-                const eventDetails = details && typeof details === 'object'
-                    ? details
-                    : event && event.details && typeof event.details === 'object'
-                        ? event.details
-                        : {};
-                return eventDetails.detached === true || String(event && event.message || '') === 'detached';
+    function isDetachedStoredTranslationEvent(event) {
+                return !!(event && String(event.type || '') === 'item.translation_stored');
             }
 
     function renderDetachedTranslation(route, event, details) {
@@ -315,7 +307,7 @@
                     renderedText: rendered,
                 });
                 return {
-                    accepted: true,
+                    status: 'rebased',
                     reason: 'render-command-rebased',
                     currentSlotProof,
                     replacementCommand: {
@@ -439,7 +431,7 @@
 
     function createRenderCommandRebaseDenial(reason, details = null) {
                 return {
-                    accepted: false,
+                    status: 'rejected',
                     reason: String(reason || 'render-command-rebase-denied'),
                     details: details && typeof details === 'object' ? details : {},
                 };

@@ -25,8 +25,8 @@
             getEntryDrawTextExBaseLineHeight,
             windowEntryBelongsToContents,
             getEntryStatus,
-            cloneDiagnosticRect,
-            roundDiagnosticNumber,
+            cloneIntelRect,
+            roundIntelNumber,
             perfStart,
             perfCount,
             perfTop,
@@ -70,15 +70,15 @@
             ? windowEntryBelongsToContents
             : null;
         const getEntryStatusForSummary = requireFunction(getEntryStatus, 'getEntryStatus');
-        const cloneRect = requireFunction(cloneDiagnosticRect, 'cloneDiagnosticRect');
-        const roundNumber = requireFunction(roundDiagnosticNumber, 'roundDiagnosticNumber');
+        const cloneRect = requireFunction(cloneIntelRect, 'cloneIntelRect');
+        const roundNumber = requireFunction(roundIntelNumber, 'roundIntelNumber');
         const startPerf = requireFunction(perfStart, 'perfStart');
         const countPerf = requireFunction(perfCount, 'perfCount');
         const topPerf = requireFunction(perfTop, 'perfTop');
         const elapsedPerf = requireFunction(perfElapsed, 'perfElapsed');
         const getPerfMethod = requireFunction(getWindowTextPerfMethod, 'getWindowTextPerfMethod');
 
-        function calculateRedrawBounds(targetWindow, windowData, contents, entry, translatedText, sourceInkDiagnostics = null) {
+        function calculateRedrawBounds(targetWindow, windowData, contents, entry, translatedText, sourceInkIntel = null) {
             const boundsStart = callPerfStart();
             callPerfCount('windowText.redraw.bounds.calls');
             callPerfTop('windowText.redraw.bounds.method', callGetWindowTextPerfMethod(entry));
@@ -156,33 +156,33 @@
                 bitmapSurfaceTranslatedBounds = applyHorizontalTextFitToBounds(bitmapSurfaceTranslatedBounds, textFit);
             }
             const uncappedOriginalBounds = mergeRect(baseBounds, bitmapSurfaceOriginalBounds);
-            const sourceInkCappedBaseBounds = capSourceBoundsForSourceInk(baseBounds, sourceInkDiagnostics);
+            const sourceInkCappedBaseBounds = capSourceBoundsForSourceInk(baseBounds, sourceInkIntel);
             const sourceInkCappedBitmapSurfaceOriginalBounds = capSourceBoundsForSourceInk(
                 bitmapSurfaceOriginalBounds,
-                sourceInkDiagnostics
+                sourceInkIntel
             );
-            const expansionSourceInkDiagnostics = shouldExpandSourceBoundsForSourceInk(entry)
-                ? sourceInkDiagnostics
+            const expansionSourceInkIntel = shouldExpandSourceBoundsForSourceInk(entry)
+                ? sourceInkIntel
                 : null;
             const sourceInkExpandedBaseBounds = expandSourceBoundsForSourceInk(
                 sourceInkCappedBaseBounds,
-                expansionSourceInkDiagnostics
+                expansionSourceInkIntel
             );
             const sourceInkExpandedBitmapSurfaceOriginalBounds = expandSourceBoundsForSourceInk(
                 sourceInkCappedBitmapSurfaceOriginalBounds,
-                expansionSourceInkDiagnostics
+                expansionSourceInkIntel
             );
             const cappedBaseBounds = capSourceBoundsForHorizontalTextFit(sourceInkExpandedBaseBounds, textFit);
             const cappedBitmapSurfaceOriginalBounds = capSourceBoundsForHorizontalTextFit(
                 sourceInkExpandedBitmapSurfaceOriginalBounds,
                 textFit
             );
-            const sourceInkCapApplied = !sameDiagnosticRect(baseBounds, sourceInkCappedBaseBounds)
-                || !sameDiagnosticRect(bitmapSurfaceOriginalBounds, sourceInkCappedBitmapSurfaceOriginalBounds);
-            const sourceInkExpansionApplied = !sameDiagnosticRect(sourceInkCappedBaseBounds, sourceInkExpandedBaseBounds)
-                || !sameDiagnosticRect(sourceInkCappedBitmapSurfaceOriginalBounds, sourceInkExpandedBitmapSurfaceOriginalBounds);
-            const horizontalCapApplied = !sameDiagnosticRect(sourceInkExpandedBaseBounds, cappedBaseBounds)
-                || !sameDiagnosticRect(sourceInkExpandedBitmapSurfaceOriginalBounds, cappedBitmapSurfaceOriginalBounds);
+            const sourceInkCapApplied = !sameIntelRect(baseBounds, sourceInkCappedBaseBounds)
+                || !sameIntelRect(bitmapSurfaceOriginalBounds, sourceInkCappedBitmapSurfaceOriginalBounds);
+            const sourceInkExpansionApplied = !sameIntelRect(sourceInkCappedBaseBounds, sourceInkExpandedBaseBounds)
+                || !sameIntelRect(sourceInkCappedBitmapSurfaceOriginalBounds, sourceInkExpandedBitmapSurfaceOriginalBounds);
+            const horizontalCapApplied = !sameIntelRect(sourceInkExpandedBaseBounds, cappedBaseBounds)
+                || !sameIntelRect(sourceInkExpandedBitmapSurfaceOriginalBounds, cappedBitmapSurfaceOriginalBounds);
             let minimumHeight = 0;
             if (entry && entry.type === 'drawTextEx') {
                 minimumHeight = callEstimateMaxDrawTextExFallbackHeight(
@@ -216,7 +216,7 @@
             }
             result.sourceInkSourceCap = summarizeSourceInkSourceCap({
                 applied: sourceInkCapApplied,
-                sourceInkDiagnostics,
+                sourceInkIntel,
                 originalBaseBounds: baseBounds,
                 cappedBaseBounds: sourceInkCappedBaseBounds,
                 originalBitmapSurfaceBounds: bitmapSurfaceOriginalBounds,
@@ -224,7 +224,7 @@
             });
             result.sourceInkSourceExpansion = summarizeSourceInkSourceExpansion({
                 applied: sourceInkExpansionApplied,
-                sourceInkDiagnostics: expansionSourceInkDiagnostics || sourceInkDiagnostics,
+                sourceInkIntel: expansionSourceInkIntel || sourceInkIntel,
                 originalBaseBounds: sourceInkCappedBaseBounds,
                 expandedBaseBounds: sourceInkExpandedBaseBounds,
                 originalBitmapSurfaceBounds: sourceInkCappedBitmapSurfaceOriginalBounds,
@@ -395,9 +395,9 @@
             };
         }
 
-        function capSourceBoundsForSourceInk(bounds, sourceInkDiagnostics) {
+        function capSourceBoundsForSourceInk(bounds, sourceInkIntel) {
             if (!validRect(bounds)) return bounds;
-            const capRight = getSourceInkRightCap(sourceInkDiagnostics);
+            const capRight = getSourceInkRightCap(sourceInkIntel);
             const left = Number(bounds.x1);
             const right = Number(bounds.x2);
             if (!Number.isFinite(capRight) || !Number.isFinite(left) || !Number.isFinite(right)) return bounds;
@@ -407,9 +407,9 @@
             });
         }
 
-        function expandSourceBoundsForSourceInk(bounds, sourceInkDiagnostics) {
+        function expandSourceBoundsForSourceInk(bounds, sourceInkIntel) {
             if (!validRect(bounds)) return bounds;
-            const inkBounds = getChangedSourceInkWorldBounds(sourceInkDiagnostics);
+            const inkBounds = getChangedSourceInkWorldBounds(sourceInkIntel);
             if (!inkBounds) return bounds;
             const expanded = mergeRect(bounds, inkBounds);
             return validRect(expanded) ? expanded : bounds;
@@ -427,22 +427,22 @@
             return String(lifecycleState || entry && entry.screenState || '');
         }
 
-        function getSourceInkRightCap(sourceInkDiagnostics) {
-            const ink = sourceInkDiagnostics && typeof sourceInkDiagnostics === 'object'
-                ? sourceInkDiagnostics
+        function getSourceInkRightCap(sourceInkIntel) {
+            const ink = sourceInkIntel && typeof sourceInkIntel === 'object'
+                ? sourceInkIntel
                 : null;
             if (!ink || ink.available !== true || ink.changed !== true) return NaN;
             // Right-edge ink means the snapshot window clipped the source;
             // capping from it would turn a measurement uncertainty into data loss.
             if (ink.touches && ink.touches.right === true) return NaN;
-            const inkBounds = getChangedSourceInkWorldBounds(sourceInkDiagnostics);
+            const inkBounds = getChangedSourceInkWorldBounds(sourceInkIntel);
             const right = Number(inkBounds && inkBounds.x2);
             return Number.isFinite(right) ? right : NaN;
         }
 
-        function getChangedSourceInkWorldBounds(sourceInkDiagnostics) {
-            const ink = sourceInkDiagnostics && typeof sourceInkDiagnostics === 'object'
-                ? sourceInkDiagnostics
+        function getChangedSourceInkWorldBounds(sourceInkIntel) {
+            const ink = sourceInkIntel && typeof sourceInkIntel === 'object'
+                ? sourceInkIntel
                 : null;
             if (!ink || ink.available !== true || ink.changed !== true) return null;
             if (!ink.worldBounds || !validRect(ink.worldBounds)) return null;
@@ -475,18 +475,18 @@
         }
 
         function summarizeSourceInkSourceCap(input = {}) {
-            const sourceInkDiagnostics = input.sourceInkDiagnostics || {};
-            const capRight = getSourceInkRightCap(sourceInkDiagnostics);
+            const sourceInkIntel = input.sourceInkIntel || {};
+            const capRight = getSourceInkRightCap(sourceInkIntel);
             const originalBaseBounds = cloneRect(input.originalBaseBounds);
             const cappedBaseBounds = cloneRect(input.cappedBaseBounds);
             const originalBitmapSurfaceBounds = cloneRect(input.originalBitmapSurfaceBounds);
             const cappedBitmapSurfaceBounds = cloneRect(input.cappedBitmapSurfaceBounds);
             return {
                 applied: input.applied === true,
-                available: sourceInkDiagnostics.available === true,
-                changed: sourceInkDiagnostics.changed === true,
-                reason: sourceInkDiagnostics.reason ? String(sourceInkDiagnostics.reason) : '',
-                touchesRight: sourceInkDiagnostics.touches && sourceInkDiagnostics.touches.right === true,
+                available: sourceInkIntel.available === true,
+                changed: sourceInkIntel.changed === true,
+                reason: sourceInkIntel.reason ? String(sourceInkIntel.reason) : '',
+                touchesRight: sourceInkIntel.touches && sourceInkIntel.touches.right === true,
                 capRight: roundNumber(capRight),
                 originalBaseRight: originalBaseBounds ? roundNumber(originalBaseBounds.x2) : null,
                 cappedBaseRight: cappedBaseBounds ? roundNumber(cappedBaseBounds.x2) : null,
@@ -500,24 +500,24 @@
         }
 
         function summarizeSourceInkSourceExpansion(input = {}) {
-            const sourceInkDiagnostics = input.sourceInkDiagnostics || {};
+            const sourceInkIntel = input.sourceInkIntel || {};
             const originalBaseBounds = cloneRect(input.originalBaseBounds);
             const expandedBaseBounds = cloneRect(input.expandedBaseBounds);
             const originalBitmapSurfaceBounds = cloneRect(input.originalBitmapSurfaceBounds);
             const expandedBitmapSurfaceBounds = cloneRect(input.expandedBitmapSurfaceBounds);
             const expandedBounds = cloneRect(mergeRect(expandedBaseBounds, expandedBitmapSurfaceBounds));
-            const pixelCount = Number(sourceInkDiagnostics.pixelCount);
+            const pixelCount = Number(sourceInkIntel.pixelCount);
             return {
                 applied: input.applied === true,
-                available: sourceInkDiagnostics.available === true,
-                changed: sourceInkDiagnostics.changed === true,
-                reason: sourceInkDiagnostics.reason ? String(sourceInkDiagnostics.reason) : '',
-                touchesLeft: sourceInkDiagnostics.touches && sourceInkDiagnostics.touches.left === true,
-                touchesTop: sourceInkDiagnostics.touches && sourceInkDiagnostics.touches.top === true,
-                touchesRight: sourceInkDiagnostics.touches && sourceInkDiagnostics.touches.right === true,
-                touchesBottom: sourceInkDiagnostics.touches && sourceInkDiagnostics.touches.bottom === true,
+                available: sourceInkIntel.available === true,
+                changed: sourceInkIntel.changed === true,
+                reason: sourceInkIntel.reason ? String(sourceInkIntel.reason) : '',
+                touchesLeft: sourceInkIntel.touches && sourceInkIntel.touches.left === true,
+                touchesTop: sourceInkIntel.touches && sourceInkIntel.touches.top === true,
+                touchesRight: sourceInkIntel.touches && sourceInkIntel.touches.right === true,
+                touchesBottom: sourceInkIntel.touches && sourceInkIntel.touches.bottom === true,
                 pixelCount: Number.isFinite(pixelCount) ? Math.max(0, Math.floor(pixelCount)) : null,
-                inkBounds: cloneRect(sourceInkDiagnostics.worldBounds),
+                inkBounds: cloneRect(sourceInkIntel.worldBounds),
                 expandedBounds,
                 originalBaseBottom: originalBaseBounds ? roundNumber(originalBaseBounds.y2) : null,
                 expandedBaseBottom: expandedBaseBounds ? roundNumber(expandedBaseBounds.y2) : null,
@@ -530,7 +530,7 @@
             };
         }
 
-        function sameDiagnosticRect(left, right) {
+        function sameIntelRect(left, right) {
             if (!left && !right) return true;
             if (!validRect(left) || !validRect(right)) return false;
             return Number(left.x1) === Number(right.x1)

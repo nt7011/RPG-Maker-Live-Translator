@@ -8,8 +8,9 @@
         name: 'adapters.bitmapText.copiedTargets',
         requires: {
             copiedTargetProofSummary: 'runtime.bitmap.copiedTargetProofSummary',
+            sourceRunIdentity: 'runtime.bitmap.sourceRunIdentity',
         },
-        factory({ copiedTargetProofSummary }) {
+        factory({ copiedTargetProofSummary, sourceRunIdentity }) {
 
     function createController(scope = {}) {
         const {
@@ -27,6 +28,8 @@
             updateItem,
             stringify,
         } = scope.controllerFacades.textUtils;
+        const { collectIdentityAliases, sourceRunIdentitiesMatch } = sourceRunIdentity;
+        const collectSourceIdentityAliases = (...values) => collectIdentityAliases(values);
         const COPIED_TARGET_PROVIDER_TOKEN = 'bitmap-text';
         let copiedTargetProviderUnregister = null;
 
@@ -641,18 +644,7 @@
             if (!sourceRun) return false;
             const surfaceId = stringify(projection.sourceSurfaceId || projection.sourceTextRun && projection.sourceTextRun.surfaceId || '');
             if (surfaceId && sourceRun.surfaceId && sourceRun.surfaceId !== surfaceId) return false;
-            const runId = stringify(projection.sourceRunId || projection.sourceTextRun && projection.sourceTextRun.runId || '');
-            if (runId && sourceRun.runId) {
-                if (sourceRun.runId === runId) return true;
-                if (!isProjectionForBitmapEntry(projection, entry)) return false;
-            }
-            const slotKey = stringify(projection.sourceSlotKey || projection.sourceTextRun && projection.sourceTextRun.slotKey || '');
-            return !!(slotKey && sourceRun.slotKey && sourceRun.slotKey === slotKey);
-        }
-
-        function isProjectionForBitmapEntry(projection, entry) {
-            const projectedEntryId = stringify(getProjectionValue(projection, 'entryId') || '');
-            return !!(projectedEntryId && projectedEntryId === createCopiedBitmapTargetEntryKey(entry));
+            return sourceRunIdentitiesMatch(sourceRun, createProjectionSourceLookup(projection));
         }
 
         // Copied-target restoration needs a display payload even when the
@@ -782,7 +774,9 @@
                 entryId: createCopiedBitmapTargetEntryKey(entry),
                 sourceSurfaceId: stringify(target.sourceSurfaceId || entry.sourceSurfaceId || ''),
                 sourceRunId: stringify(target.sourceRunId || entry.sourceRunId || ''),
+                sourceRunIds: collectSourceIdentityAliases(target.sourceRunIds, entry.sourceRunIds, target.sourceRunId, entry.sourceRunId),
                 sourceSlotKey: stringify(target.sourceSlotKey || entry.sourceSlotKey || ''),
+                sourceSlotKeys: collectSourceIdentityAliases(target.sourceSlotKeys, entry.sourceSlotKeys, target.sourceSlotKey, entry.sourceSlotKey),
                 sourceBounds: cloneValidRect(target.sourceBounds || deriveEntryRect(entry)),
                 targetSurfaceId: stringify(target.targetSurfaceId || ''),
                 targetBounds: cloneValidRect(target.bounds || null),
@@ -813,15 +807,55 @@
             ].join('|');
         }
 
+        function createProjectionSourceLookup(projection) {
+            const sourceTextRun = projection && projection.sourceTextRun && typeof projection.sourceTextRun === 'object'
+                ? projection.sourceTextRun
+                : {};
+            return {
+                sourceRunId: stringify(getProjectionValue(projection, 'sourceRunId') || sourceTextRun.runId || sourceTextRun.sourceRunId || ''),
+                sourceRunIds: collectSourceIdentityAliases(
+                    getProjectionValue(projection, 'sourceRunIds'),
+                    sourceTextRun.runIds,
+                    sourceTextRun.sourceRunIds,
+                    getProjectionValue(projection, 'sourceRunId'),
+                    sourceTextRun.runId,
+                    sourceTextRun.sourceRunId
+                ),
+                sourceSlotKey: stringify(getProjectionValue(projection, 'sourceSlotKey') || sourceTextRun.slotKey || sourceTextRun.sourceSlotKey || ''),
+                sourceSlotKeys: collectSourceIdentityAliases(
+                    getProjectionValue(projection, 'sourceSlotKeys'),
+                    sourceTextRun.slotKeys,
+                    sourceTextRun.sourceSlotKeys,
+                    getProjectionValue(projection, 'sourceSlotKey'),
+                    sourceTextRun.slotKey,
+                    sourceTextRun.sourceSlotKey
+                ),
+            };
+        }
+
         function createCopiedSourceTextRun(entry) {
             if (!entry) return null;
             const bounds = cloneValidRect(deriveEntryRect(entry));
             if (!rectHasArea(bounds)) return null;
             return {
                 runId: entry.sourceRunId || entry.drawBoundary && entry.drawBoundary.runId || '',
+                runIds: collectSourceIdentityAliases(
+                    entry.sourceRunIds,
+                    entry.drawBoundary && entry.drawBoundary.sourceRunIds,
+                    entry.drawBoundary && entry.drawBoundary.ledgerRunIds,
+                    entry.sourceRunId,
+                    entry.drawBoundary && entry.drawBoundary.runId
+                ),
                 surfaceId: entry.sourceSurfaceId || entry.drawBoundary && entry.drawBoundary.surfaceId || '',
                 revision: Number(entry.sourceSurfaceRevision || entry.drawBoundary && entry.drawBoundary.surfaceRevision) || 0,
                 slotKey: entry.sourceSlotKey || entry.drawBoundary && entry.drawBoundary.slotKey || '',
+                slotKeys: collectSourceIdentityAliases(
+                    entry.sourceSlotKeys,
+                    entry.drawBoundary && entry.drawBoundary.sourceSlotKeys,
+                    entry.drawBoundary && entry.drawBoundary.slotKeys,
+                    entry.sourceSlotKey,
+                    entry.drawBoundary && entry.drawBoundary.slotKey
+                ),
                 text: stringify(entry.rawText || ''),
                 visibleText: stringify(entry.visibleText || entry.rawText || ''),
                 bounds,
@@ -847,7 +881,9 @@
             return {
                 edgeId: stringify(materialized.edgeId || ''),
                 sourceRunId: stringify(materialized.sourceRunId || ''),
+                sourceRunIds: collectSourceIdentityAliases(materialized.sourceRunIds, materialized.sourceRunId),
                 sourceSlotKey: stringify(materialized.sourceSlotKey || ''),
+                sourceSlotKeys: collectSourceIdentityAliases(materialized.sourceSlotKeys, materialized.sourceSlotKey),
                 sourceSurfaceId: stringify(materialized.sourceSurfaceId || ''),
                 targetSurfaceId: stringify(materialized.targetSurfaceId || ''),
                 targetRevision: Number(materialized.targetRevision) || 0,
@@ -903,7 +939,19 @@
             return {
                 edgeId: stringify(getProjectionValue(projection, 'edgeId') || materialized && materialized.edgeId || ''),
                 sourceRunId: stringify(getProjectionValue(projection, 'sourceRunId') || materialized && materialized.sourceRunId || ''),
+                sourceRunIds: collectSourceIdentityAliases(
+                    getProjectionValue(projection, 'sourceRunIds'),
+                    materialized && materialized.sourceRunIds,
+                    getProjectionValue(projection, 'sourceRunId'),
+                    materialized && materialized.sourceRunId
+                ),
                 sourceSlotKey: stringify(getProjectionValue(projection, 'sourceSlotKey') || materialized && materialized.sourceSlotKey || ''),
+                sourceSlotKeys: collectSourceIdentityAliases(
+                    getProjectionValue(projection, 'sourceSlotKeys'),
+                    materialized && materialized.sourceSlotKeys,
+                    getProjectionValue(projection, 'sourceSlotKey'),
+                    materialized && materialized.sourceSlotKey
+                ),
                 sourceSurfaceId: stringify(getProjectionValue(projection, 'sourceSurfaceId') || materialized && materialized.sourceSurfaceId || ''),
                 targetSurfaceId: stringify(getProjectionValue(projection, 'targetSurfaceId') || materialized && materialized.targetSurfaceId || ''),
                 targetRevision: Number(getProjectionValue(projection, 'targetRevision') || materialized && materialized.targetRevision) || 0,

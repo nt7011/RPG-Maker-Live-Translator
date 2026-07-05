@@ -93,7 +93,9 @@
                                 if (isWindowEntryActive(entry)) {
                                     retireWindowEntry(entry, 'window-closed', Object.assign({}, entryDetails, {
                                         wasCompleted: isWindowEntryCompleted(entry),
-                                    }));
+                                    }), {
+                                        policy: { kind: 'retired' },
+                                    });
                                 }
                                 // A closed window no longer owns this draw slot; detach the
                                 // adapter record association before the local text map is cleared.

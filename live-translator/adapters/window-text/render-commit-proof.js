@@ -15,10 +15,10 @@
             getTextEntryKey,
             getWindowTypeName,
             isUsableBitmap,
-            roundDiagnosticNumber,
+            roundIntelNumber,
         } = context;
-        const roundNumber = typeof roundDiagnosticNumber === 'function'
-            ? roundDiagnosticNumber
+        const roundNumber = typeof roundIntelNumber === 'function'
+            ? roundIntelNumber
             : (value) => value;
 
         function validateRenderTargetBeforeDraw(targetWindow, windowData, contents, entry) {
@@ -127,7 +127,7 @@
         }
 
         function createRenderCommit(mode, targetWindow, contents, entry, route, details = {}) {
-            // The commit is serialized into diagnostics and render events; keep
+            // The commit is serialized into intel and render events; keep
             // it primitive and avoid leaking live RPG Maker objects.
             const targetDetails = createRenderTargetDetails(targetWindow, entry && entry.windowData, contents, entry);
             const evidence = Object.assign({
@@ -228,7 +228,7 @@
     }
 
     function createRenderDirtyUploadProof(commit, dirtyUpload) {
-        // Render commit diagnostics pass through bounded history serializers.
+        // Render commit intel pass through bounded history serializers.
         // Keep upload proof as top-level primitives so it remains visible even
         // when the richer executor object is trimmed.
         return {

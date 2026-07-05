@@ -1,4 +1,4 @@
-// Bitmap text adapter support: mutation diagnostics.
+// Bitmap text adapter support: mutation intel.
 // Mutation wrappers live in mutations.js; timing attribution and labels live here.
 (() => {
     'use strict';
@@ -63,7 +63,7 @@
             try {
                 const description = scope.bitmapServices.describeSurface(bitmap, {
                     adapterId: 'sprite',
-                    reason: 'mutation-diagnostics',
+                    reason: 'mutation-intel',
                 });
                 return description && typeof description === 'object' ? description : null;
             } catch (_) {
@@ -117,7 +117,7 @@
     }
 
     LiveTranslatorDefine({
-        name: 'adapters.bitmapText.mutationDiagnostics',
+        name: 'adapters.bitmapText.mutationIntel',
         factory() {
             return { create: createController };
         },

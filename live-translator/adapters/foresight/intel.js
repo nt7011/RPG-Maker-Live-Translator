@@ -12,15 +12,15 @@
         loadBefore: ['adapters.foresight'],
         run({ partsRegistry }, { scope: globalScope }) {
             const parts = partsRegistry.getParts();
-            const { DEFAULT_BUDGET, DEFAULT_MAX_SCAN_COMMANDS, MESSAGE_BUDGET_COST, BRANCH_BUDGET_STRATEGY, MAX_NESTED_LIST_DEPTH, MAX_NESTED_LISTS_PER_COMMAND, MAX_BRANCH_DEPTH, DIAGNOSTIC_ACTION_LIMIT, RECENT_SCAN_LIMIT, COMMAND_CATALOG_ASSET, BRANCH_MARKER_CODES, RESOLVABLE_CONTROL_FLOW_CODES, commandCatalog } = parts;
+            const { DEFAULT_BUDGET, DEFAULT_MAX_SCAN_COMMANDS, MESSAGE_BUDGET_COST, BRANCH_BUDGET_STRATEGY, MAX_NESTED_LIST_DEPTH, MAX_NESTED_LISTS_PER_COMMAND, MAX_BRANCH_DEPTH, INTEL_ACTION_LIMIT, RECENT_SCAN_LIMIT, COMMAND_CATALOG_ASSET, BRANCH_MARKER_CODES, RESOLVABLE_CONTROL_FLOW_CODES, commandCatalog } = parts;
             const { getEventCommandMetadata, getMovementRouteCommandMetadata } = parts.facades.catalog;
             const { cloneBudgetSnapshot } = parts.facades.budget;
-            const { cloneCommandActions, cloneControlFlowTarget, cloneBranchActions, cloneConsumedCommands, cloneDiagnosticValue } = parts.facades.cloning;
+            const { cloneCommandActions, cloneControlFlowTarget, cloneBranchActions, cloneConsumedCommands, cloneIntelValue } = parts.facades.cloning;
             const { positiveInteger, finiteNumber, nonEmptyString } = parts.facades.utils;
 
-            function getIntelPolicy(diagnostics = null, options = {}) {
+            function getIntelPolicy(intel = null, options = {}) {
                     const settings = (options && options.settings)
-                        || (diagnostics && diagnostics.settings)
+                        || (intel && intel.settings)
                         || (globalScope.LiveTranslatorSettings && typeof globalScope.LiveTranslatorSettings === 'object' ? globalScope.LiveTranslatorSettings : {});
                     const policy = globalScope.LiveTranslatorIntelPolicy;
                     if (policy && typeof policy.getSnapshotPolicy === 'function') {
@@ -41,7 +41,7 @@
                     };
                 }
 
-            function createBlockDiagnostics(scan, block) {
+            function createBlockIntel(scan, block) {
                     const includeActions = shouldCaptureCommandActions(scan);
                     return {
                         scanStartIndex: scan.startIndex,
@@ -50,7 +50,7 @@
                         priorityDistance: finiteNumber(block.priorityDistance),
                         priorityOffset: finiteNumber(block.priorityOffset),
                         branchDepth: finiteNumber(block.branchDepth) || 0,
-                        branchPath: cloneDiagnosticValue(block.branchPath, 0),
+                        branchPath: cloneIntelValue(block.branchPath, 0),
                         budget: cloneBudgetSnapshot(scan.budget),
                         advancedCommands: scan.advancedCommands,
                         scannedCommands: scan.scannedCommands,
@@ -60,38 +60,38 @@
                         staleRiskCommandCounts: Object.assign({}, scan.staleRiskCommandCounts),
                         staleRiskCommandLabels: Object.assign({}, scan.staleRiskCommandLabels),
                         routeCommands: scan.routeCommands,
-                        pathStops: cloneDiagnosticValue(scan.pathStops, 0),
+                        pathStops: cloneIntelValue(scan.pathStops, 0),
                         commandActions: includeActions ? cloneCommandActions(scan.commandActions) : [],
-                        commandActionLimit: finiteNumber(scan.commandActionLimit) || DIAGNOSTIC_ACTION_LIMIT,
+                        commandActionLimit: finiteNumber(scan.commandActionLimit) || INTEL_ACTION_LIMIT,
                         commandActionsTruncated: includeActions ? (finiteNumber(scan.commandActionsTruncated) || 0) : 0,
                     };
                 }
 
-            function recordCommandAction(diagnostics, path, action = {}, options = {}) {
-                    if (!shouldCaptureCommandActions(diagnostics)) return null;
-                    if (hasReachedCommandActionMessageLimit(diagnostics)) {
-                        diagnostics.commandActionsTruncated = (finiteNumber(diagnostics.commandActionsTruncated) || 0) + 1;
+            function recordCommandAction(intel, path, action = {}, options = {}) {
+                    if (!shouldCaptureCommandActions(intel)) return null;
+                    if (hasReachedCommandActionMessageLimit(intel)) {
+                        intel.commandActionsTruncated = (finiteNumber(intel.commandActionsTruncated) || 0) + 1;
                         return null;
                     }
                     // Intel preview keeps only message actions for the GUI.
-                    if (diagnostics.captureCommandActionPreview === true && options.previewKind !== 'message') {
-                        diagnostics.commandActionsTruncated = (finiteNumber(diagnostics.commandActionsTruncated) || 0) + 1;
+                    if (intel.captureCommandActionPreview === true && options.previewKind !== 'message') {
+                        intel.commandActionsTruncated = (finiteNumber(intel.commandActionsTruncated) || 0) + 1;
                         return null;
                     }
-                    if (diagnostics.commandActions.length >= DIAGNOSTIC_ACTION_LIMIT) {
-                        diagnostics.commandActionsTruncated = (finiteNumber(diagnostics.commandActionsTruncated) || 0) + 1;
+                    if (intel.commandActions.length >= INTEL_ACTION_LIMIT) {
+                        intel.commandActionsTruncated = (finiteNumber(intel.commandActionsTruncated) || 0) + 1;
                         return null;
                     }
                     const payload = typeof action === 'function' ? action() : action;
-                    const entry = appendCommandAction(diagnostics, payload && typeof payload === 'object' ? payload : {}, path);
-                    updateCommandActionMessageLimitState(diagnostics, entry);
+                    const entry = appendCommandAction(intel, payload && typeof payload === 'object' ? payload : {}, path);
+                    updateCommandActionMessageLimitState(intel, entry);
                     return entry;
                 }
 
-            function appendCommandAction(diagnostics, action = {}, path = null) {
-                    if (!diagnostics || !Array.isArray(diagnostics.commandActions)) return null;
-                    if (diagnostics.commandActions.length >= DIAGNOSTIC_ACTION_LIMIT) {
-                        diagnostics.commandActionsTruncated = (finiteNumber(diagnostics.commandActionsTruncated) || 0) + 1;
+            function appendCommandAction(intel, action = {}, path = null) {
+                    if (!intel || !Array.isArray(intel.commandActions)) return null;
+                    if (intel.commandActions.length >= INTEL_ACTION_LIMIT) {
+                        intel.commandActionsTruncated = (finiteNumber(intel.commandActionsTruncated) || 0) + 1;
                         return null;
                     }
                     const metadata = action.metadata || getEventCommandMetadata(action.code);
@@ -111,17 +111,17 @@
                         priorityDistance: finiteNumber(path && path.messageDistance),
                         branchDepth: finiteNumber(path && path.branchDepth) || 0,
                         branchPath: Array.isArray(path && path.branchPath) ? path.branchPath.slice() : [],
-                        listContext: cloneDiagnosticValue(action.listContext, 0),
-                        nestedList: cloneDiagnosticValue(action.nestedList, 0),
-                        nestedLists: cloneDiagnosticValue(action.nestedLists, 0),
-                        budget: cloneDiagnosticValue(action.budget, 0),
+                        listContext: cloneIntelValue(action.listContext, 0),
+                        nestedList: cloneIntelValue(action.nestedList, 0),
+                        nestedLists: cloneIntelValue(action.nestedLists, 0),
+                        budget: cloneIntelValue(action.budget, 0),
                         consumedCommands: cloneConsumedCommands(action.consumedCommands),
                         routeCommandActions: cloneConsumedCommands(action.routeCommandActions),
                         controlFlowTarget: cloneControlFlowTarget(action.controlFlowTarget),
                         branches: cloneBranchActions(action.branches),
                     };
                     attachHiddenReturnGuards(entry, path && path.returnGuards);
-                    diagnostics.commandActions.push(entry);
+                    intel.commandActions.push(entry);
                     return entry;
                 }
 
@@ -142,17 +142,17 @@
                     }
                 }
 
-            function hasReachedCommandActionMessageLimit(diagnostics) {
-                    const limit = positiveInteger(diagnostics && diagnostics.commandActionMessageLimit, 0);
-                    return limit > 0 && diagnostics.commandActionMessageLimitReached === true;
+            function hasReachedCommandActionMessageLimit(intel) {
+                    const limit = positiveInteger(intel && intel.commandActionMessageLimit, 0);
+                    return limit > 0 && intel.commandActionMessageLimitReached === true;
                 }
 
-            function updateCommandActionMessageLimitState(diagnostics, entry) {
-                    const limit = positiveInteger(diagnostics && diagnostics.commandActionMessageLimit, 0);
+            function updateCommandActionMessageLimitState(intel, entry) {
+                    const limit = positiveInteger(intel && intel.commandActionMessageLimit, 0);
                     if (!limit || !entry || !isMessageCommandAction(entry)) return;
-                    diagnostics.commandActionMessagesCaptured = positiveInteger(diagnostics.commandActionMessagesCaptured, 0) + 1;
-                    if (diagnostics.commandActionMessagesCaptured >= limit) {
-                        diagnostics.commandActionMessageLimitReached = true;
+                    intel.commandActionMessagesCaptured = positiveInteger(intel.commandActionMessagesCaptured, 0) + 1;
+                    if (intel.commandActionMessagesCaptured >= limit) {
+                        intel.commandActionMessageLimitReached = true;
                     }
                 }
 
@@ -182,14 +182,14 @@
                             scanBehavior: metadata.scanBehavior,
                             stalenessRisk: metadata.stalenessRisk,
                             summary: metadata.summary,
-                            parameters: cloneDiagnosticValue(command.parameters, 0),
+                            parameters: cloneIntelValue(command.parameters, 0),
                         });
                     }
                     return commands;
                 }
 
-            function createConsumedEventCommandsForDiagnostics(diagnostics, list, startIndex, nextIndex) {
-                    return shouldCaptureCommandActions(diagnostics)
+            function createConsumedEventCommandsForIntel(intel, list, startIndex, nextIndex) {
+                    return shouldCaptureCommandActions(intel)
                         ? createConsumedEventCommands(list, startIndex, nextIndex)
                         : [];
                 }
@@ -209,13 +209,13 @@
                             stalenessRisk: metadata.stalenessRisk,
                             summary: metadata.summary,
                             reason: metadata.reason,
-                            parameters: cloneDiagnosticValue(command && command.parameters, 0),
+                            parameters: cloneIntelValue(command && command.parameters, 0),
                         };
                     });
                 }
 
-            function createRouteCommandActionsForDiagnostics(diagnostics, routeCommands) {
-                    return shouldCaptureCommandActions(diagnostics)
+            function createRouteCommandActionsForIntel(intel, routeCommands) {
+                    return shouldCaptureCommandActions(intel)
                         ? createRouteCommandActions(routeCommands)
                         : [];
                 }
@@ -243,14 +243,14 @@
                     };
                 }
 
-            function recordScan(diagnostics, scan) {
-                    const policy = getIntelPolicy(diagnostics);
+            function recordScan(intel, scan) {
+                    const policy = getIntelPolicy(intel);
                     if (!policy.surface) {
-                        clearIntel(diagnostics);
+                        clearIntel(intel);
                         return null;
                     }
                     const entry = sanitizeScan(scan, policy);
-                    const summary = diagnostics.summary;
+                    const summary = intel.summary;
                     summary.scans += 1;
                     if (entry.matchedCurrentMessage) summary.matched += 1;
                     else summary.missed += 1;
@@ -264,10 +264,10 @@
                     summary.staleRiskCommands += entry.staleRiskCommands || 0;
                     summary.updatedAt = Date.now();
 
-                    diagnostics.recent.push(entry);
-                    diagnostics.dirty = true;
-                    while (diagnostics.recent.length > getRecentScanRetentionLimit(policy)) diagnostics.recent.shift();
-                    publishIntelSnapshot(diagnostics);
+                    intel.recent.push(entry);
+                    intel.dirty = true;
+                    while (intel.recent.length > getRecentScanRetentionLimit(policy)) intel.recent.shift();
+                    publishIntelSnapshot(intel);
                     return entry;
                 }
 
@@ -303,7 +303,7 @@
                         routeBarrierReason: String(source.routeBarrierReason || ''),
                         transparentCommands: pickCommandCounts(source.transparentCommands),
                         transparentCommandLabels: pickCommandLabels(source.transparentCommandLabels, source.transparentCommands),
-                        pathStops: cloneDiagnosticValue(source.pathStops, 0),
+                        pathStops: cloneIntelValue(source.pathStops, 0),
                         commandActions: commandActionSnapshot.commandActions,
                         commandActionLimit: commandActionSnapshot.commandActionLimit,
                         commandActionMessageLimit: commandActionSnapshot.commandActionMessageLimit,
@@ -313,7 +313,7 @@
 
             function createCommandActionSnapshotForPolicy(source, policy = null) {
                     const actions = Array.isArray(source && source.commandActions) ? source.commandActions : [];
-                    const commandActionLimit = finiteNumber(source && source.commandActionLimit) || DIAGNOSTIC_ACTION_LIMIT;
+                    const commandActionLimit = finiteNumber(source && source.commandActionLimit) || INTEL_ACTION_LIMIT;
                     const commandActionsTruncated = finiteNumber(source && source.commandActionsTruncated) || 0;
                     const sourceMessageLimit = positiveInteger(source && source.commandActionMessageLimit, 0);
                     if (!policy || policy.captureForesightActions === true) {
@@ -371,20 +371,20 @@
                     return retained;
                 }
 
-            function intelSnapshot(diagnostics, options = {}) {
-                    const policy = getIntelPolicy(diagnostics, options);
+            function intelSnapshot(intel, options = {}) {
+                    const policy = getIntelPolicy(intel, options);
                     if (!policy.surface) {
                         return {
-                            summary: Object.assign({}, diagnostics.summary),
+                            summary: Object.assign({}, intel.summary),
                             recent: [],
-                            updatedAt: diagnostics.summary.updatedAt,
+                            updatedAt: intel.summary.updatedAt,
                             intelSurface: false,
                         };
                     }
                     const recentLimit = getRecentScanRetentionLimit(policy);
                     return {
-                        summary: Object.assign({}, diagnostics.summary),
-                        recent: diagnostics.recent.slice(-recentLimit).map((entry) => {
+                        summary: Object.assign({}, intel.summary),
+                        recent: intel.recent.slice(-recentLimit).map((entry) => {
                             const commandActionSnapshot = createCommandActionSnapshotForPolicy(entry, policy);
                             return Object.assign({}, entry, {
                                 transparentCommands: Object.assign({}, entry.transparentCommands || {}),
@@ -392,48 +392,48 @@
                                 staleRiskCommandCounts: Object.assign({}, entry.staleRiskCommandCounts || {}),
                                 staleRiskCommandLabels: Object.assign({}, entry.staleRiskCommandLabels || {}),
                                 budget: cloneBudgetSnapshot(entry.budget),
-                                pathStops: cloneDiagnosticValue(entry.pathStops, 0),
+                                pathStops: cloneIntelValue(entry.pathStops, 0),
                                 commandActions: commandActionSnapshot.commandActions,
                                 commandActionLimit: commandActionSnapshot.commandActionLimit,
                                 commandActionMessageLimit: commandActionSnapshot.commandActionMessageLimit,
                                 commandActionsTruncated: commandActionSnapshot.commandActionsTruncated,
                             });
                         }),
-                        updatedAt: diagnostics.summary.updatedAt,
+                        updatedAt: intel.summary.updatedAt,
                         intelSurface: policy.surface === true,
                     };
                 }
 
-            function publishIntelSnapshot(diagnostics) {
-                    if (!getIntelPolicy(diagnostics).surface) {
-                        clearIntel(diagnostics);
+            function publishIntelSnapshot(intel) {
+                    if (!getIntelPolicy(intel).surface) {
+                        clearIntel(intel);
                         try { delete globalScope.LiveTranslatorForesightIntelSnapshot; } catch (_) {
                             try { globalScope.LiveTranslatorForesightIntelSnapshot = null; } catch (__) {}
                         }
                         return null;
                     }
-                    const snapshot = intelSnapshot(diagnostics);
+                    const snapshot = intelSnapshot(intel);
                     try { globalScope.LiveTranslatorForesightIntelSnapshot = snapshot; } catch (_) {}
                     return snapshot;
                 }
 
-            function clearIntel(diagnostics) {
-                    if (!diagnostics || typeof diagnostics !== 'object') return null;
-                    if (diagnostics.dirty !== true && (!Array.isArray(diagnostics.recent) || diagnostics.recent.length === 0)) {
-                        return diagnostics;
+            function clearIntel(intel) {
+                    if (!intel || typeof intel !== 'object') return null;
+                    if (intel.dirty !== true && (!Array.isArray(intel.recent) || intel.recent.length === 0)) {
+                        return intel;
                     }
-                    diagnostics.recent = [];
-                    if (diagnostics.summary && typeof diagnostics.summary === 'object') {
-                        Object.keys(diagnostics.summary).forEach((key) => {
+                    intel.recent = [];
+                    if (intel.summary && typeof intel.summary === 'object') {
+                        Object.keys(intel.summary).forEach((key) => {
                             if (key === 'commandCatalogSchemaVersion'
                                 || key === 'budgetDefault'
                                 || key === 'branchBudgetStrategy') return;
-                            diagnostics.summary[key] = typeof diagnostics.summary[key] === 'number' ? 0 : diagnostics.summary[key];
+                            intel.summary[key] = typeof intel.summary[key] === 'number' ? 0 : intel.summary[key];
                         });
-                        diagnostics.summary.updatedAt = Date.now();
+                        intel.summary.updatedAt = Date.now();
                     }
-                    diagnostics.dirty = false;
-                    return diagnostics;
+                    intel.dirty = false;
+                    return intel;
                 }
 
             function getRecentScanRetentionLimit(policy) {
@@ -442,10 +442,10 @@
                     return RECENT_SCAN_LIMIT;
                 }
 
-            function shouldCaptureCommandActions(diagnostics) {
-                    return diagnostics
-                        && diagnostics.captureCommandActions !== false
-                        && Array.isArray(diagnostics.commandActions);
+            function shouldCaptureCommandActions(intel) {
+                    return intel
+                        && intel.captureCommandActions !== false
+                        && Array.isArray(intel.commandActions);
                 }
 
             function incrementCodeCount(target, code) {
@@ -478,7 +478,7 @@
                     return result;
                 }
 
-            Object.assign(parts, { getIntelPolicy, createBlockDiagnostics, recordCommandAction, appendCommandAction, createConsumedEventCommands, createConsumedEventCommandsForDiagnostics, createRouteCommandActions, createRouteCommandActionsForDiagnostics, createIntel, recordScan, sanitizeScan, intelSnapshot, publishIntelSnapshot, clearIntel, incrementCodeCount, getStopReasonLabel, pickCommandCounts, pickCommandLabels });
+            Object.assign(parts, { getIntelPolicy, createBlockIntel, recordCommandAction, appendCommandAction, createConsumedEventCommands, createConsumedEventCommandsForIntel, createRouteCommandActions, createRouteCommandActionsForIntel, createIntel, recordScan, sanitizeScan, intelSnapshot, publishIntelSnapshot, clearIntel, incrementCodeCount, getStopReasonLabel, pickCommandCounts, pickCommandLabels });
         },
     });
 })();

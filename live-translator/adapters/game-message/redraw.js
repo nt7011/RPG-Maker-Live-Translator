@@ -469,7 +469,7 @@
         function createPendingRenderDecision(command, route = {}, details = {}) {
             if (!command) return null;
             return {
-                commandId: command.id ? String(command.id) : '',
+                commandId: command.commandId ? String(command.commandId) : '',
                 strategy: route && route.strategy ? String(route.strategy) : MESSAGE_RENDER_STRATEGY,
                 commandGeneration: Number(route && route.commandGeneration) || 0,
                 reason: 'message-redraw-deferred',

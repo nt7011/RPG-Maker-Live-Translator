@@ -1,5 +1,5 @@
 // Text orchestrator support: base-utils.
-// Owns primitive parsing, ids, bounds, and serializable diagnostic copies; the facade composes these helpers into each orchestrator instance.
+// Owns primitive parsing, ids, bounds, and serializable intel copies; the facade composes these helpers into each orchestrator instance.
 (() => {
     'use strict';
 
@@ -138,8 +138,8 @@
                 if (!value || typeof value !== 'object') return {};
                 const output = {};
                 /*
-                 * Redraw diagnostics legitimately use a few dozen top-level keys and a
-                 * three-level object shape, for example details.diagnostics.sourceInk.
+                 * Redraw intel legitimately use a few dozen top-level keys and a
+                 * three-level object shape, for example details.intel.sourceInk.
                  * Keep those intact while still bounding payload size.
                  */
                 Object.keys(value).slice(0, SERIALIZABLE_ROOT_KEY_LIMIT).forEach((key) => {
@@ -168,7 +168,7 @@
             }
 
             /**
-             * Compact text for diagnostics without exposing large strings in logs.
+             * Compact text for intel without exposing large strings in logs.
              */
             function defaultPreview(text, max = 48) {
                 const value = String(text ?? '').replace(/\s+/g, ' ').trim();
@@ -176,18 +176,17 @@
             }
 
             /**
-             * Build an explicit lifecycle result for non-render item operations.
+             * Build an explicit result for non-render item operations.
              *
-             * These results deliberately separate "handled" from "changed": a valid
+             * Operation result status is separate from item lifecycle status. A valid
              * request can be handled without mutating anything, while missing ids or
-             * unavailable gateway methods should be observable without collapsing into
-             * a bare false/null.
+             * unavailable gateway methods should stay observable.
              */
-            function createLifecycleResult(status, options = {}) {
+            function createOperationResult(status, options = {}) {
                 const source = options && typeof options === 'object' ? options : {};
                 const handled = source.handled === true;
                 const changed = source.changed === true;
-                const terminal = source.terminal === true || isTerminalStatus(status);
+                const terminal = source.terminal === true || isTerminalOperationStatus(status);
                 return Object.freeze(Object.assign({}, source, {
                     status: firstString(status, source.status, handled ? 'handled' : 'ignored'),
                     handled,
@@ -199,7 +198,7 @@
                 }));
             }
 
-            function isTerminalStatus(status) {
+            function isTerminalOperationStatus(status) {
                 const value = String(status || '').toLowerCase();
                 return value === 'retired'
                     || value === 'skipped'
@@ -226,7 +225,7 @@
                 pickSerializableObject,
                 pickSerializableValue,
                 defaultPreview,
-                createLifecycleResult,
+                createOperationResult,
             };
         },
     });

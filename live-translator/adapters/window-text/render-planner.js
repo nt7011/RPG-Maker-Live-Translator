@@ -14,29 +14,39 @@
         const { lifecycle: lifecycleService } = context.services;
         const { entryLifecycleState } = context;
         const facades = context.facades || {};
+        const bitmapGeometry = facades.bitmapGeometry || {};
         const bitmapReplay = facades.bitmapReplay || {};
-        const diagnostics = facades.diagnostics || {};
+        const intel = facades.intel || {};
         const entryLifecycle = facades.entryLifecycle || {};
         const textMetrics = facades.textMetrics || {};
         const {
                     materializeCopiedRenderTargetsForEntry,
-                    createClearRectFromArea,
-                    getReplayItemRect,
-                    expandReplayDirtyRect,
                     collectWindowTextReplayItems,
                     combineReplayItems,
                     filterReplayForEntry,
-                    supportsBitmapReplayClip,
-                    isValidRect,
                     getRedrawContents,
                 } = bitmapReplay;
-        const { summarizeReplayStateForDiagnostics } = diagnostics;
+        const {
+                    createClearRectFromArea,
+                    getReplayItemRect,
+                    expandReplayDirtyRect,
+                    supportsBitmapReplayClip,
+                    isValidRect,
+                } = bitmapGeometry;
+        const { summarizeReplayStateForIntel } = intel;
         const {
                     resolveWindowData,
                     resolveTargetWindow,
+                    getCurrentEntry,
                     getTextEntryKey,
                     isWindowReadyForRedraw,
                 } = entryLifecycle;
+        const resolveCurrentEntry = typeof getCurrentEntry === 'function'
+            ? getCurrentEntry
+            : ((data, targetEntry) => {
+                const key = targetEntry && (targetEntry.key || (typeof getTextEntryKey === 'function' ? getTextEntryKey(data, targetEntry) : ''));
+                return key && data && data.texts ? data.texts.get(key) || null : null;
+            });
         const { getWindowTypeName } = textMetrics;
         const restorePlanner = restorePlannerModule.create({
             getReplayItemRect,
@@ -53,7 +63,7 @@
                 collectWindowTextReplayItems,
                 combineReplayItems,
                 filterReplayForEntry,
-                summarizeReplayState: summarizeReplayStateForDiagnostics,
+                summarizeReplayState: summarizeReplayStateForIntel,
             });
 
         function planTranslatedRedraw(entry, windowData = null) {
@@ -69,7 +79,9 @@
             }
 
             const textKey = entry.key || getTextEntryKey(activeWindowData, entry);
-            const currentEntry = textKey && activeWindowData.texts ? activeWindowData.texts.get(textKey) : null;
+            const currentEntry = textKey && activeWindowData.texts
+                ? resolveCurrentEntry(activeWindowData, entry)
+                : null;
             if (currentEntry !== entry) {
                 return reject('window-entry-replaced', {
                     key: textKey || '',
@@ -89,7 +101,7 @@
                     textKey,
                     targetWindow,
                     windowData: activeWindowData,
-                    copiedTargetReadiness: copiedTargetReadiness && copiedTargetReadiness.diagnostics || null,
+                    copiedTargetReadiness: copiedTargetReadiness && copiedTargetReadiness.intel || null,
                 });
             }
 
@@ -135,7 +147,7 @@
                 windowType: getWindowTypeName(targetWindow, activeWindowData),
             };
             if (copiedTargetReadiness) {
-                details.copiedTargetReadiness = copiedTargetReadiness.diagnostics || null;
+                details.copiedTargetReadiness = copiedTargetReadiness.intel || null;
             }
 
             return {
@@ -161,7 +173,7 @@
             });
             return {
                 renderPlan,
-                diagnostics: renderPlan && renderPlan.diagnostics || null,
+                intel: renderPlan && renderPlan.intel || null,
             };
         }
 
@@ -217,7 +229,7 @@
                 textKey = '',
                 targetWindow = null,
                 windowData = null,
-                ...diagnosticDetails
+                ...intelDetails
             } = details || {};
             return {
                 action: 'defer',
@@ -226,7 +238,7 @@
                 textKey,
                 targetWindow,
                 windowData,
-                details: diagnosticDetails,
+                details: intelDetails,
             };
         }
 

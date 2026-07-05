@@ -1,8 +1,8 @@
 // Shared GUI state bootstrap.
 //
-// Runtime diagnostics treat a closed translator window as diagnostics level
-// "none". This file loads before diagnostics producers so game startup begins
-// in that closed state instead of capturing boot-time diagnostic snapshots.
+// Runtime intel treat a closed translator window as intel level
+// "none". This file loads before intel producers so game startup begins
+// in that closed state instead of capturing boot-time intel snapshots.
 (() => {
     'use strict';
 

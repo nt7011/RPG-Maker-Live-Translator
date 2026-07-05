@@ -8,13 +8,14 @@
         factory() {
             function createController(scope = {}) {
                 const { pickSerializableObject, cloneEventDetails, logger, eventLimit, events, listeners, itemTrailStore } = scope;
-                const { schedulePublish } = scope.controllerFacades.diagnostics;
+                const { schedulePublish } = scope.controllerFacades.intel;
 
                 function recordEvent(type, item, optionsForEvent = {}) {
                     if (!item) return null;
                     const eventType = String(type || 'event');
                     const intelPolicy = getEventIntelPolicy();
-                    const includeDetails = intelPolicy.captureEvents === true;
+                    const captureEvents = intelPolicy.captureEvents === true;
+                    const captureHistories = intelPolicy.captureHistories === true;
                     const routeDetails = typeof cloneEventDetails === 'function'
                         ? cloneEventDetails(optionsForEvent.details || {})
                         : pickSerializableObject(optionsForEvent.details || {});
@@ -29,11 +30,13 @@
                         message: String(optionsForEvent.message || ''),
                         details: routeDetails,
                     };
-                    if (includeDetails) {
+                    if (captureEvents || captureHistories) {
                         if (!isDuplicateSkippedEvent(item, event)) {
-                            events.push(event);
-                            while (events.length > eventLimit) events.shift();
-                            appendItemEvent(item, event);
+                            if (captureEvents) {
+                                events.push(event);
+                                while (events.length > eventLimit) events.shift();
+                            }
+                            if (captureHistories) appendItemEvent(item, event);
                         }
                         scope.detailIntelActive = true;
                     }
@@ -55,7 +58,7 @@
                 /**
                  * Subscribe to orchestrator events.
                  *
-                 * Render adapters use this to receive item.render_queued commands. The
+                 * Render adapters use this to receive item.render_command_ready commands. The
                  * returned function removes the listener; listener exceptions are
                  * isolated by notify.
                  */
@@ -89,11 +92,12 @@
                         return {
                             surface,
                             captureEvents: surface && policy.captureEvents === true,
+                            captureHistories: surface && policy.captureHistories === true,
                         };
                     }
                     const surface = typeof scope.isIntelSurfaceEnabled === 'function'
                         && scope.isIntelSurfaceEnabled() === true;
-                    return { surface, captureEvents: false };
+                    return { surface, captureEvents: false, captureHistories: false };
                 }
 
                 return {

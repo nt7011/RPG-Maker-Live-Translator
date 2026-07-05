@@ -7,7 +7,7 @@
         name: 'runtime.textOrchestrator.request',
         factory() {
             function createController(scope = {}) {
-                const { firstString, firstNonEmptyString, clampPriority, normalizeId, mergeDetails, createLifecycleResult, providerSkipDecision, providerUnavailableDecision, serviceSkipDecision, normalizeTranslationHandle, decorateTranslationHandle, textEligibility, activeItems, detachedItems } = scope;
+                const { firstString, firstNonEmptyString, clampPriority, normalizeId, mergeDetails, createOperationResult, providerSkipDecision, providerUnavailableDecision, serviceSkipDecision, normalizeTranslationHandle, decorateTranslationHandle, textEligibility, activeItems, detachedItems } = scope;
                 const { resolveRequestPolicy, applyRequestPolicy } = scope.controllerFacades.policy;
                 const { updateItem, retireItem } = scope.controllerFacades.lifecycle;
                 const { markTranslationRequested, skipItemTranslation, completeItemTranslation, failItemTranslation } = scope.controllerFacades.translationState;
@@ -233,7 +233,7 @@
                     const priority = source.priority !== undefined && source.priority !== null
                         ? clampPriority(source.priority)
                         : (handle && typeof handle.getPriority === 'function' ? safeCallHandle(handle, 'getPriority') : null);
-                    return createLifecycleResult(status, {
+                    return createOperationResult(status, {
                         handled: source.handled !== false,
                         changed: source.changed !== false,
                         terminal: source.terminal === true || handleStatus === 'skipped' || handleStatus === 'failed',
@@ -380,8 +380,8 @@
                     if (options.inactive === true && options.foresight === true) {
                         retireItem(item.id, 'disappeared', {
                             eventType: 'item.prefetch_detached',
-                            lifecycleIntent: 'prefetch-detached',
                             message: reason,
+                            policy: { kind: 'prefetch-detached' },
                             details: {
                                 foresight: true,
                                 retryReason: reason,

@@ -8,10 +8,7 @@
 
     LiveTranslatorDefine({
         name: 'runtime.adapterContract.utils',
-        requires: {
-            textLifecycle: 'runtime.textLifecycle',
-        },
-        factory({ textLifecycle }) {
+        factory() {
             function isRecordObject(target) {
                 return !!(target && typeof target === 'object');
             }
@@ -51,18 +48,10 @@
                 try { return Object.freeze(value); } catch (_) { return value; }
             }
 
-            function normalizeRecordStatus(value, fallback = '') {
-                if (!fallback && (value === undefined || value === null || value === '')) return '';
-                return textLifecycle.normalizeStatus(value, fallback || 'detected');
-            }
-
             function normalizeRenderDecisionStatus(value) {
-                const status = String(value || '').toLowerCase();
-                // Legacy input aliases: adapters may still say "accepted", "rendered",
-                // or "drawn", but the adapter boundary outcome is committed. Remove
-                // after all callback payloads use "committed".
-                if (status === 'accepted' || status === 'committed' || status === 'rendered' || status === 'drawn') return 'committed';
-                if (status === 'deferred' || status === 'queued' || status === 'pending') return 'deferred';
+                const status = String(value || '').trim();
+                if (status === 'committed') return 'committed';
+                if (status === 'deferred') return 'deferred';
                 return 'rejected';
             }
 
@@ -154,7 +143,6 @@
                 numberOrZero,
                 copyPlainObject,
                 freezePlainObject,
-                normalizeRecordStatus,
                 normalizeRenderDecisionStatus,
                 normalizeAdapterRenderDecision,
                 isAdapterContractError,

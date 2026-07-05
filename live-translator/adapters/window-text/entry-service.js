@@ -7,18 +7,30 @@
         requires: {
             displayStateModule: 'runtime.displayState',
             surfaceRoleState: 'runtime.windowSurfaceRoleState',
+            sourceRunIdentity: 'runtime.bitmap.sourceRunIdentity',
         },
-        factory({ displayStateModule, surfaceRoleState }, { scope: globalScope }) {
+        factory({ displayStateModule, surfaceRoleState, sourceRunIdentity }, { scope: globalScope }) {
 
     function createEntryServiceController(context = {}) {
     const { stripControls, entriesByRecordId, ADAPTER_ID, ADAPTER_LABEL, RENDER_STRATEGY, WINDOW_PRIORITY_VISIBLE, entryLifecycleState } = context;
     const { lifecycle: lifecycleService, surface: surfaceService, draw: drawService, replay: replayService } = context.services;
-    const { diagnostics, requestLifecycle, renderCompletion, textConversion, textMetrics } = context.facades;
-    const { roundDiagnosticNumber } = diagnostics;
+    const { intel, requestLifecycle, renderCompletion, textConversion, textMetrics } = context.facades;
+    const { roundIntelNumber } = intel;
     const { markRequestFailed } = requestLifecycle;
     const { updateOrchestratorItem } = renderCompletion;
     const { restoreTranslatedWindowText } = textConversion;
     const { describeEntryEligibility, getSurfaceId, getIdentitySurfaceId, createSlotKey, getWindowTypeName } = textMetrics;
+    const {
+        collectSourceRunIds,
+        collectSourceSlotKeyAliases,
+        collectSourceSlotKeys,
+        sourceRunIdentitiesMatch,
+    } = sourceRunIdentity;
+    const sourceSlotAliasOptions = {
+        canonicalizeSlotKey: typeof textMetrics.canonicalizeSlotKey === 'function'
+            ? textMetrics.canonicalizeSlotKey
+            : null,
+    };
     const displayState = displayStateModule.createDisplayStateService(globalScope);
     const drawCaptureTrace = drawService.drawCaptureTrace;
 
@@ -269,6 +281,28 @@
                     && typeof entry.renderLifecycle.sourceDraw === 'object'
                     ? entry.renderLifecycle.sourceDraw
                     : {};
+                const sourceRunId = firstSourceRunString(
+                    origin.runId,
+                    boundary.runId,
+                    sourceDraw.runId
+                );
+                const sourceRunIds = collectSourceRunStrings(
+                    origin.sourceRunIds,
+                    boundary.sourceRunIds,
+                    sourceDraw.sourceRunIds,
+                    origin.runId,
+                    boundary.runId,
+                    sourceDraw.runId,
+                    origin.ledgerRunIds,
+                    boundary.ledgerRunIds,
+                    sourceDraw.ledgerRunIds
+                );
+                const sourceSlotKey = firstSourceRunString(
+                    origin.slotKey,
+                    boundary.slotKey,
+                    sourceDraw.slotKey,
+                    entry && entry.slotKey
+                );
                 return {
                     sourceBitmap: entry && (entry.sourceContentsBitmap || entry.contentsBitmap || entry.ownerWindow && entry.ownerWindow.contents) || null,
                     sourceSurfaceId: firstSourceRunString(
@@ -277,25 +311,18 @@
                         sourceDraw.surfaceId,
                         entry && entry.surfaceId
                     ),
-                    sourceRunId: firstSourceRunString(
-                        origin.runId,
-                        boundary.runId,
-                        sourceDraw.runId
-                    ),
-                    sourceRunIds: collectSourceRunStrings(
-                        origin.runId,
-                        boundary.runId,
-                        sourceDraw.runId,
-                        origin.ledgerRunIds,
-                        boundary.ledgerRunIds,
-                        sourceDraw.ledgerRunIds
-                    ),
-                    sourceSlotKey: firstSourceRunString(
-                        origin.slotKey,
-                        boundary.slotKey,
-                        sourceDraw.slotKey,
-                        entry && entry.slotKey
-                    ),
+                    sourceRunId,
+                    sourceRunIds,
+                    sourceSlotKey,
+                    sourceSlotKeys: collectSourceSlotKeyAliases([
+                        origin.sourceSlotKeys,
+                        boundary.sourceSlotKeys,
+                        sourceDraw.sourceSlotKeys,
+                        origin.slotKeys,
+                        boundary.slotKeys,
+                        sourceDraw.slotKeys,
+                        sourceSlotKey
+                    ], sourceSlotAliasOptions),
                 };
             }
 
@@ -309,6 +336,18 @@
                     : (projection.sourceTextRun && typeof projection.sourceTextRun === 'object'
                         ? projection.sourceTextRun
                         : {});
+                const sourceRunId = firstSourceRunString(
+                    request.sourceRunId,
+                    projection.sourceRunId,
+                    sourceTextRun.runId,
+                    sourceTextRun.sourceRunId
+                );
+                const sourceSlotKey = firstSourceRunString(
+                    request.sourceSlotKey,
+                    projection.sourceSlotKey,
+                    sourceTextRun.slotKey,
+                    sourceTextRun.sourceSlotKey
+                );
                 return {
                     sourceBitmap: request.sourceBitmap || projection.sourceBitmap || sourceTextRun.sourceBitmap || null,
                     sourceSurfaceId: firstSourceRunString(
@@ -317,18 +356,28 @@
                         sourceTextRun.surfaceId,
                         sourceTextRun.sourceSurfaceId
                     ),
-                    sourceRunId: firstSourceRunString(
+                    sourceRunId,
+                    sourceRunIds: collectSourceRunStrings(
+                        request.sourceRunIds,
+                        projection.sourceRunIds,
+                        sourceTextRun.sourceRunIds,
+                        sourceTextRun.runIds,
                         request.sourceRunId,
                         projection.sourceRunId,
                         sourceTextRun.runId,
                         sourceTextRun.sourceRunId
                     ),
-                    sourceSlotKey: firstSourceRunString(
+                    sourceSlotKey,
+                    sourceSlotKeys: collectSourceSlotKeyAliases([
+                        request.sourceSlotKeys,
+                        projection.sourceSlotKeys,
+                        sourceTextRun.sourceSlotKeys,
+                        sourceTextRun.slotKeys,
                         request.sourceSlotKey,
                         projection.sourceSlotKey,
                         sourceTextRun.slotKey,
                         sourceTextRun.sourceSlotKey
-                    ),
+                    ], sourceSlotAliasOptions),
                 };
             }
 
@@ -336,27 +385,21 @@
                 const sourceSurfaceId = normalizeSourceRunString(identity && identity.sourceSurfaceId);
                 if (!sourceSurfaceId) return [];
                 const keys = [];
-                const sourceRunIds = collectSourceRunStrings(
-                    identity && identity.sourceRunIds,
-                    identity && identity.sourceRunId
-                );
-                const sourceSlotKey = normalizeSourceRunString(identity && identity.sourceSlotKey);
+                const sourceRunIds = collectSourceRunIds(identity);
+                const sourceSlotKeys = collectSourceSlotKeys(identity);
                 sourceRunIds.forEach((sourceRunId) => {
                     keys.push(`run:${sourceSurfaceId}:${sourceRunId}`);
                 });
-                if (sourceSlotKey) keys.push(`slot:${sourceSurfaceId}:${sourceSlotKey}`);
+                sourceSlotKeys.forEach((sourceSlotKey) => {
+                    keys.push(`slot:${sourceSurfaceId}:${sourceSlotKey}`);
+                });
                 return keys;
             }
 
     function matchesEntrySourceRunLookup(entry, lookup) {
                 const identity = createEntrySourceRunIdentity(entry);
                 if (lookup.sourceSurfaceId && identity.sourceSurfaceId !== lookup.sourceSurfaceId) return false;
-                const lookupRunId = normalizeSourceRunString(lookup && lookup.sourceRunId);
-                const sourceRunIds = collectSourceRunStrings(identity.sourceRunIds, identity.sourceRunId);
-                if (lookupRunId && sourceRunIds.length) {
-                    return sourceRunIds.indexOf(lookupRunId) >= 0;
-                }
-                return !!(lookup.sourceSlotKey && identity.sourceSlotKey && identity.sourceSlotKey === lookup.sourceSlotKey);
+                return sourceRunIdentitiesMatch(identity, lookup);
             }
 
     function entryUsesSourceBitmap(entry, sourceBitmap) {
@@ -379,8 +422,7 @@
 
     function hasStrongSourceRunLookup(lookup) {
                 return !!(normalizeSourceRunString(lookup && lookup.sourceSurfaceId)
-                    && (normalizeSourceRunString(lookup && lookup.sourceRunId)
-                        || normalizeSourceRunString(lookup && lookup.sourceSlotKey)));
+                    && (collectSourceRunIds(lookup).length || collectSourceSlotKeys(lookup).length));
             }
 
     function getSourceRunEntryIndex(create) {
@@ -522,8 +564,8 @@
                     rawText: String(rawText ?? ''),
                     visibleText,
                     normalizedText: String(visibleText || '').trim(),
-                    x: roundDiagnosticNumber(x),
-                    y: roundDiagnosticNumber(y),
+                    x: roundIntelNumber(x),
+                    y: roundIntelNumber(y),
                     screenState: describeWindowScreenState(windowInstance, windowData),
                     contentsRevision: windowData && windowData.contentsRevision ? windowData.contentsRevision : 0,
                     pipeline: contents ? {

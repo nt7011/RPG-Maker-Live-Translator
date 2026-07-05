@@ -5,6 +5,7 @@
     "showForesightSpoilers": false,
     "logging": {
         "enabled": false,
+        "redactText": false,
         "suppressExact": []
     },
     "debug": {
@@ -34,7 +35,7 @@
         }
     },
     "translation": {
-        "disableCjkFilter": false,
+        "disableCjkFilter": true,
         "maxOutputTokens": 512
     },
     "ignoreTranslationRegex": [],

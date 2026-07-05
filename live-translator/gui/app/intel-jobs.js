@@ -1,4 +1,4 @@
-// Translator monitor diagnostic jobs helpers.
+// Translator monitor intel jobs helpers.
 // These functions share state from gui/app/state.js and are loaded before app/index.js boots.
 'use strict';
 
@@ -16,35 +16,35 @@ function formatStreamState(job) {
     return parts.join(' / ');
 }
 
-function getAllDiagnosticJobs() {
-    const diagnostics = state.diagnostics;
-    const jobs = diagnostics && diagnostics.jobs ? diagnostics.jobs : {};
+function getAllIntelJobs() {
+    const intel = state.intel;
+    const jobs = intel && intel.jobs ? intel.jobs : {};
     return []
         .concat((jobs.running || []).map((job) => Object.assign({}, job, { displayMode: 'running' })))
         .concat((jobs.queued || []).map((job) => Object.assign({}, job, { displayMode: 'queued' })))
         .concat((jobs.past || []).map((job) => Object.assign({}, job, { displayMode: 'past' })));
 }
 
-function getMatchedDiagnosticJobs(item) {
+function getMatchedIntelJobs(item) {
     if (!item) return [];
-    return getAllDiagnosticJobs()
-        .filter((job) => isDiagnosticJobForTextRecord(job, item))
-        .sort((a, b) => compareMatchedDiagnosticJobs(a, b, item));
+    return getAllIntelJobs()
+        .filter((job) => isIntelJobForTextRecord(job, item))
+        .sort((a, b) => compareMatchedIntelJobs(a, b, item));
 }
 
-function getTextRecordPrimaryDiagnosticJob(item) {
-    const jobs = getMatchedDiagnosticJobs(item);
+function getTextRecordPrimaryIntelJob(item) {
+    const jobs = getMatchedIntelJobs(item);
     return jobs.length ? jobs[0] : null;
 }
 
-function isDiagnosticJobForTextRecord(job, item) {
+function isIntelJobForTextRecord(job, item) {
     if (!job || !item) return false;
     const recordId = item.id ? String(item.id) : '';
-    if (recordId && getDiagnosticJobRecordIds(job).includes(recordId)) return true;
-    return doesDiagnosticJobTextMatchRecord(job, item);
+    if (recordId && getIntelJobRecordIds(job).includes(recordId)) return true;
+    return doesIntelJobTextMatchRecord(job, item);
 }
 
-function getDiagnosticJobRecordIds(job) {
+function getIntelJobRecordIds(job) {
     const ids = new Set();
     (job && Array.isArray(job.subscriberRecords) ? job.subscriberRecords : []).forEach((subscriber) => {
         if (subscriber && subscriber.recordId) ids.add(String(subscriber.recordId));
@@ -58,7 +58,7 @@ function getDiagnosticJobRecordIds(job) {
     return Array.from(ids);
 }
 
-function doesDiagnosticJobTextMatchRecord(job, item) {
+function doesIntelJobTextMatchRecord(job, item) {
     const preview = normalizeComparableText(job && job.textPreview);
     if (!preview || preview.length < 8) return false;
     const jobHook = normalizeHookClass(job && job.hook);
@@ -91,14 +91,14 @@ function normalizeComparableText(value) {
     return String(value || '').replace(/\s+/gu, ' ').trim();
 }
 
-function compareMatchedDiagnosticJobs(a, b, item) {
-    const rankDiff = getDiagnosticJobDisplayRank(a, item) - getDiagnosticJobDisplayRank(b, item);
+function compareMatchedIntelJobs(a, b, item) {
+    const rankDiff = getIntelJobDisplayRank(a, item) - getIntelJobDisplayRank(b, item);
     if (rankDiff) return rankDiff;
-    return getDiagnosticJobActivityAt(b) - getDiagnosticJobActivityAt(a);
+    return getIntelJobActivityAt(b) - getIntelJobActivityAt(a);
 }
 
-function getDiagnosticJobDisplayRank(job, item) {
-    const status = normalizeDiagnosticStatusClass(job && (job.status || job.displayMode));
+function getIntelJobDisplayRank(job, item) {
+    const status = normalizeIntelStatusClass(job && (job.status || job.displayMode));
     const itemStatus = normalizeStatusClass(item && item.status);
     if (status === 'running') return 0;
     if (status === 'queued') return 1;
@@ -109,19 +109,19 @@ function getDiagnosticJobDisplayRank(job, item) {
     return 5;
 }
 
-function getDiagnosticJobActivityAt(job) {
+function getIntelJobActivityAt(job) {
     return Number(job && (job.terminalAt || job.lastDeltaAt || job.startedAt || job.queuedAt || job.createdAt || 0)) || 0;
 }
 
 function getTextRecordTranslationRailInfo(item) {
-    const job = getTextRecordPrimaryDiagnosticJob(item);
+    const job = getTextRecordPrimaryIntelJob(item);
     const fallback = getTextRecordRequestDetails(item);
     const priority = job
         ? normalizeOptionalPriority(job.effectivePriority)
         : fallback.priority;
     const stream = job ? job.stream === true : fallback.stream === true;
     const railState = getTextRecordTranslationRailState(item, job);
-    const policy = getTextRecordRuntimePolicyDiagnostics(item);
+    const policy = getTextRecordRuntimePolicyIntel(item);
     return {
         state: railState,
         label: getTranslationRailLabel(railState, priority, stream),
@@ -183,7 +183,7 @@ function getTextRecordHistoryOutcome(item) {
 }
 
 function isCompletedTextEvent(type) {
-    // item.render_queued is intentionally not a completed outcome: it only
+    // item.render_command_ready is intentionally not a completed outcome: it only
     // means the orchestrator emitted a command. The adapter may still
     // reject, defer, or later apply that command.
     return type === 'translation.completed'
@@ -272,15 +272,15 @@ function getTranslationRailTitle(railState, priority, stream, job, policy = null
 }
 
 function formatPolicyRailTitle(policy) {
-    const source = getTextRecordRuntimePolicyDiagnostics({ policy });
+    const source = getTextRecordRuntimePolicyIntel({ policy });
     const priority = source.priority || {};
     const lifecycle = source.lifecycle || {};
     const parts = [];
     if (priority.action || priority.reason) {
         parts.push(`priority policy ${[priority.action, priority.reason].filter(Boolean).join(': ')}`);
     }
-    if (lifecycle.intent || lifecycle.priorityAction) {
-        parts.push(`lifecycle policy ${[lifecycle.intent, lifecycle.priorityAction].filter(Boolean).join(': ')}`);
+    if (lifecycle.kind || lifecycle.priorityAction) {
+        parts.push(`lifecycle policy ${[lifecycle.kind, lifecycle.priorityAction].filter(Boolean).join(': ')}`);
     }
     return parts.join(' / ');
 }
@@ -294,44 +294,44 @@ function formatTranslationRailState(railState) {
     return 'not requested';
 }
 
-function createDiagnosticJobPill(job, mode, detailKey, policySnapshot = refreshGuiPolicySnapshot()) {
+function createIntelJobPill(job, mode, detailKey, policySnapshot = refreshGuiPolicySnapshot()) {
     const button = document.createElement('button');
-    const jobPolicy = getGuiDiagnosticJobPolicy(policySnapshot);
+    const jobPolicy = getGuiIntelJobPolicy(policySnapshot);
     const detailEnabled = jobPolicy.detailsEnabled;
     button.type = 'button';
-    button.className = `diagnostic-job-pill diagnostic-job-${normalizeDiagnosticStatusClass(job.status || mode)}`;
-    if (detailEnabled && jobPolicy.selectedDetailKey === detailKey) button.className += ' diagnostic-job-active';
+    button.className = `intel-job-pill intel-job-${normalizeIntelStatusClass(job.status || mode)}`;
+    if (detailEnabled && jobPolicy.selectedDetailKey === detailKey) button.className += ' intel-job-active';
     button.setAttribute('aria-expanded', detailEnabled && jobPolicy.selectedDetailKey === detailKey ? 'true' : 'false');
     if (detailEnabled) {
-        button.addEventListener('click', () => toggleDiagnosticJobDetail(detailKey));
+        button.addEventListener('click', () => toggleIntelJobDetail(detailKey));
     } else {
         button.setAttribute('aria-disabled', 'true');
         button.title = 'Detail view disabled in settings.json';
     }
 
-    button.appendChild(createTextElement('span', 'diagnostic-job-text', job.textPreview || '-'));
+    button.appendChild(createTextElement('span', 'intel-job-text', job.textPreview || '-'));
 
-    button.appendChild(createDiagnosticPillMeta(`P${formatNumber(job.effectivePriority || 0)}`));
-    button.appendChild(createDiagnosticPillMeta(job.status || mode));
-    if (job.queuePosition) button.appendChild(createDiagnosticPillMeta(`#${job.queuePosition}`));
-    if (job.stream) button.appendChild(createDiagnosticPillMeta('stream'));
+    button.appendChild(createIntelPillMeta(`P${formatNumber(job.effectivePriority || 0)}`));
+    button.appendChild(createIntelPillMeta(job.status || mode));
+    if (job.queuePosition) button.appendChild(createIntelPillMeta(`#${job.queuePosition}`));
+    if (job.stream) button.appendChild(createIntelPillMeta('stream'));
     return button;
 }
 
-function createDiagnosticPillMeta(value) {
-    return createTextElement('span', 'diagnostic-job-meta', String(value || '-'));
+function createIntelPillMeta(value) {
+    return createTextElement('span', 'intel-job-meta', String(value || '-'));
 }
 
-function createDiagnosticJobExpanded(job, mode, detailKey) {
+function createIntelJobExpanded(job, mode, detailKey) {
     const expanded = document.createElement('div');
-    expanded.className = `diagnostic-job-expanded diagnostic-job-${normalizeDiagnosticStatusClass(job.status || mode)}`;
+    expanded.className = `intel-job-expanded intel-job-${normalizeIntelStatusClass(job.status || mode)}`;
     expanded.dataset.detailKey = detailKey;
 
     const header = document.createElement('div');
-    header.className = 'diagnostic-job-expanded-header';
+    header.className = 'intel-job-expanded-header';
     header.appendChild(createTextElement(
         'span',
-        'diagnostic-job-expanded-title',
+        'intel-job-expanded-title',
         `${job.id || '-'} | ${job.hook || '-'} | ${job.status || mode}`
     ));
     expanded.appendChild(header);
@@ -351,11 +351,11 @@ function createDiagnosticJobExpanded(job, mode, detailKey) {
     if (job.lastError) appendMeta(grid, 'Last Error', job.lastError);
     if (job.terminalReason) appendMeta(grid, 'Reason', job.terminalReason);
     expanded.appendChild(grid);
-    expanded.appendChild(createDiagnosticHistory(job.history || []));
+    expanded.appendChild(createIntelHistory(job.history || []));
     return expanded;
 }
 
-function createDiagnosticHistory(history) {
+function createIntelHistory(history) {
     const wrap = createHistoryContainer('History');
 
     const list = Array.isArray(history) ? history : [];
@@ -365,7 +365,7 @@ function createDiagnosticHistory(history) {
     }
 
     list.forEach((event) => {
-        const detailsText = formatDiagnosticEventDetails(event);
+        const detailsText = formatIntelEventDetails(event);
         wrap.appendChild(createHistoryRow({
             timeText: event.at ? formatTime(event.at) : '-',
             labelText: event.type || 'event',
@@ -375,18 +375,18 @@ function createDiagnosticHistory(history) {
     return wrap;
 }
 
-function toggleDiagnosticJobDetail(detailKey) {
+function toggleIntelJobDetail(detailKey) {
     const policySnapshot = refreshGuiPolicySnapshot();
-    if (!detailKey || !getGuiDiagnosticJobPolicy(policySnapshot).detailsEnabled) return;
-    state.diagnosticDetailKey = state.diagnosticDetailKey === detailKey ? '' : detailKey;
-    renderDiagnosticsPanel(refreshGuiPolicySnapshot());
+    if (!detailKey || !getGuiIntelJobPolicy(policySnapshot).detailsEnabled) return;
+    state.intelDetailKey = state.intelDetailKey === detailKey ? '' : detailKey;
+    renderIntelPanel(refreshGuiPolicySnapshot());
 }
 
-function getDiagnosticJobDetailKey(mode, job) {
-    return ['diagnostic', 'job', job && job.id ? job.id : (mode || 'job')].join('|');
+function getIntelJobDetailKey(mode, job) {
+    return ['intel', 'job', job && job.id ? job.id : (mode || 'job')].join('|');
 }
 
-function formatDiagnosticEventDetails(event) {
+function formatIntelEventDetails(event) {
     const details = event && event.details && typeof event.details === 'object' ? event.details : {};
     const keys = [
         'jobId',

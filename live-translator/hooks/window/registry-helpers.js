@@ -7,7 +7,6 @@
     let displayStateModule = null;
     let lifecycleReasons = null;
     let entryLifecycle = null;
-    let surfaceRoleState = null;
 
     function createWindowRegistryHelpers(context = {}) {
         const {
@@ -179,6 +178,8 @@
 
         function bindAssignedRefreshContents(window, windowData, contents, reason) {
             if (!window || !windowData || !contents) return false;
+            const previousRevision = Number(windowData.contentsRevision) || 0;
+            const replaced = windowData.contentsBitmap !== contents;
             if (windowData.contentsBitmap !== contents) {
                 releaseWindowContentsSurface(windowData, lifecycleReasons.CONTENTS_REPLACED);
                 try { windowData.contentsRevision = (windowData.contentsRevision || 0) + 1; } catch (_) {}
@@ -186,7 +187,23 @@
             windowData.contentsBitmap = contents;
             rememberWindowContentsSurface(window, windowData, contents, reason || 'refresh-contents-assigned');
             claimWindowContentsSurface(window, windowData);
+            if (replaced) {
+                recordRefreshTargetReplacement(window, windowData, {
+                    reason: lifecycleReasons.CONTENTS_REPLACED,
+                    previousContentsRevision: previousRevision,
+                    nextContentsRevision: Number(windowData.contentsRevision) || previousRevision,
+                });
+            }
             return true;
+        }
+
+        function recordRefreshTargetReplacement(window, windowData, details = {}) {
+            if (!windowLifecycle || typeof windowLifecycle.recordRefreshTargetReplacement !== 'function') return 0;
+            try {
+                return windowLifecycle.recordRefreshTargetReplacement(window, windowData, details || {});
+            } catch (_) {
+                return 0;
+            }
         }
 
         function rememberWindowContentsSurface(window, windowData, contents, reason = 'window-contents') {
@@ -215,20 +232,18 @@
         }
 
         function markWindowEntriesStale(windowData, reason, options = {}) {
-            if (!windowData) return;
+            if (!windowData) return null;
             const windowType = windowData.windowType || '';
-            const replacement = reason === lifecycleReasons.CONTENTS_REPLACED
-                ? describeRefreshContentsReplacement(windowData, options)
+            const contentsReplacement = reason === lifecycleReasons.CONTENTS_REPLACED
+                ? createContentsReplacementResult(windowData, reason, windowType, options)
                 : null;
-            const staleKeys = [];
+            const textHelpers = contentsReplacement ? resolveWindowTextHelpers() : null;
             try {
                 if (windowData.texts && typeof windowData.texts.forEach === 'function') {
                     windowData.texts.forEach((entry, key) => {
                         if (!entry) return;
-                        if (shouldKeepEntryForRefreshContentsReplacement(windowData, entry, replacement)) {
-                            migrateEntryToReplacementContents(windowData, entry, replacement);
-                            return;
-                        }
+                        const preserved = prepareContentsReplacementRevalidation(windowData, entry, key, contentsReplacement, textHelpers);
+                        if (preserved) return;
                         const details = {
                             key: String(key || ''),
                             windowType,
@@ -241,7 +256,7 @@
                         rejectWindowPendingRender(entry, reason, details);
                         if (isEntryActive(entry)) {
                             retireWindowEntry(entry, reason || lifecycleReasons.WINDOW_STALE, details, {
-                                cancelTranslation: false,
+                                policy: { kind: 'retired' },
                             });
                         }
                         forgetWindowEntryRecord(entry, reason || lifecycleReasons.WINDOW_STALE, details);
@@ -249,148 +264,204 @@
                             reason: reason || lifecycleReasons.WINDOW_STALE,
                             screenState: 'hidden',
                         });
-                        staleKeys.push(key);
+                        if (contentsReplacement) contentsReplacement.retired.push({ key: String(key || ''), entry });
                     });
-                    if (replacement && replacement.kept > 0) {
-                        staleKeys.forEach((key) => {
-                            try { windowData.texts.delete(key); } catch (_) {}
-                        });
-                    } else {
-                        windowData.texts.clear();
-                    }
+                    pruneContentsReplacementMap(windowData.texts, contentsReplacement);
                 }
             } catch (_) {}
             try {
-                if (windowData.renderReadinessSchedule && typeof windowData.renderReadinessSchedule.clear === 'function') {
-                    if (replacement && replacement.kept > 0) {
-                        staleKeys.forEach((key) => {
-                            try { windowData.renderReadinessSchedule.delete(key); } catch (_) {}
-                        });
-                    } else {
-                        windowData.renderReadinessSchedule.clear();
-                    }
-                }
+                pruneContentsReplacementMap(windowData.renderReadinessSchedule, contentsReplacement);
             } catch (_) {}
             try {
-                if (windowData.recentlyRedrawn && typeof windowData.recentlyRedrawn.clear === 'function') {
-                    if (replacement && replacement.kept > 0) {
-                        staleKeys.forEach((key) => {
-                            try { windowData.recentlyRedrawn.delete(key); } catch (_) {}
-                        });
-                    } else {
-                        windowData.recentlyRedrawn.clear();
-                    }
-                }
+                pruneContentsReplacementMap(windowData.recentlyRedrawn, contentsReplacement);
             } catch (_) {}
             try {
-                windowData.contentsRevision = replacement && Number.isFinite(Number(replacement.nextRevision))
-                    ? replacement.nextRevision
-                    : ((windowData.contentsRevision || 0) + 1);
+                windowData.contentsRevision = (windowData.contentsRevision || 0) + 1;
             } catch (_) {}
+            if (contentsReplacement) {
+                contentsReplacement.nextContentsRevision = Number(windowData.contentsRevision) || contentsReplacement.previousContentsRevision;
+            }
+            return contentsReplacement;
         }
 
-        function describeRefreshContentsReplacement(windowData, options = {}) {
-            const currentRevision = Number.isFinite(Number(windowData && windowData.contentsRevision))
-                ? Number(windowData.contentsRevision)
-                : 0;
-            // A queued after-refresh render is proof that source text was
-            // redrawn in the just-finished refresh but could not be translated
-            // until the refresh transaction closed. Preserve only that refresh
-            // generation; unrelated entries remain stale on contents replacement.
-            const token = findUndrainedRefreshToken(windowData, currentRevision);
-            if (!token) return null;
+        function createContentsReplacementResult(windowData, reason, windowType, options = {}) {
             return {
-                token,
-                currentRevision,
-                nextRevision: currentRevision + 1,
-                nextContents: options && options.nextContents ? options.nextContents : null,
-                ownerWindow: options && options.window ? options.window : null,
-                kept: 0,
+                reason,
+                windowType,
+                ownerWindow: options.window || null,
+                nextContents: options.nextContents || null,
+                previousContents: windowData && windowData.contentsBitmap || null,
+                previousContentsRevision: Number(windowData && windowData.contentsRevision) || 0,
+                nextContentsRevision: Number(windowData && windowData.contentsRevision) || 0,
+                preserved: [],
+                retired: [],
             };
         }
 
-        function findUndrainedRefreshToken(windowData, currentRevision) {
-            if (!windowData || !windowData.renderReadinessSchedule || typeof windowData.renderReadinessSchedule.forEach !== 'function') return 0;
-            let token = 0;
+        function prepareContentsReplacementRevalidation(windowData, entry, key, replacement, helpers) {
+            if (!replacement || !windowData || !entry || !helpers) return null;
+            if (typeof helpers.redrawTranslatedText !== 'function') return null;
+            if (!isEntryActive(entry) || !isEntryCompleted(entry)) return null;
+            if (!firstRenderableStoredText(entry)) return null;
+            const queued = getAfterRefreshRenderCommand(windowData, key, entry);
+            if (!queued) return null;
+            const commandId = String(queued.commandId || entry.renderTransaction && entry.renderTransaction.commandId || '');
+            if (!commandId) return null;
+            const record = {
+                key: String(key || ''),
+                entry,
+                helpers,
+                commandId,
+                queued,
+            };
+            replacement.preserved.push(record);
+            noteContentsReplacement(entry, {
+                action: 'needs-revalidation',
+                reason: replacement.reason,
+                key: record.key,
+                commandId,
+                previousContentsRevision: replacement.previousContentsRevision,
+            });
+            return record;
+        }
+
+        function firstRenderableStoredText(entry) {
+            if (!entry) return '';
+            const candidates = [
+                entry.renderedText,
+                entry.providerText,
+                entry.translation,
+                entry.translationReceived,
+            ];
+            for (const value of candidates) {
+                if (typeof value === 'string' && value.trim()) return value;
+            }
+            return '';
+        }
+
+        function getAfterRefreshRenderCommand(windowData, key, entry) {
+            if (!windowData || !windowData.renderReadinessSchedule || !key) return null;
+            let queued = null;
+            try { queued = windowData.renderReadinessSchedule.get(key) || null; } catch (_) {}
+            if (!queued || queued.entry !== entry) return null;
+            if (queued.type !== 'render-command') return null;
+            if (queued.queue !== 'after-refresh') return null;
+            if (queued.reason !== 'active-refresh-transaction') return null;
+            return queued;
+        }
+
+        function pruneContentsReplacementMap(recordMap, replacement) {
+            if (!recordMap || typeof recordMap.clear !== 'function') return;
+            if (!replacement || !Array.isArray(replacement.preserved) || replacement.preserved.length === 0) {
+                recordMap.clear();
+                return;
+            }
+            const preservedKeys = new Set(replacement.preserved.map((record) => record.key));
+            const staleKeys = [];
             try {
-                windowData.renderReadinessSchedule.forEach((queued) => {
-                    if (token) return;
-                    const entry = queued && queued.entry ? queued.entry : queued;
-                    if (!entry || !isEntryActive(entry)) return;
-                    const queueName = String(queued && queued.queue || '');
-                    const queueReason = String(queued && queued.reason || '');
-                    if (queueName !== 'after-refresh' && queueReason !== 'active-refresh-transaction') return;
-                    if (!sameQueuedRefreshRevision(queued, currentRevision)) return;
-                    const refreshToken = getRefreshObservationToken(entry);
-                    if (!sameQueuedRefreshToken(queued, refreshToken)) return;
-                    if (!sameContentsRevision(entry, currentRevision)) return;
-                    token = refreshToken;
+                recordMap.forEach((_value, key) => {
+                    const normalizedKey = String(key || '');
+                    if (!preservedKeys.has(normalizedKey)) staleKeys.push(key);
                 });
             } catch (_) {}
-            return token;
-        }
-
-        function shouldKeepEntryForRefreshContentsReplacement(windowData, entry, replacement) {
-            if (!replacement || !entry || !isEntryActive(entry)) return false;
-            if (!sameContentsRevision(entry, replacement.currentRevision)) return false;
-            if (getRefreshObservationToken(entry) !== replacement.token) return false;
-            return !!(windowData && windowData.texts);
-        }
-
-        function migrateEntryToReplacementContents(windowData, entry, replacement) {
-            if (!entry || !replacement) return;
-            const contents = replacement.nextContents || entry.contentsBitmap || null;
-            if (contents) {
-                entry.contentsBitmap = contents;
-            }
-            surfaceRoleState.applyWindowEntrySurfaceRole(entry, {
-                sourceContentsBitmap: contents,
-                sourceContentsRole: surfaceRoleState.SOURCE_ROLES.CURRENT,
-                renderSurfaceRole: surfaceRoleState.RENDER_ROLES.CURRENT,
-                requiresCopiedTarget: false,
+            staleKeys.forEach((key) => {
+                try { recordMap.delete(key); } catch (_) {}
             });
-            entry.contentsRevision = replacement.nextRevision;
-            if (replacement.ownerWindow) entry.ownerWindow = replacement.ownerWindow;
-            entry.windowData = windowData || entry.windowData;
-            entry._trRefreshContentsReplacement = {
-                token: replacement.token,
-                fromRevision: replacement.currentRevision,
-                toRevision: replacement.nextRevision,
-                at: Date.now(),
+        }
+
+        function revalidateContentsReplacementEntries(replacement, windowData, window) {
+            const preserved = replacement && Array.isArray(replacement.preserved)
+                ? replacement.preserved
+                : [];
+            if (!preserved.length || !windowData || !window) return;
+            preserved.forEach((record) => {
+                const entry = record && record.entry;
+                const helpers = record && record.helpers;
+                if (!entry || !helpers || typeof helpers.redrawTranslatedText !== 'function') return;
+                bindContentsReplacementEntry(entry, windowData, window);
+                let redrawResult = null;
+                try {
+                    redrawResult = helpers.redrawTranslatedText(entry, windowData);
+                } catch (_) {
+                    redrawResult = null;
+                }
+                noteContentsReplacement(entry, {
+                    action: 'revalidated',
+                    reason: replacement.reason,
+                    key: record.key,
+                    commandId: record.commandId || '',
+                    previousContentsRevision: replacement.previousContentsRevision,
+                    nextContentsRevision: replacement.nextContentsRevision,
+                    redrawResult: summarizeContentsReplacementRedraw(redrawResult),
+                });
+                if (!isAcceptedContentsReplacementRedraw(redrawResult)) {
+                    retireRejectedContentsReplacementEntry(windowData, record.key, entry, redrawResult);
+                }
+            });
+        }
+
+        function bindContentsReplacementEntry(entry, windowData, window) {
+            if (!entry || !windowData || !window) return;
+            entry.ownerWindow = window;
+            entry.windowData = windowData;
+        }
+
+        function isAcceptedContentsReplacementRedraw(redrawResult) {
+            if (!redrawResult || typeof redrawResult !== 'object') return false;
+            const status = String(redrawResult.status || '');
+            return status === 'committed' || status === 'deferred';
+        }
+
+        function summarizeContentsReplacementRedraw(redrawResult) {
+            if (!redrawResult || typeof redrawResult !== 'object') return { status: '', reason: '' };
+            return {
+                status: String(redrawResult.status || ''),
+                reason: String(redrawResult.reason || ''),
+                terminal: redrawResult.terminal === true,
             };
-            replacement.kept += 1;
         }
 
-        function getRefreshObservationToken(entry) {
-            const observation = entry
-                && entry.renderLifecycle
-                && entry.renderLifecycle.refreshObservation;
-            const token = Number(observation && observation.token);
-            return Number.isFinite(token) && token > 0 ? Math.floor(token) : 0;
+        function retireRejectedContentsReplacementEntry(windowData, key, entry, redrawResult) {
+            const details = {
+                key: String(key || entry && entry.key || ''),
+                windowType: windowData && windowData.windowType ? windowData.windowType : '',
+                wasCompleted: isEntryCompleted(entry),
+                contentsReplacementRedraw: summarizeContentsReplacementRedraw(redrawResult),
+            };
+            try {
+                entryLifecycle.markStale(entry, lifecycleReasons.CONTENTS_REPLACED, {
+                    surfaceVisible: false,
+                    screenState: 'hidden',
+                });
+            } catch (_) {}
+            rejectWindowPendingRender(entry, lifecycleReasons.CONTENTS_REPLACED, details);
+            if (isEntryActive(entry)) {
+                retireWindowEntry(entry, lifecycleReasons.CONTENTS_REPLACED, details, {
+                    policy: { kind: 'retired' },
+                });
+            }
+            forgetWindowEntryRecord(entry, lifecycleReasons.CONTENTS_REPLACED, details);
+            try { if (windowData && windowData.texts) windowData.texts.delete(key); } catch (_) {}
+            try { if (windowData && windowData.renderReadinessSchedule) windowData.renderReadinessSchedule.delete(key); } catch (_) {}
+            try { if (windowData && windowData.recentlyRedrawn) windowData.recentlyRedrawn.delete(key); } catch (_) {}
+            try {
+                entryLifecycle.setSurfaceVisible(entry, false, {
+                    reason: lifecycleReasons.CONTENTS_REPLACED,
+                    screenState: 'hidden',
+                });
+            } catch (_) {}
         }
 
-        function sameContentsRevision(entry, revision) {
-            const entryRevision = Number(entry && entry.contentsRevision);
-            const expected = Number(revision);
-            return Number.isFinite(entryRevision)
-                && Number.isFinite(expected)
-                && Math.floor(entryRevision) === Math.floor(expected);
-        }
-
-        function sameQueuedRefreshRevision(queued, revision) {
-            const queuedRevision = Number(queued && queued.contentsRevision);
-            const expected = Number(revision);
-            return Number.isFinite(queuedRevision)
-                && Number.isFinite(expected)
-                && Math.floor(queuedRevision) === Math.floor(expected);
-        }
-
-        function sameQueuedRefreshToken(queued, token) {
-            const queuedToken = Number(queued && queued.refreshToken);
-            const expected = Number(token);
-            if (!Number.isFinite(queuedToken) || !Number.isFinite(expected)) return false;
-            if (Math.floor(queuedToken) !== Math.floor(expected)) return false;
-            return queued && queued.refreshObserved === true;
+        function noteContentsReplacement(entry, details = {}) {
+            if (!entry) return;
+            try {
+                if (!entry.renderLifecycle || typeof entry.renderLifecycle !== 'object') {
+                    entry.renderLifecycle = {};
+                }
+                entry.renderLifecycle.contentsReplacement = Object.assign({}, details, {
+                    notedAt: Date.now(),
+                });
+            } catch (_) {}
         }
 
         function clearPendingDetachState(window, windowData = null) {
@@ -517,8 +588,9 @@
         function bindContentsOwner(window, windowData, options = {}) {
             try {
                 if (!window || !window.contents) return;
+                let contentsReplacement = null;
                 if (windowData && windowData.contentsBitmap && windowData.contentsBitmap !== window.contents) {
-                    markWindowEntriesStale(windowData, lifecycleReasons.CONTENTS_REPLACED, {
+                    contentsReplacement = markWindowEntriesStale(windowData, lifecycleReasons.CONTENTS_REPLACED, {
                         window,
                         nextContents: window.contents,
                     });
@@ -530,6 +602,7 @@
                 }
                 rememberWindowContentsSurface(window, windowData, window.contents, options.reason || 'current-contents');
                 claimWindowContentsSurface(window, windowData);
+                revalidateContentsReplacementEntries(contentsReplacement, windowData, window);
             } catch (_) {}
         }
 
@@ -601,19 +674,16 @@
             displayState: 'runtime.displayState',
             lifecycleReasonsModule: 'runtime.lifecycleReasons',
             entryLifecycleModule: 'runtime.entryLifecycle',
-            surfaceRoleStateModule: 'runtime.windowSurfaceRoleState',
         },
         factory({
             displayState,
             lifecycleReasonsModule,
             entryLifecycleModule,
-            surfaceRoleStateModule,
         }, { scope }) {
             runtimeScope = scope;
             displayStateModule = displayState;
             lifecycleReasons = lifecycleReasonsModule.reasons;
             entryLifecycle = entryLifecycleModule;
-            surfaceRoleState = surfaceRoleStateModule;
 
             return {
                 createWindowRegistryHelpers,

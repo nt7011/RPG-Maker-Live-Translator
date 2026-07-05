@@ -52,7 +52,7 @@
                         proof.error = proof.error || 'stable-surface-unavailable';
                         return { result: null, proof };
                     }
-                    proof.sampleArea = cloneSurfaceAreaForDiagnostics(input.sampleArea || staging.area);
+                    proof.sampleArea = cloneSurfaceAreaForIntel(input.sampleArea || staging.area);
 
                     const withStableSurface = typeof input.withStableSurface === 'function'
                         ? input.withStableSurface
@@ -99,8 +99,8 @@
                             if (result.details && typeof result.details === 'object') {
                                 result.details.dirtyUpload = proof.dirtyUpload;
                             }
-                            if (result.diagnostics && proof.dirtyUpload) {
-                                result.diagnostics.dirtyUpload = proof.dirtyUpload;
+                            if (result.intel && proof.dirtyUpload) {
+                                result.intel.dirtyUpload = proof.dirtyUpload;
                             }
                         }
                     }
@@ -117,7 +117,7 @@
                     active: true,
                     prepared: false,
                     area: null,
-                    sampleArea: cloneSurfaceAreaForDiagnostics(input.sampleArea || null),
+                    sampleArea: cloneSurfaceAreaForIntel(input.sampleArea || null),
                     execution: {
                         status: '',
                         reason: '',
@@ -178,7 +178,7 @@
                     }
                     stagedContext.putImageData(imageData, area.x, area.y);
                     proof.prepared = true;
-                    proof.area = cloneSurfaceAreaForDiagnostics(area);
+                    proof.area = cloneSurfaceAreaForIntel(area);
                     return {
                         liveBitmap,
                         stagedBitmap,
@@ -283,7 +283,7 @@
             function mergeStableSurfacePreparationProof(target, preparation) {
                 if (!target || !preparation) return;
                 target.prepared = preparation.prepared === true;
-                target.area = cloneSurfaceAreaForDiagnostics(preparation.area);
+                target.area = cloneSurfaceAreaForIntel(preparation.area);
                 target.error = stringify(preparation.error || target.error || '');
             }
 
@@ -302,8 +302,8 @@
                     type: stringify(source.type || 'stable-bitmap-surface'),
                     active: source.active === true,
                     prepared: source.prepared === true,
-                    area: cloneSurfaceAreaForDiagnostics(source.area),
-                    sampleArea: cloneSurfaceAreaForDiagnostics(source.sampleArea),
+                    area: cloneSurfaceAreaForIntel(source.area),
+                    sampleArea: cloneSurfaceAreaForIntel(source.sampleArea),
                     execution: {
                         status: stringify(execution.status || ''),
                         reason: stringify(execution.reason || ''),
@@ -319,7 +319,7 @@
                 };
             }
 
-            function cloneSurfaceAreaForDiagnostics(area) {
+            function cloneSurfaceAreaForIntel(area) {
                 if (!area || typeof area !== 'object') return null;
                 if (Number.isFinite(Number(area.x1))
                     || Number.isFinite(Number(area.y1))

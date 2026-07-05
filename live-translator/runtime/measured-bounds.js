@@ -164,16 +164,16 @@
             }
 
             function measureSnapshotInk(background, source, options = {}) {
-                const diagnostics = measureSnapshotInkDiagnostics(background, source, options);
-                if (!diagnostics.available || !diagnostics.changed) return null;
+                const intel = measureSnapshotInkIntel(background, source, options);
+                if (!intel.available || !intel.changed) return null;
                 return {
-                    localBounds: cloneFiniteRect(diagnostics.localBounds),
-                    worldBounds: cloneFiniteRect(diagnostics.worldBounds),
-                    pixelCount: diagnostics.pixelCount,
+                    localBounds: cloneFiniteRect(intel.localBounds),
+                    worldBounds: cloneFiniteRect(intel.worldBounds),
+                    pixelCount: intel.pixelCount,
                 };
             }
 
-            function measureSnapshotInkDiagnostics(background, source, options = {}) {
+            function measureSnapshotInkIntel(background, source, options = {}) {
                 if (!background || !source) {
                     return { available: false, reason: 'missingSnapshots' };
                 }
@@ -551,7 +551,7 @@
                 measureImageDataDifference,
                 measureImageDataDifferenceDetails,
                 measureSnapshotInk,
-                measureSnapshotInkDiagnostics,
+                measureSnapshotInkIntel,
                 calculateSourceAlignedYOffset,
                 measureBitmapTextWidth,
                 resolveAlignedTextX,

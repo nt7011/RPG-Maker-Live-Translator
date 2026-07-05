@@ -7,7 +7,7 @@
         name: 'runtime.textOrchestrator.translationState',
         factory() {
             function createController(scope = {}) {
-                const { firstString, firstNonEmptyString, clampPriority, normalizeId, mergeDetails, cloneItem, createLifecycleResult, decorateTranslationHandle, resolveHandleSourceHint, isAbortErrorLike, textLifecycle, activeItems, detachedItems } = scope;
+                const { firstString, firstNonEmptyString, clampPriority, normalizeId, mergeDetails, cloneItem, createOperationResult, decorateTranslationHandle, resolveHandleSourceHint, isAbortErrorLike, textLifecycle, activeItems, detachedItems } = scope;
                 const { resolveBackgroundPriorityPolicy, applyPriorityPolicy } = scope.controllerFacades.policy;
                 const { updateItem, retireItem } = scope.controllerFacades.lifecycle;
                 const { queueRenderCommand } = scope.controllerFacades.render;
@@ -27,7 +27,7 @@
                     const item = activeItems.get(key) || detachedItems.get(key);
                     const handle = item && item.translationHandle ? item.translationHandle : null;
                     if (!key) {
-                        return createLifecycleResult('missing-id', {
+                        return createOperationResult('missing-id', {
                             handled: false,
                             changed: false,
                             terminal: true,
@@ -35,7 +35,7 @@
                         });
                     }
                     if (!item) {
-                        return createLifecycleResult('missing-record', {
+                        return createOperationResult('missing-record', {
                             handled: false,
                             changed: false,
                             terminal: true,
@@ -45,7 +45,7 @@
                         });
                     }
                     if (!handle || typeof handle.cancel !== 'function') {
-                        return createLifecycleResult('missing-handle', {
+                        return createOperationResult('missing-handle', {
                             handled: true,
                             changed: false,
                             recordId: key,
@@ -56,7 +56,7 @@
                     }
                     try {
                         const canceled = handle.cancel(reason, options && typeof options === 'object' ? options : {}) === true;
-                        return createLifecycleResult(canceled ? 'canceled' : 'not-canceled', {
+                        return createOperationResult(canceled ? 'canceled' : 'not-canceled', {
                             handled: true,
                             changed: canceled,
                             terminal: canceled,
@@ -66,7 +66,7 @@
                             item: cloneItem(item),
                         });
                     } catch (error) {
-                        return createLifecycleResult('cancel-failed', {
+                        return createOperationResult('cancel-failed', {
                             handled: true,
                             changed: false,
                             terminal: true,
@@ -89,7 +89,7 @@
                     const key = normalizeId(id);
                     const item = activeItems.get(key) || detachedItems.get(key);
                     if (!key) {
-                        return createLifecycleResult('missing-id', {
+                        return createOperationResult('missing-id', {
                             handled: false,
                             changed: false,
                             terminal: true,
@@ -97,7 +97,7 @@
                         });
                     }
                     if (!item) {
-                        return createLifecycleResult('missing-record', {
+                        return createOperationResult('missing-record', {
                             handled: false,
                             changed: false,
                             terminal: true,
@@ -107,7 +107,7 @@
                         });
                     }
                     if (isSkippedItem(item)) {
-                        return createLifecycleResult('skipped', {
+                        return createOperationResult('skipped', {
                             handled: true,
                             changed: false,
                             terminal: true,
@@ -123,7 +123,7 @@
                         : !!setItemPriority(id, numericPriority, reason, details);
                     const handle = item && item.translationHandle ? item.translationHandle : null;
                     if (!handle || typeof handle.setPriority !== 'function') {
-                        return createLifecycleResult(itemChanged ? 'priority-updated' : 'unchanged', {
+                        return createOperationResult(itemChanged ? 'priority-updated' : 'unchanged', {
                             handled: true,
                             changed: itemChanged,
                             recordId: key,
@@ -136,7 +136,7 @@
                     try {
                         const handleChanged = handle.setPriority(numericPriority, reason || '') === true;
                         const changed = handleChanged || itemChanged;
-                        return createLifecycleResult(changed ? 'priority-updated' : 'unchanged', {
+                        return createOperationResult(changed ? 'priority-updated' : 'unchanged', {
                             handled: true,
                             changed,
                             recordId: key,
@@ -148,7 +148,7 @@
                             item: cloneItem(getItemById(key) || item),
                         });
                     } catch (_) {
-                        return createLifecycleResult(itemChanged ? 'priority-updated' : 'priority-handle-failed', {
+                        return createOperationResult(itemChanged ? 'priority-updated' : 'priority-handle-failed', {
                             handled: true,
                             changed: itemChanged,
                             recordId: key,
@@ -349,6 +349,11 @@
                 function storeDetachedTranslation(item, translation, details = {}) {
                     if (!item) return null;
                     const translated = firstString(translation);
+                    textLifecycle.applyTransition(item, 'completed', {
+                        active: false,
+                        detached: false,
+                        requestActive: false,
+                    });
                     item.translation = translated;
                     item.translationReceived = translated;
                     item.sourceHint = firstNonEmptyString(details && details.sourceHint, item.sourceHint, 'provider');
@@ -376,7 +381,7 @@
                     const category = firstString(details && details.category, 'sameAsSource');
                     textLifecycle.applyTransition(item, 'failed', {
                         active: false,
-                        detached: true,
+                        detached: false,
                         requestActive: false,
                     });
                     item.translation = '';
@@ -406,13 +411,26 @@
 
                 function storeDetachedTranslationSkip(item, details = {}) {
                     if (!item) return null;
+                    const reason = firstString(details && details.reason, 'detached');
+                    const category = firstString(details && details.category, 'policy');
+                    textLifecycle.applyTransition(item, 'skipped', {
+                        active: false,
+                        detached: false,
+                        requestActive: false,
+                    });
+                    item.translation = '';
+                    item.translationReceived = '';
+                    item.translationDrawn = '';
                     item.sourceHint = firstNonEmptyString(details && details.sourceHint, item.sourceHint, 'policy');
-                    item.metadata = mergeDetails(item.metadata, details && details.metadata);
+                    item.metadata = mergeDetails(item.metadata, details && details.metadata, {
+                        skipReason: reason,
+                        eligibilityCategory: category,
+                    });
                     item.updatedAt = Date.now();
                     item.sequence = ++scope.sequence;
                     moveToArchive(item);
                     recordEvent('item.translation_skipped_detached', item, {
-                        message: details && details.reason ? details.reason : 'detached',
+                        message: reason,
                         details: Object.assign({ detached: true }, details || {}),
                     });
                     return cloneItem(item);
@@ -440,6 +458,12 @@
                         });
                         return cloneItem(item);
                     }
+                    textLifecycle.applyTransition(item, isAbortErrorLike(error) ? 'stale' : 'failed', {
+                        active: false,
+                        detached: false,
+                        requestActive: false,
+                    });
+                    item.metadata = mergeDetails(item.metadata, metadata);
                     moveToArchive(item);
                     recordEvent(isAbortErrorLike(error) ? 'item.translation_canceled_detached' : 'item.translation_failed_detached', item, {
                         message,
@@ -481,7 +505,7 @@
                         : (isVisible ? 'visible' : 'hidden');
                     const item = getItemById(key);
                     if (!key) {
-                        return createLifecycleResult('missing-id', {
+                        return createOperationResult('missing-id', {
                             handled: false,
                             changed: false,
                             terminal: true,
@@ -489,7 +513,7 @@
                         });
                     }
                     if (!item) {
-                        return createLifecycleResult('missing-record', {
+                        return createOperationResult('missing-record', {
                             handled: false,
                             changed: false,
                             terminal: true,
@@ -499,7 +523,7 @@
                         });
                     }
                     if (item && item.visible === isVisible && String(item.screenState || '') === screenState) {
-                        return createLifecycleResult('unchanged', {
+                        return createOperationResult('unchanged', {
                             handled: true,
                             changed: false,
                             recordId: key,
@@ -518,7 +542,7 @@
                         message: details && details.reason ? details.reason : '',
                         details,
                     });
-                    return createLifecycleResult(isVisible ? 'visible' : 'hidden', {
+                    return createOperationResult(isVisible ? 'visible' : 'hidden', {
                         handled: true,
                         changed: true,
                         recordId: key,
@@ -540,7 +564,7 @@
                 function backgroundItem(id, details = {}) {
                     const key = normalizeId(id);
                     if (!key) {
-                        return createLifecycleResult('missing-id', {
+                        return createOperationResult('missing-id', {
                             handled: false,
                             changed: false,
                             terminal: true,
@@ -549,7 +573,7 @@
                     }
                     const item = getItemById(key);
                     if (!item) {
-                        return createLifecycleResult('missing-record', {
+                        return createOperationResult('missing-record', {
                             handled: false,
                             changed: false,
                             terminal: true,
@@ -571,7 +595,7 @@
                         details: Object.assign({ priority }, details || {}),
                     });
                     applyPriorityPolicy(id, policy);
-                    return createLifecycleResult('backgrounded', {
+                    return createOperationResult('backgrounded', {
                         handled: true,
                         changed: true,
                         recordId: key,
@@ -653,7 +677,7 @@
                  *
                  * Abort-like errors mean the subscriber was canceled and the item is
                  * retired as stale. Other errors leave the item active but failed so the
-                 * diagnostics surface can show the broken request.
+                 * intel surface can show the broken request.
                  */
                 function failItemTranslation(id, handle, token, error) {
                     const item = activeItems.get(String(id || '')) || detachedItems.get(String(id || ''));
@@ -668,6 +692,7 @@
                         return retireItem(item.id, 'stale', {
                             eventType: 'item.canceled',
                             message,
+                            policy: { kind: 'retired' },
                             details: { reason: message },
                         });
                     }

@@ -15,10 +15,11 @@ function createTextRecordItem(item, options = {}, renderContext = createTextReco
     if (censored) record.className += ' text-record-spoiler-censored';
     if (recordKey) record.dataset.recordKey = recordKey;
     if (detailKey) record.dataset.detailKey = detailKey;
+    if (options.domKey) record.dataset.domKey = options.domKey;
     if (detailEnabled) {
         record.addEventListener('contextmenu', (event) => {
             event.preventDefault();
-            copyTextRecord(item, record);
+            copyCurrentTextRecord(recordKey, item, record);
         });
     }
 
@@ -38,7 +39,7 @@ function createTextRecordItem(item, options = {}, renderContext = createTextReco
         button.setAttribute('aria-disabled', 'true');
         button.setAttribute('aria-label', 'Detail view disabled');
     } else {
-        button.addEventListener('click', () => toggleTextRecordDetail(detailKey));
+        button.addEventListener('click', () => toggleTextRecordDetail(recordKey));
     }
 
     const content = document.createElement('span');
@@ -62,23 +63,29 @@ function createTextTranslationRail(info) {
 }
 
 function createTextRecordDetail(item, options = {}, renderContext = createTextRecordRenderContext()) {
-    const recordKey = getTextRecordKey(item);
+    const recordKey = options.recordKey || getTextRecordKey(item);
     const expanded = document.createElement('div');
     expanded.className = `text-expanded text-detail-row text-status-${normalizeStatusClass(item.status)} text-hook-${normalizeHookClass(item.hookKey || item.hook)}`;
     if (options.inactive) expanded.className += ' text-record-inactive';
     if (recordKey) expanded.dataset.recordKey = recordKey;
+    if (options.detailKey) expanded.dataset.detailKey = options.detailKey;
+    if (options.domKey) expanded.dataset.domKey = options.domKey;
     expanded.appendChild(createExpandedRecordHeader(item, options));
     expanded.appendChild(createTextMetaGrid(item));
-    const translationDetail = createTranslationDiagnosticDetail(item);
+    const translationDetail = createTranslationIntelDetail(item, renderContext);
     if (translationDetail) expanded.appendChild(translationDetail);
-    const policyDetail = createPolicyDiagnosticDetail(item);
+    const policyDetail = createPolicyIntelDetail(item);
     if (policyDetail) expanded.appendChild(policyDetail);
-    expanded.appendChild(createHistoryList(item));
+    if (isTextRecordHistoryVisible(renderContext)) expanded.appendChild(createHistoryList(item));
     return expanded;
 }
 
-function createPolicyDiagnosticDetail(item) {
-    const policy = getTextRecordRuntimePolicyDiagnostics(item);
+function isTextRecordHistoryVisible(renderContext = createTextRecordRenderContext()) {
+    return renderContext.policy.historyVisible === true;
+}
+
+function createPolicyIntelDetail(item) {
+    const policy = getTextRecordRuntimePolicyIntel(item);
     if (!policy || !Object.keys(policy).length) return null;
     const panel = createExpandedRelatedPanel('Text Policy', formatPolicyHeadline(policy));
     const rows = [];
@@ -105,18 +112,18 @@ function formatPolicyHeadline(policy) {
     const lifecycle = policy && policy.lifecycle ? policy.lifecycle : {};
     return firstNonEmptyString(
         [priority.action, priority.priority].filter((value) => value !== undefined && value !== null && value !== '').join(' '),
-        [lifecycle.intent, lifecycle.priorityAction].filter(Boolean).join(' '),
+        [lifecycle.kind, lifecycle.priorityAction].filter(Boolean).join(' '),
         'policy'
     );
 }
 
-function createTranslationDiagnosticDetail(item) {
-    const jobs = getMatchedDiagnosticJobs(item);
+function createTranslationIntelDetail(item, renderContext = createTextRecordRenderContext()) {
+    const jobs = getMatchedIntelJobs(item);
     if (!jobs.length) return null;
 
     const primary = jobs[0];
     const panel = createExpandedRelatedPanel('Translation Job', primary.id || '-');
-    panel.className += ` diagnostic-job-${normalizeDiagnosticStatusClass(primary.status || primary.displayMode)}`;
+    panel.className += ` intel-job-${normalizeIntelStatusClass(primary.status || primary.displayMode)}`;
 
     const grid = createMetadataGrid();
     appendMeta(grid, 'Job', primary.id || '-');
@@ -146,7 +153,9 @@ function createTranslationDiagnosticDetail(item) {
             jobs.slice(1, 4).map((job) => `${job.id || '-'} | ${job.status || job.displayMode || '-'} | ${formatPriority(job)} | ${job.textPreview || '-'}`)
         ));
     }
-    panel.appendChild(createDiagnosticHistory(primary.history || []));
+    if (isTextRecordHistoryVisible(renderContext)) {
+        panel.appendChild(createIntelHistory(primary.history || []));
+    }
     return panel;
 }
 
@@ -200,17 +209,14 @@ function formatSubscriberRecord(subscriber) {
 function toggleTextRecordDetail(recordKey) {
     const policySnapshot = refreshGuiPolicySnapshot();
     if (!recordKey || !getGuiTextRecordPolicy(policySnapshot).detailsEnabled) return;
-    state.activeTextRecordDetailKey = state.activeTextRecordDetailKey === recordKey
-        ? ''
-        : recordKey;
+    setSelectedTextRecordKey(getSelectedTextRecordKey() === recordKey ? '' : recordKey);
     renderTextRecordSections(refreshGuiPolicySnapshot());
 }
 
 function shouldRenderActiveTextRecordDetail(recordKey, renderContext = createTextRecordRenderContext()) {
     const textRecordPolicy = renderContext.policy;
     return Boolean(recordKey
-        && textRecordPolicy.selectedDetailKey === recordKey
-        && textRecordPolicy.renderedDetailKey !== recordKey);
+        && textRecordPolicy.selectedDetailKey === recordKey);
 }
 
 function isGuiTextRecordDetailAllowed(item, renderContext = createTextRecordRenderContext()) {
@@ -222,7 +228,7 @@ function createExpandedRecordHeader(item, options = {}) {
     const header = document.createElement('div');
     header.className = 'text-expanded-header';
     const labels = [];
-    const lifecycleLabel = String(options.lifecycleLabel || item.displayLifecycle || item.lifecycleState || '').trim();
+    const lifecycleLabel = String(options.lifecycleLabel || item.lifecycleState || '').trim();
     if (lifecycleLabel && lifecycleLabel !== 'active' && !labels.includes(lifecycleLabel)) labels.push(lifecycleLabel);
     header.appendChild(createTextElement(
         'span',
@@ -234,9 +240,10 @@ function createExpandedRecordHeader(item, options = {}) {
 }
 
 function pruneActiveTextRecordDetail(renderContext = createTextRecordRenderContext()) {
-    if (!state.activeTextRecordDetailKey) return;
+    const selectedKey = getSelectedTextRecordKey();
+    if (!selectedKey) return;
     const activeKeys = getVisibleTextRecordDetailKeys(renderContext);
-    if (!activeKeys.includes(state.activeTextRecordDetailKey)) state.activeTextRecordDetailKey = '';
+    if (!activeKeys.includes(selectedKey)) setSelectedTextRecordKey('');
 }
 
 function getVisibleTextRecordDetailKeys(renderContext = createTextRecordRenderContext()) {
@@ -250,8 +257,36 @@ function getVisibleTextRecordDetailKeys(renderContext = createTextRecordRenderCo
             bodyId: 'archived-texts',
         }))
         .filter((row) => isGuiTextRecordDetailAllowed(row.item, renderContext))
-        .map((row) => row.detailKey)
+        .map((row) => row.recordKey)
         .filter(Boolean);
+}
+
+function getSelectedTextRecordKey() {
+    if (state.selectedTextRecordKey) return state.selectedTextRecordKey;
+    const legacyKey = getTextRecordKeyFromDetailKey(state.activeTextRecordDetailKey || '');
+    if (legacyKey) setSelectedTextRecordKey(legacyKey);
+    return state.selectedTextRecordKey || '';
+}
+
+function setSelectedTextRecordKey(recordKey) {
+    const key = String(recordKey || '');
+    state.selectedTextRecordKey = key;
+    state.activeTextRecordDetailKey = key;
+}
+
+function getTextRecordKeyFromDetailKey(value) {
+    const detailKey = String(value || '');
+    if (!detailKey) return '';
+    for (const sectionId of ['active-texts', 'detached-texts', 'archived-texts', 'text-records']) {
+        const prefix = `${sectionId}|`;
+        if (!detailKey.startsWith(prefix)) continue;
+        const withoutPrefix = detailKey.slice(prefix.length);
+        const suffixIndex = withoutPrefix.lastIndexOf('|');
+        if (suffixIndex < 0) return withoutPrefix;
+        const suffix = withoutPrefix.slice(suffixIndex + 1);
+        return /^\d+$/u.test(suffix) ? withoutPrefix.slice(0, suffixIndex) : withoutPrefix;
+    }
+    return detailKey;
 }
 
 function getTextRecordKey(item) {
@@ -260,11 +295,20 @@ function getTextRecordKey(item) {
     return [item.hookKey || item.hook || '', item.original || '', item.translationSource || item.normalizedSource || ''].join('|');
 }
 
-function getTextRecordDetailKey(sectionId, recordKey, duplicateIndex) {
+function getTextRecordDomKey(sectionId, recordKey, duplicateIndex) {
     return [sectionId || 'text-records', recordKey || '', String(duplicateIndex || 0)].join('|');
 }
 
+function getTextRecordDetailKey(sectionId, recordKey, duplicateIndex) {
+    return getTextRecordDomKey(sectionId, recordKey, duplicateIndex);
+}
+
+function getTextRecordDetailDomKey(recordKey) {
+    return ['text-detail', recordKey || ''].join('|');
+}
+
 function createTextRecordCopyButton(item) {
+    const recordKey = getTextRecordKey(item);
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'copy-record-button';
@@ -273,7 +317,11 @@ function createTextRecordCopyButton(item) {
     button.setAttribute('aria-label', 'Copy full text record');
     button.addEventListener('click', (event) => {
         event.stopPropagation();
-        copyTextRecord(item, button);
+        copyCurrentTextRecord(recordKey, item, button);
     });
     return button;
+}
+
+function copyCurrentTextRecord(recordKey, fallbackItem, feedbackTarget) {
+    copyTextRecord(getCurrentTextRecordByKey(recordKey) || fallbackItem, feedbackTarget);
 }

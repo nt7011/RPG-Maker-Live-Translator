@@ -5,7 +5,7 @@
     'use strict';
 
     function createController(scope = {}) {
-        const { recordNativeMutationAttribution } = scope.controllerFacades.mutationDiagnostics;
+        const { recordNativeMutationAttribution } = scope.controllerFacades.mutationIntel;
 
         function applyNativeBitmapMutation(original, bitmap, methodName, nativeArgs, mutationTransaction) {
             const transaction = mutationTransaction && typeof mutationTransaction === 'object'

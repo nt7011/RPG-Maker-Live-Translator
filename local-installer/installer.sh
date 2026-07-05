@@ -9,8 +9,10 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 default_root="$(cd "${script_dir}/.." && pwd)"
 game_root="$default_root"
 runtime_source="${default_root}/live-translator"
+diagnostics_source=""
 snapshot_source=""
 plugin_profile="debug"
+include_diagnostics=false
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -25,6 +27,14 @@ while [ "$#" -gt 0 ]; do
         --snapshot-source|-s)
             snapshot_source="$2"
             shift 2
+            ;;
+        --diagnostics-source)
+            diagnostics_source="$2"
+            shift 2
+            ;;
+        --include-diagnostics)
+            include_diagnostics=true
+            shift
             ;;
         --plugin-profile|-p)
             plugin_profile="$2"
@@ -48,7 +58,14 @@ esac
 
 game_root="$(cd "$game_root" && pwd)"
 runtime_source="$(cd "$runtime_source" && pwd)"
-diagnostics_source="$(cd "$(dirname "$runtime_source")" && pwd)/diagnostics"
+if [ -n "$diagnostics_source" ]; then
+    diagnostics_source="$(cd "$diagnostics_source" && pwd)"
+elif [ "$include_diagnostics" = true ]; then
+    diagnostics_candidate="$(cd "$(dirname "$runtime_source")" && pwd)/diagnostics"
+    if [ -d "$diagnostics_candidate" ]; then
+        diagnostics_source="$(cd "$diagnostics_candidate" && pwd)"
+    fi
+fi
 if [ -n "$snapshot_source" ]; then
     snapshot_source="$(cd "$snapshot_source" && pwd)"
 elif [ "$plugin_profile" = "snapshot" ]; then
@@ -58,6 +75,10 @@ elif [ "$plugin_profile" = "snapshot" ]; then
     fi
 fi
 
+if [ "$include_diagnostics" = true ] && [ -z "$diagnostics_source" ]; then
+    echo -e "\033[31mError: diagnostics include requires a diagnostics source folder\033[0m" >&2
+    exit 1
+fi
 if [ "$plugin_profile" = "snapshot" ] && [ -z "$snapshot_source" ]; then
     echo -e "\033[31mError: snapshot profile requires a snapshot source folder\033[0m" >&2
     exit 1
@@ -321,36 +342,51 @@ install_optional_snapshot_plugin() {
     echo -e "\033[36mInstalled optional snapshot plugin to $snapshot_dir\033[0m"
 }
 
-install_optional_support_package() {
-    local source_root="$1"
-
-    if [ ! -d "$source_root" ]; then
+install_optional_diagnostics_plugin() {
+    if [ "$include_diagnostics" != true ]; then
         return 0
     fi
-
-    local support_manifest_path="${source_root}/install-manifest.json"
-    if [ ! -f "$support_manifest_path" ]; then
-        echo -e "\033[31mError: optional support install-manifest.json not found at $support_manifest_path\033[0m" >&2
+    if [ ! -d "$diagnostics_source" ]; then
+        echo -e "\033[31mError: diagnostics source does not exist: $diagnostics_source\033[0m" >&2
         exit 1
     fi
 
-    local support_directory
-    support_directory="$(json_string_from_file "$support_manifest_path" supportDirectory)"
-    if [ -z "$support_directory" ]; then
-        echo -e "\033[31mError: optional support install-manifest.json missing supportDirectory\033[0m" >&2
-        exit 1
-    fi
-    if [ -z "$(json_array_from_file "$support_manifest_path" sourceFiles)" ]; then
-        echo -e "\033[31mError: optional support install-manifest.json missing fileInventory.sourceFiles\033[0m" >&2
+    local diagnostics_manifest_path="${diagnostics_source}/install-manifest.json"
+    if [ ! -f "$diagnostics_manifest_path" ]; then
+        echo -e "\033[31mError: diagnostics/install-manifest.json not found at $diagnostics_manifest_path\033[0m" >&2
         exit 1
     fi
 
-    assert_manifest_relative_file "$support_directory" "optional support directory"
+    local diagnostics_module
+    local diagnostics_support_name
+    local diagnostics_loader_name
+    diagnostics_module="$(json_string_from_file "$diagnostics_manifest_path" module)"
+    diagnostics_support_name="$(json_string_from_file "$diagnostics_manifest_path" supportDirectory)"
+    diagnostics_loader_name="$(json_string_from_file "$diagnostics_manifest_path" loader)"
 
-    local support_target="${plugins_dir}/${support_directory}"
-    mkdir -p "$support_target"
-    copy_manifest_files "$source_root" "$support_target" "$support_manifest_path" "sourceFiles" "${support_directory} fileInventory.sourceFiles" "required"
-    echo -e "\033[36mInstalled optional support package to $support_target\033[0m"
+    if [ "$diagnostics_module" != "diagnostics" ] || [ -z "$diagnostics_support_name" ] || [ -z "$diagnostics_loader_name" ]; then
+        echo -e "\033[31mError: diagnostics/install-manifest.json is missing module, supportDirectory, or loader\033[0m" >&2
+        exit 1
+    fi
+    if [ -z "$(json_array_from_file "$diagnostics_manifest_path" sourceFiles)" ]; then
+        echo -e "\033[31mError: diagnostics/install-manifest.json missing fileInventory.sourceFiles\033[0m" >&2
+        exit 1
+    fi
+    if [ -z "$(json_array_from_file "$diagnostics_manifest_path" scriptLoadOrder)" ]; then
+        echo -e "\033[31mError: diagnostics/install-manifest.json missing runtime.scriptLoadOrder\033[0m" >&2
+        exit 1
+    fi
+    if [ ! -f "${diagnostics_source}/${diagnostics_loader_name}" ]; then
+        echo -e "\033[31mError: ${diagnostics_loader_name} not found under diagnostics/\033[0m" >&2
+        exit 1
+    fi
+
+    assert_manifest_relative_file "$diagnostics_support_name" "diagnostics support directory"
+
+    local diagnostics_target="${plugins_dir}/${diagnostics_support_name}"
+    mkdir -p "$diagnostics_target"
+    copy_manifest_files "$diagnostics_source" "$diagnostics_target" "$diagnostics_manifest_path" "sourceFiles" "diagnostics fileInventory.sourceFiles" "required"
+    echo -e "\033[36mInstalled optional diagnostics plugin to $diagnostics_target\033[0m"
 }
 
 if [ ! -f "$manifest_path" ]; then
@@ -429,7 +465,7 @@ mkdir -p "$support_dir"
 copy_manifest_files "$runtime_source" "$support_dir" "$manifest_path" "sourceFiles" "live-translator fileInventory.sourceFiles" "required"
 copy_manifest_files "$runtime_source" "$support_dir" "$manifest_path" "optionalAssets" "live-translator runtime.optionalAssets" "optional"
 echo -e "\033[33mCopied live-translator runtime bundle to $support_dir\033[0m"
-install_optional_support_package "$diagnostics_source"
+install_optional_diagnostics_plugin
 install_optional_snapshot_plugin
 install_translator_file
 install_settings_file
@@ -451,6 +487,15 @@ fi
 
 plugin_entry_name="${support_name}/${loader_name%.[jJ][sS]}"
 legacy_plugin_entry_name="${loader_name%.[jJ][sS]}"
+diagnostics_plugin_entry_name="diagnostics/diagnostics-loader"
+if [ "$include_diagnostics" = true ]; then
+    diagnostics_manifest_path="${diagnostics_source}/install-manifest.json"
+    diagnostics_support_for_entry="$(json_string_from_file "$diagnostics_manifest_path" supportDirectory)"
+    diagnostics_loader_for_entry="$(json_string_from_file "$diagnostics_manifest_path" loader)"
+    if [ -n "$diagnostics_support_for_entry" ] && [ -n "$diagnostics_loader_for_entry" ]; then
+        diagnostics_plugin_entry_name="${diagnostics_support_for_entry}/${diagnostics_loader_for_entry%.[jJ][sS]}"
+    fi
+fi
 snapshot_plugin_entry_name="snapshot/snapshot-loader"
 if [ -n "$snapshot_source" ]; then
     snapshot_manifest_path="${snapshot_source}/install-manifest.json"
@@ -480,13 +525,13 @@ sync_plugin_entries() {
         return 1
     fi
 
-    if ! perl - "$plugins_file" "$plugin_profile" "$plugin_entry_name" "$snapshot_plugin_entry_name" "$legacy_plugin_entry_name" > "$sync_output_file" <<'PERL'
+    if ! perl - "$plugins_file" "$plugin_profile" "$plugin_entry_name" "$snapshot_plugin_entry_name" "$legacy_plugin_entry_name" "$include_diagnostics" "$diagnostics_plugin_entry_name" > "$sync_output_file" <<'PERL'
 use strict;
 use warnings;
 use Encode qw(decode encode FB_CROAK);
 use File::Copy qw(copy);
 
-my ($file, $profile, $plugin_name, $snapshot_name, $legacy_name) = @ARGV;
+my ($file, $profile, $plugin_name, $snapshot_name, $legacy_name, $include_diagnostics, $diagnostics_name) = @ARGV;
 
 sub fail {
     die $_[0] . "\n";
@@ -831,25 +876,26 @@ my ($content, $file_encoding, $file_bom) = read_plugins_file($file);
 my ($open_index, $close_index, $array_content) = find_plugins_array_literal($content);
 my @entries = split_plugins_array_entries($array_content);
 
-my @desired = $profile eq 'snapshot'
-    ? (
-        [$plugin_name, 'Entry point for the live translation system'],
-        [$snapshot_name, 'Snapshot capture and validation harness'],
-    )
-    : (
-        [$plugin_name, 'Entry point for the live translation system'],
-    );
-my @remove = $profile eq 'snapshot'
-    ? ($legacy_name)
-    : ($legacy_name, $snapshot_name);
+my @desired = ();
+push @desired, [$diagnostics_name, 'Dev diagnostics hooks for live-translator']
+    if defined $include_diagnostics && $include_diagnostics eq 'true';
+push @desired, [$plugin_name, 'Entry point for the live translation system'];
+push @desired, [$snapshot_name, 'Snapshot capture and validation harness']
+    if $profile eq 'snapshot';
+
+my @remove = ($legacy_name);
+push @remove, $diagnostics_name
+    unless defined $include_diagnostics && $include_diagnostics eq 'true';
+push @remove, $snapshot_name
+    unless $profile eq 'snapshot';
 
 my %desired_names = map { lc($_->[0]) => 1 } grep { defined $_->[0] && $_->[0] ne '' } @desired;
 my %remove_names = map { lc($_) => 1 } grep { defined $_ && $_ ne '' } @remove;
-my %present_desired = ();
+my %existing_desired_entries = ();
 my @kept_entries = ();
+my @managed_entries = ();
 my @added_names = ();
 my @removed_names = ();
-my $changed = 0;
 
 for my $entry (@entries) {
     my $entry_name = plugin_name_from_entry($entry);
@@ -857,17 +903,16 @@ for my $entry (@entries) {
 
     if ($entry_name ne '' && $remove_names{$key}) {
         push @removed_names, $entry_name;
-        $changed = 1;
         next;
     }
 
     if ($entry_name ne '' && $desired_names{$key}) {
-        if ($present_desired{$key}) {
+        if (exists $existing_desired_entries{$key}) {
             push @removed_names, $entry_name;
-            $changed = 1;
             next;
         }
-        $present_desired{$key} = 1;
+        $existing_desired_entries{$key} = $entry;
+        next;
     }
 
     push @kept_entries, $entry;
@@ -878,12 +923,23 @@ for my $plugin (@desired) {
     next unless defined $name && $name ne '';
 
     my $key = lc($name);
-    next if $present_desired{$key};
+    if (exists $existing_desired_entries{$key}) {
+        push @managed_entries, $existing_desired_entries{$key};
+    } else {
+        push @managed_entries, new_plugin_entry_json($name, $description);
+        push @added_names, $name;
+    }
+}
 
-    push @kept_entries, new_plugin_entry_json($name, $description);
-    $present_desired{$key} = 1;
-    push @added_names, $name;
-    $changed = 1;
+my @updated_entries = (@kept_entries, @managed_entries);
+my $changed = @removed_names || @added_names || @entries != @updated_entries;
+if (!$changed) {
+    for (my $index = 0; $index < @entries; $index++) {
+        if (trim($entries[$index]) ne trim($updated_entries[$index])) {
+            $changed = 1;
+            last;
+        }
+    }
 }
 
 if (!$changed) {
@@ -895,8 +951,8 @@ my $backup = "$file.backup";
 copy($file, $backup) or fail("Could not create backup $backup: $!");
 
 my $newline = $content =~ /\r\n/ ? "\r\n" : "\n";
-my $body = @kept_entries
-    ? $newline . join(',' . $newline, map { '    ' . trim($_) } @kept_entries) . $newline
+my $body = @updated_entries
+    ? $newline . join(',' . $newline, map { '    ' . trim($_) } @updated_entries) . $newline
     : '';
 my $updated_content = substr($content, 0, $open_index + 1) . $body . substr($content, $close_index);
 

@@ -40,6 +40,7 @@ function createMetadataGrid() {
 function appendMetadataItem(container, label, value) {
     const item = document.createElement('div');
     item.className = 'text-meta-item';
+    item.dataset.metaLabel = String(label || '');
     item.appendChild(createTextElement('span', '', label));
     item.appendChild(createTextElement(
         'strong',

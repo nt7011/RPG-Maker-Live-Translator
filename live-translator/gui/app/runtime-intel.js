@@ -2,19 +2,19 @@
 // These functions share state from gui/app/state.js and are loaded before app/index.js boots.
 'use strict';
 
-function normalizeDiagnosticsSnapshot(snapshot) {
+function normalizeIntelSnapshot(snapshot) {
     if (!snapshot || typeof snapshot !== 'object') return null;
     const source = snapshot;
     const jobs = source.jobs && typeof source.jobs === 'object' ? source.jobs : {};
     return {
         updatedAt: source.updatedAt || null,
-        provider: normalizeDiagnosticProvider(source.provider),
-        summary: normalizeDiagnosticSummary(source.summary),
-        cache: normalizeDiagnosticCache(source.cache),
+        provider: normalizeIntelProvider(source.provider),
+        summary: normalizeIntelSummary(source.summary),
+        cache: normalizeIntelCache(source.cache),
         jobs: {
-            running: Array.isArray(jobs.running) ? jobs.running.map(normalizeDiagnosticJob) : [],
-            queued: Array.isArray(jobs.queued) ? jobs.queued.map(normalizeDiagnosticJob) : [],
-            past: Array.isArray(jobs.past) ? jobs.past.map(normalizeDiagnosticJob) : [],
+            running: Array.isArray(jobs.running) ? jobs.running.map(normalizeIntelJob) : [],
+            queued: Array.isArray(jobs.queued) ? jobs.queued.map(normalizeIntelJob) : [],
+            past: Array.isArray(jobs.past) ? jobs.past.map(normalizeIntelJob) : [],
         },
         priorityBuckets: Array.isArray(source.priorityBuckets)
             ? source.priorityBuckets.map(normalizeBreakdownRow)
@@ -23,7 +23,7 @@ function normalizeDiagnosticsSnapshot(snapshot) {
             ? source.hooks.map(normalizeBreakdownRow)
             : [],
         counters: source.counters && typeof source.counters === 'object' ? Object.assign({}, source.counters) : {},
-        events: Array.isArray(source.events) ? source.events.map(normalizeDiagnosticEvent) : [],
+        events: Array.isArray(source.events) ? source.events.map(normalizeIntelEvent) : [],
         intelSurface: source.intelSurface === true,
     };
 }
@@ -183,7 +183,7 @@ function normalizeNullableInteger(value) {
     return Number.isFinite(numeric) ? Math.round(numeric) : null;
 }
 
-function normalizeDiagnosticProvider(provider) {
+function normalizeIntelProvider(provider) {
     const source = provider && typeof provider === 'object' ? provider : {};
     return {
         kind: source.kind ? String(source.kind) : '',
@@ -214,7 +214,7 @@ function normalizeDiagnosticProvider(provider) {
     };
 }
 
-function normalizeDiagnosticSummary(summary) {
+function normalizeIntelSummary(summary) {
     const source = summary && typeof summary === 'object' ? summary : {};
     return {
         queued: normalizeInteger(source.queued),
@@ -231,7 +231,7 @@ function normalizeDiagnosticSummary(summary) {
     };
 }
 
-function normalizeDiagnosticCache(cache) {
+function normalizeIntelCache(cache) {
     const source = cache && typeof cache === 'object' ? cache : {};
     const precache = source.precache && typeof source.precache === 'object' ? source.precache : {};
     return {
@@ -247,7 +247,7 @@ function normalizeDiagnosticCache(cache) {
     };
 }
 
-function normalizeDiagnosticJob(job) {
+function normalizeIntelJob(job) {
     const source = job && typeof job === 'object' ? job : {};
     return {
         id: source.id ? String(source.id) : '',
@@ -277,15 +277,15 @@ function normalizeDiagnosticJob(job) {
         subscribers: normalizeInteger(source.subscribers),
         totalSubscribers: normalizeInteger(source.totalSubscribers),
         subscriberRecords: Array.isArray(source.subscriberRecords)
-            ? source.subscriberRecords.map(normalizeDiagnosticSubscriberRecord)
+            ? source.subscriberRecords.map(normalizeIntelSubscriberRecord)
             : [],
         terminalAt: source.terminalAt || null,
         terminalReason: source.terminalReason ? String(source.terminalReason) : '',
-        history: Array.isArray(source.history) ? source.history.map(normalizeDiagnosticEvent) : [],
+        history: Array.isArray(source.history) ? source.history.map(normalizeIntelEvent) : [],
     };
 }
 
-function normalizeDiagnosticSubscriberRecord(record) {
+function normalizeIntelSubscriberRecord(record) {
     const source = record && typeof record === 'object' ? record : {};
     return {
         id: source.id ? String(source.id) : '',
@@ -312,7 +312,7 @@ function normalizeBreakdownRow(row) {
     };
 }
 
-function normalizeDiagnosticEvent(event) {
+function normalizeIntelEvent(event) {
     const source = event && typeof event === 'object' ? event : {};
     return {
         id: source.id ? String(source.id) : '',

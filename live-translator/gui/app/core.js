@@ -74,10 +74,10 @@ function setSummaryStatus(id, tone, value) {
 }
 
 function setReservedLaneReminder(tone, value, visible = true) {
-    const el = refs['diag-lane-reminder'];
+    const el = refs['intel-lane-reminder'];
     if (!el) return;
     el.hidden = visible !== true;
-    setToneText(el, 'diagnostics-reminder', tone, value);
+    setToneText(el, 'intel-reminder', tone, value);
     updateHeaderComplaintsVisibility();
 }
 
@@ -300,7 +300,7 @@ function refreshRuntimeContext() {
 
     setStatus('main-window-link', contextPolicy.closeWithGameTone, contextPolicy.closeWithGameText);
     setSummaryStatus('runtime-context-summary', contextPolicy.summaryTone, contextPolicy.summaryText);
-    renderDiagnosticsSummary();
+    renderIntelSummary();
 }
 
 function getGameWindow() {
@@ -326,11 +326,11 @@ function notifyGuiState(open) {
         guiState.translatorOpen = open === true;
         guiState.updatedAt = Date.now();
         gameWindow.LiveTranslatorGuiState = guiState;
-        syncRuntimeDiagnosticsForGuiState(gameWindow, open === true);
+        syncRuntimeIntelForGuiState(gameWindow, open === true);
     } catch (_) {}
 }
 
-function syncRuntimeDiagnosticsForGuiState(gameWindow, open) {
+function syncRuntimeIntelForGuiState(gameWindow, open) {
     const methods = open
         ? ['publish']
         : ['clearIntel', 'clearSnapshot', 'clearDiagnostics', 'publish'];
@@ -363,7 +363,7 @@ function renderLogs() {
     const lines = state.logLines.slice(-80);
     refs.logs.textContent = lines.length ? lines.join('\n') : 'No log entries.';
     refs.logs.scrollTop = refs.logs.scrollHeight;
-    renderDiagnosticsSummary();
+    renderIntelSummary();
 }
 
 function clearLog() {
@@ -417,7 +417,7 @@ function bindEvents() {
     bindThemeModeToggle();
     if (refs['clear-log']) refs['clear-log'].addEventListener('click', clearLog);
     if (refs['foresight-copy']) {
-        refs['foresight-copy'].addEventListener('click', () => copyForesightDiagnostics(refs['foresight-copy']));
+        refs['foresight-copy'].addEventListener('click', () => copyForesightIntel(refs['foresight-copy']));
     }
     if (refs['draw-capture-copy']) {
         refs['draw-capture-copy'].addEventListener('click', () => copyDrawCaptureTrace(refs['draw-capture-copy']));
@@ -565,20 +565,20 @@ function getDisclosurePanelForSummary(summary) {
         : null;
 }
 
-function renderDiagnosticsSummary() {
-    const model = createDiagnosticsSummaryModel();
-    setSummaryStatus('diagnostics-summary', model.tone, model.text);
-    syncDiagnosticsPanelDefault(model);
+function renderIntelSummary() {
+    const model = createIntelSummaryModel();
+    setSummaryStatus('intel-summary', model.tone, model.text);
+    syncIntelPanelDefault(model);
 }
 
-function createDiagnosticsSummaryModel(policySnapshot = getGuiPolicySnapshot()) {
+function createIntelSummaryModel(policySnapshot = getGuiPolicySnapshot()) {
     const contextPolicy = getGuiEffectivePolicy(policySnapshot).runtimeContext;
     const hookSummary = getVisibleHookSummary(policySnapshot);
     const logCount = Array.isArray(state.logLines) ? state.logLines.length : 0;
-    return deriveDiagnosticsSummaryModel(contextPolicy, hookSummary, logCount);
+    return deriveIntelSummaryModel(contextPolicy, hookSummary, logCount);
 }
 
-function deriveDiagnosticsSummaryModel(contextPolicy, hookSummary, logCount) {
+function deriveIntelSummaryModel(contextPolicy, hookSummary, logCount) {
     const context = contextPolicy && typeof contextPolicy === 'object' ? contextPolicy : {};
     const summary = hookSummary && typeof hookSummary === 'object'
         ? hookSummary
@@ -593,13 +593,13 @@ function deriveDiagnosticsSummaryModel(contextPolicy, hookSummary, logCount) {
         tone,
         text,
         openDefault: tone !== 'ok',
-        defaultKey: `diagnostics:${tone}`,
+        defaultKey: `intel:${tone}`,
     };
 }
 
-function syncDiagnosticsPanelDefault(model = createDiagnosticsSummaryModel()) {
+function syncIntelPanelDefault(model = createIntelSummaryModel()) {
     if (typeof applyFoldedPanelDefault !== 'function') return;
-    applyFoldedPanelDefault('diagnostics-panel', 'diagnostics', model.openDefault, model.defaultKey);
+    applyFoldedPanelDefault('intel-panel', 'intel', model.openDefault, model.defaultKey);
 }
 
 function boot() {

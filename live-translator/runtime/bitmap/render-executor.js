@@ -136,7 +136,7 @@
 
                     const result = createExecutionResult('applied', 'bitmap-render-applied', plan, targetBitmap, entry, details);
                     result.dirtyUpload = details.dirtyUpload || null;
-                    if (result.diagnostics && result.dirtyUpload) result.diagnostics.dirtyUpload = result.dirtyUpload;
+                    if (result.intel && result.dirtyUpload) result.intel.dirtyUpload = result.dirtyUpload;
                     return result;
                 }
 
@@ -513,13 +513,13 @@
                     targetBitmap: targetBitmap || sourcePlan.targetBitmap || null,
                     details: details || createExecutionDetails(),
                 };
-                output.diagnostics = createExecutionDiagnostics(sourcePlan, output.status, output.reason);
+                output.intel = createExecutionIntel(sourcePlan, output.status, output.reason);
                 return output;
             }
 
-            function createExecutionDiagnostics(plan, status, reason) {
-                const source = plan && plan.diagnostics && typeof plan.diagnostics === 'object'
-                    ? Object.assign({}, plan.diagnostics)
+            function createExecutionIntel(plan, status, reason) {
+                const source = plan && plan.intel && typeof plan.intel === 'object'
+                    ? Object.assign({}, plan.intel)
                     : {
                         planId: stringify(plan && plan.planId || ''),
                         type: stringify(plan && plan.type || ''),
@@ -559,8 +559,8 @@
                 result.didDraw = !!(drawResult && drawResult.didDraw === true);
                 result.renderCommit = result.didDraw ? drawResult.renderCommit : null;
                 result.dirtyUpload = dirtyUploadDetails;
-                if (result.diagnostics && dirtyUploadDetails) {
-                    result.diagnostics.dirtyUpload = dirtyUploadDetails;
+                if (result.intel && dirtyUploadDetails) {
+                    result.intel.dirtyUpload = dirtyUploadDetails;
                 }
                 return result;
             }

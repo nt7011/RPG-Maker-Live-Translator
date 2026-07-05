@@ -58,7 +58,7 @@
                 dirtySource: 'bitmap-text-fallback-renderer',
                 dirtyReason: 'bitmap-fallback-redraw',
             });
-            const redrawDiagnostics = renderResult && renderResult.diagnostics || renderPlan && renderPlan.diagnostics || null;
+            const redrawIntel = renderResult && renderResult.intel || renderPlan && renderPlan.intel || null;
             if (scope.telemetry && typeof scope.telemetry.logDraw === 'function') {
                 scope.telemetry.logDraw('bitmap_redraw', restored, entry.drawParams.x, entry.drawParams.y, {
                     ownerType: entry.ownerType,
@@ -66,7 +66,7 @@
                     sourceHint: command && command.metadata && command.metadata.sourceHint,
                 });
             }
-            return redrawDiagnostics;
+            return redrawIntel;
         }
 
         return {

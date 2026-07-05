@@ -11,7 +11,6 @@
         },
         factory({ textLifecycle, adapterMetadata }) {
             const ACTIVE_STATUSES = textLifecycle.ACTIVE_STATUSES;
-            const STATUS_ALIASES = textLifecycle.STATUS_ALIASES;
             const DEFAULT_EVENT_LIMIT = 500;
             const DEFAULT_ITEM_EVENT_LIMIT = 80;
             const DEFAULT_ARCHIVED_LIMIT = 300;
@@ -28,7 +27,6 @@
 
             return {
                 ACTIVE_STATUSES,
-                STATUS_ALIASES,
                 DEFAULT_EVENT_LIMIT,
                 DEFAULT_ITEM_EVENT_LIMIT,
                 DEFAULT_ARCHIVED_LIMIT,

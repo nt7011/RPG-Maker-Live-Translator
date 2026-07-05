@@ -15,8 +15,9 @@
             surfaceDamage: 'runtime.bitmap.surfaceDamage',
             copyEdgeState: 'runtime.bitmap.copyEdgeState',
             copiedTextProjection: 'runtime.bitmap.copiedTextProjection',
+            sourceRunIdentity: 'runtime.bitmap.sourceRunIdentity',
         },
-        factory({ rectGeometry, copyEdgeGeometry, surfaceDamage, copyEdgeState, copiedTextProjection }) {
+        factory({ rectGeometry, copyEdgeGeometry, surfaceDamage, copyEdgeState, copiedTextProjection, sourceRunIdentity }) {
             const cloneRect = rectGeometry.cloneRect;
             const sameRect = rectGeometry.sameRect;
             const rectsOverlap = rectGeometry.rectsOverlap;
@@ -26,6 +27,7 @@
             const markCopyEdgeInvalidated = copyEdgeState.markCopyEdgeInvalidated;
             const markCopyEdgeDamaged = copyEdgeState.markCopyEdgeDamaged;
             const copyCopiedTextProjectionRecord = copiedTextProjection.copyCopiedTextProjectionRecord;
+            const sourceRunIdentitiesMatch = sourceRunIdentity.sourceRunIdentitiesMatch;
 
             function createSurfaceLedger(options = {}) {
                 const settings = options && typeof options === 'object' ? options : {};
@@ -1099,10 +1101,7 @@
                 if (!candidate || !record) return false;
                 if (stringify(candidate.targetSurfaceId || '') !== stringify(record.targetSurfaceId || '')) return false;
                 if (!sameRect(candidate.targetBounds || candidate.bounds, record.targetBounds || record.bounds)) return false;
-                const runId = stringify(record.sourceRunId || '');
-                if (runId && stringify(candidate.sourceRunId || '') === runId) return true;
-                const slotKey = stringify(record.sourceSlotKey || '');
-                return !!(slotKey && stringify(candidate.sourceSlotKey || '') === slotKey);
+                return sourceRunIdentitiesMatch(candidate, record);
             }
 
             function copyReplayOp(op) {

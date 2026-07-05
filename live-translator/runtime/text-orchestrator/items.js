@@ -11,7 +11,7 @@
                 const { resolveLifecyclePolicy, applyLifecyclePolicy } = scope.controllerFacades.policy;
                 const { buildSlotSignature } = scope.controllerFacades.identity;
                 const { rememberSourceTranslation, isSkippedItem } = scope.controllerFacades.sourceCache;
-                const { schedulePublish } = scope.controllerFacades.diagnostics;
+                const { schedulePublish } = scope.controllerFacades.intel;
 
                 /**
                  * Insert or update the canonical mutable item record.
@@ -84,6 +84,7 @@
                         generation: 0,
                         renderStrategy: '',
                         renderCycle: null,
+                        renderTarget: null,
                         visible: true,
                         screenState: 'visible',
                         backgrounded: false,
@@ -210,11 +211,9 @@
                 function resetItemForSourceReplacement(item) {
                     if (!item) return false;
                     applyLifecyclePolicy(item, resolveLifecyclePolicy(item, 'stale', {
-                        lifecycleIntent: 'source-replaced',
                         message: 'same slot source changed',
-                        cancelTranslation: true,
+                        policy: { kind: 'source-replaced' },
                         cancelOptions: { abortJob: true },
-                        preservePriority: true,
                     }));
                     clearItemTranslationRequest(item);
                     item.translation = '';
@@ -300,7 +299,7 @@
                 function markItemRenderCycleAdmitted(item, command = {}) {
                     if (!item || !item.id) return null;
                     const patch = createRenderCyclePatch(item, command, {
-                        commandId: firstString(command && command.id, command && command.commandId),
+                        commandId: firstString(command && command.commandId),
                         commandGeneration: Number(command && command.generation) || Number(item.generation) || 0,
                         renderCommand: pickSerializableObject(command || {}),
                         translationReceived: firstString(command && command.text, item.translationReceived, item.translation),
@@ -320,7 +319,7 @@
                     const decisionSource = decision && typeof decision === 'object' ? decision : {};
                     const commandSource = command && typeof command === 'object' ? command : {};
                     const patch = createRenderCyclePatch(item, decisionSource, {
-                        commandId: firstString(decisionSource.commandId, commandSource.id),
+                        commandId: firstString(decisionSource.commandId, commandSource.commandId),
                         commandGeneration: Number(decisionSource.commandGeneration) || Number(commandSource.generation) || Number(item.generation) || 0,
                         renderCommand: pickSerializableObject(commandSource),
                         renderCommit: decisionSource.renderCommit && typeof decisionSource.renderCommit === 'object'

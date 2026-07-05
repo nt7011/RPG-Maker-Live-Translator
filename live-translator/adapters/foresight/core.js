@@ -12,7 +12,7 @@
         loadBefore: ['adapters.foresight'],
         run({ partsRegistry }, { scope: globalScope }) {
             const parts = partsRegistry.getParts();
-            const { DEFAULT_BUDGET, DEFAULT_MAX_SCAN_COMMANDS, MESSAGE_BUDGET_COST, BRANCH_BUDGET_STRATEGY, MAX_NESTED_LIST_DEPTH, MAX_NESTED_LISTS_PER_COMMAND, MAX_BRANCH_DEPTH, DIAGNOSTIC_ACTION_LIMIT, RECENT_SCAN_LIMIT, COMMAND_CATALOG_ASSET, BRANCH_MARKER_CODES, RESOLVABLE_CONTROL_FLOW_CODES, commandCatalog } = parts;
+            const { DEFAULT_BUDGET, DEFAULT_MAX_SCAN_COMMANDS, MESSAGE_BUDGET_COST, BRANCH_BUDGET_STRATEGY, MAX_NESTED_LIST_DEPTH, MAX_NESTED_LISTS_PER_COMMAND, MAX_BRANCH_DEPTH, INTEL_ACTION_LIMIT, RECENT_SCAN_LIMIT, COMMAND_CATALOG_ASSET, BRANCH_MARKER_CODES, RESOLVABLE_CONTROL_FLOW_CODES, commandCatalog } = parts;
             const { resolveMessageOrigin } = parts.facades.origin;
             const { collectLinearMessageBlocks } = parts.facades.scanner;
             const { createInitialBudgetSnapshot } = parts.facades.budget;
@@ -28,14 +28,14 @@
                     const budgetLimit = positiveInteger(options.budget, DEFAULT_BUDGET);
                     const maxMessages = positiveInteger(options.maxMessages, budgetLimit);
                     const maxScanCommands = positiveInteger(options.maxScanCommands, DEFAULT_MAX_SCAN_COMMANDS);
-                    const diagnostics = createIntel({
+                    const intel = createIntel({
                         settings: options.settings,
                     });
 
                     function collectUpcomingMessageBlocks(input = {}) {
                         const origin = resolveMessageOrigin(input.currentMessageOrigin);
                         if (!origin) {
-                            recordScan(diagnostics, {
+                            recordScan(intel, {
                                 interpreterId: '',
                                 matchedCurrentMessage: false,
                                 status: 'miss',
@@ -47,7 +47,7 @@
                             });
                             return [];
                         }
-                        const policy = parts.getIntelPolicy(diagnostics);
+                        const policy = parts.getIntelPolicy(intel);
                         const previewMessageLimit = getIntelForesightMessageLimit(policy);
                         const captureForesightActions = policy
                             && policy.surface === true
@@ -65,12 +65,12 @@
                             {
                                 captureCommandActions: captureForesightActions || previewMessageLimit > 0,
                                 commandActionMessageLimit: captureForesightActions ? 0 : previewMessageLimit,
-                                captureBlockDiagnostics: policy
+                                captureBlockIntel: policy
                                     && policy.surface === true
                                     && policy.captureForesightMetadata === true,
                             }
                         );
-                        recordScan(diagnostics, Object.assign({}, result.diagnostics, {
+                        recordScan(intel, Object.assign({}, result.intel, {
                             interpreterId: origin.interpreterId,
                             matchedCurrentMessage: true,
                         }));
@@ -78,16 +78,16 @@
                     }
 
                     function getSnapshot(optionsArg = {}) {
-                        return intelSnapshot(diagnostics, optionsArg);
+                        return intelSnapshot(intel, optionsArg);
                     }
 
                     function publishSnapshot() {
-                        return publishIntelSnapshot(diagnostics);
+                        return publishIntelSnapshot(intel);
                     }
 
                     function clearSnapshot() {
-                        clearIntel(diagnostics);
-                        return publishIntelSnapshot(diagnostics);
+                        clearIntel(intel);
+                        return publishIntelSnapshot(intel);
                     }
 
                     const api = {

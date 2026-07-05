@@ -1,4 +1,4 @@
-// Diagnostic clone helpers for safe GUI snapshots.
+// Intel clone helpers for safe GUI snapshots.
 (() => {
     'use strict';
 
@@ -12,7 +12,7 @@
         loadBefore: ['adapters.foresight'],
         run({ partsRegistry }) {
             const parts = partsRegistry.getParts();
-            const { DEFAULT_BUDGET, DEFAULT_MAX_SCAN_COMMANDS, MESSAGE_BUDGET_COST, BRANCH_BUDGET_STRATEGY, MAX_NESTED_LIST_DEPTH, MAX_NESTED_LISTS_PER_COMMAND, MAX_BRANCH_DEPTH, DIAGNOSTIC_ACTION_LIMIT, RECENT_SCAN_LIMIT, COMMAND_CATALOG_ASSET, BRANCH_MARKER_CODES, RESOLVABLE_CONTROL_FLOW_CODES, commandCatalog } = parts;
+            const { DEFAULT_BUDGET, DEFAULT_MAX_SCAN_COMMANDS, MESSAGE_BUDGET_COST, BRANCH_BUDGET_STRATEGY, MAX_NESTED_LIST_DEPTH, MAX_NESTED_LISTS_PER_COMMAND, MAX_BRANCH_DEPTH, INTEL_ACTION_LIMIT, RECENT_SCAN_LIMIT, COMMAND_CATALOG_ASSET, BRANCH_MARKER_CODES, RESOLVABLE_CONTROL_FLOW_CODES, commandCatalog } = parts;
             const { getStopReasonLabel } = parts.facades.intel;
             const { finiteNumber, nonEmptyString } = parts.facades.utils;
 
@@ -20,10 +20,10 @@
                     if (!Array.isArray(actions)) return [];
                     return actions.map((action) => Object.assign({}, action, {
                         branchPath: Array.isArray(action && action.branchPath) ? action.branchPath.slice() : [],
-                        listContext: cloneDiagnosticValue(action && action.listContext, 0),
-                        nestedList: cloneDiagnosticValue(action && action.nestedList, 0),
-                        nestedLists: cloneDiagnosticValue(action && action.nestedLists, 0),
-                        budget: cloneDiagnosticValue(action && action.budget, 0),
+                        listContext: cloneIntelValue(action && action.listContext, 0),
+                        nestedList: cloneIntelValue(action && action.nestedList, 0),
+                        nestedLists: cloneIntelValue(action && action.nestedLists, 0),
+                        budget: cloneIntelValue(action && action.budget, 0),
                         consumedCommands: cloneConsumedCommands(action && action.consumedCommands),
                         routeCommandActions: cloneConsumedCommands(action && action.routeCommandActions),
                         controlFlowTarget: cloneControlFlowTarget(action && action.controlFlowTarget),
@@ -68,7 +68,7 @@
                             joinIndex: finiteNumber(source.joinIndex),
                             stopReason: nonEmptyString(source.stopReason),
                             stopReasonLabel: source.stopReason ? getStopReasonLabel(source.stopReason) : '',
-                            budget: cloneDiagnosticValue(source.budget, 0),
+                            budget: cloneIntelValue(source.budget, 0),
                             actions: cloneCommandActions(actions),
                         };
                     });
@@ -89,25 +89,25 @@
             function cloneConsumedCommands(commands) {
                     if (!Array.isArray(commands)) return [];
                     return commands.map((command) => Object.assign({}, command, {
-                        parameters: cloneDiagnosticValue(command && command.parameters, 0),
+                        parameters: cloneIntelValue(command && command.parameters, 0),
                     }));
                 }
 
-            function cloneDiagnosticValue(value, depth) {
+            function cloneIntelValue(value, depth) {
                     if (value === null || value === undefined) return value;
                     const type = typeof value;
                     if (type === 'string' || type === 'number' || type === 'boolean') return value;
                     if (depth >= 3) return '[Object]';
-                    if (Array.isArray(value)) return value.slice(0, 24).map((entry) => cloneDiagnosticValue(entry, depth + 1));
+                    if (Array.isArray(value)) return value.slice(0, 24).map((entry) => cloneIntelValue(entry, depth + 1));
                     if (type !== 'object') return String(value);
                     const result = {};
                     Object.keys(value).slice(0, 24).forEach((key) => {
-                        result[key] = cloneDiagnosticValue(value[key], depth + 1);
+                        result[key] = cloneIntelValue(value[key], depth + 1);
                     });
                     return result;
                 }
 
-            Object.assign(parts, { cloneCommandActions, cloneControlFlowTarget, cloneBranchActions, cloneCommandTable, cloneConsumedCommands, cloneDiagnosticValue });
+            Object.assign(parts, { cloneCommandActions, cloneControlFlowTarget, cloneBranchActions, cloneCommandTable, cloneConsumedCommands, cloneIntelValue });
         },
     });
 })();

@@ -288,7 +288,7 @@
         }
         
         /**
-         * Keep inactive hidden sprite entries out of active diagnostics until seen.
+         * Keep inactive hidden sprite entries out of active intel until seen.
          */
         function observeEntryWhenVisibleOrActive(entry, status) {
             if (!entry || entry.stale) return null;
@@ -347,10 +347,13 @@
             if (!entry || entry.stale) return false;
             entry.stale = true;
             if (entry.recordId) {
-                scope.adapterContract.cancelItemTranslation(entry, reason, { abortJob: true });
                 scope.adapterContract.retireItem(entry, status || 'stale', {
                     eventType: status === 'stale' ? 'item.stale' : `item.${status || 'stale'}`,
                     message: reason,
+                    policy: {
+                        kind: 'retired',
+                        translationAction: 'cancel',
+                    },
                     details: { mode: 'sprite-bitmap', spriteId: entry.spriteState ? entry.spriteState.id : '' },
                 });
                 scope.recordsByItemId.delete(entry.recordId);
@@ -378,10 +381,10 @@
          * Apply an orchestrator render command to an entry or glyph run.
          */
         function applyRenderCommand(record, command = {}) {
-            if (!record) return false;
+            if (!record) return createRenderDecision('rejected', 'missing-sprite-render-record');
             if (record.recordKind === 'entry') return completeEntryFromCommand(record, command);
             if (record.recordKind === 'run') return completeRunFromCommand(record, command);
-            return false;
+            return createRenderDecision('rejected', 'unknown-sprite-render-record');
         }
         
         function getRenderGeneration(record) {
@@ -422,18 +425,25 @@
             const restored = restoreTranslatedText(translated, entry.codecState, entry.rawText);
             const visible = sanitizeVisibleText(restored);
             if (!visible || visible === entry.trimmedText) {
+                const reason = visible ? 'translated text matched original' : 'restored text empty';
                 updateItem(entry, { status: 'skipped' }, 'item.skipped', {
-                    reason: visible ? 'translated text matched original' : 'restored text empty',
+                    reason,
                     translationReceived: translated,
                     mode: 'sprite-bitmap',
                 });
-                return true;
+                return createRenderDecision('committed', reason, {
+                    translationReceived: translated,
+                    mode: 'sprite-bitmap',
+                });
             }
         
             entry.renderedText = restored;
             if (!renderSpriteOverlay(entry.spriteState, command.metadata && command.metadata.sourceHint || 'translation')) {
                 entry.renderedText = '';
-                return false;
+                return createRenderDecision('rejected', 'sprite-bitmap-render-failed', {
+                    translationReceived: translated,
+                    mode: 'sprite-bitmap',
+                });
             }
             updateItem(entry, {
                 status: 'completed',
@@ -444,7 +454,19 @@
                 translationReceived: translated,
                 translationDrawn: restored,
             });
-            return true;
+            return createRenderDecision('committed', 'sprite-bitmap-rendered', {
+                translationReceived: translated,
+                translationDrawn: restored,
+                mode: 'sprite-bitmap',
+            });
+        }
+
+        function createRenderDecision(status, reason, details = null) {
+            return {
+                status,
+                reason,
+                details: details && typeof details === 'object' ? details : {},
+            };
         }
         
         /**

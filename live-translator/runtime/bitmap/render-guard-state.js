@@ -247,7 +247,7 @@
                         // quiet while native window rendering is active.
                         suppressInlineReplacement: !!(suppressReason || deferReason),
                         suppressNativeReplacement: !!(suppressReason || deferReason),
-                        diagnosticReason: suppressReason || deferReason || '',
+                        intelReason: suppressReason || deferReason || '',
                     });
                 }
 
@@ -307,14 +307,14 @@
 
             function createSourceObservationPolicy(input = {}) {
                 const source = input && typeof input === 'object' ? input : {};
-                const diagnosticReason = stringify(source.diagnosticReason || '');
+                const intelReason = stringify(source.intelReason || '');
                 return freezeApi({
                     suppressSourceObservation: source.suppressSourceObservation === true,
                     deferSourceDispatch: source.deferSourceDispatch === true,
                     suppressInlineReplacement: source.suppressInlineReplacement === true,
                     suppressNativeReplacement: source.suppressNativeReplacement === true,
-                    diagnosticReason,
-                    reason: diagnosticReason,
+                    intelReason,
+                    reason: intelReason,
                 });
             }
 

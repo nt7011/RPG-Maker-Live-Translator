@@ -1,6 +1,6 @@
 // Copied-target proof schema.
 //
-// Copied-target redraw diagnostics cross bitmap composition, render commits,
+// Copied-target redraw intel cross bitmap composition, render commits,
 // and snapshot artifacts. This module owns the canonical data shape so those
 // boundaries copy the same fields instead of maintaining parallel clone logic.
 (() => {
@@ -63,7 +63,7 @@
                     coverageGapCount: Math.max(finiteNumber(source.coverageGapCount), coverageGaps.length),
                     surfaceReplayPlan: copySurfaceReplayPlan(source.surfaceReplayPlan),
                     executionSteps: copyExecutionSteps(source.executionSteps),
-                    plannerDiagnostics: copyPlannerDiagnostics(source.plannerDiagnostics),
+                    plannerIntel: copyPlannerIntel(source.plannerIntel),
                     dirtyUpload: copyDirtyUpload(dirtySource),
                     skippedCandidates: copySkippedCandidates(source.skippedCandidates),
                     candidateProofs: copyCandidateProofs(source.candidateProofs),
@@ -159,7 +159,7 @@
                     ),
                     surfaceReplayPlan: summarizeSurfaceReplayPlans(compositions, replayCoverageRects),
                     executionSteps: summarizeExecutionSteps(compositions),
-                    plannerDiagnostics: summarizePlannerDiagnostics(compositions, {
+                    plannerIntel: summarizePlannerIntel(compositions, {
                         dependencySearchRects,
                         requestedMaterialRestoreCoverageRects,
                         survivorCoverageRects,
@@ -253,10 +253,10 @@
                     rejectedOpCount += nonNegativeNumber(plan.rejectedOpCount);
                     copySurfaceReplayRejectedOps(plan.rejectedOps).forEach((item) => rejectedOps.push(item));
                     copySurfaceReplaySearchProofs(plan.searchProofs).forEach((item) => searchProofs.push(item));
-                    const diagnostics = objectOrEmpty(proof && proof.plannerDiagnostics);
-                    const diagnosticMethodCounts = objectOrEmpty(diagnostics.surfaceReplayMethodCounts);
-                    if (Object.keys(diagnosticMethodCounts).length) {
-                        mergeStringNumberMap(methodCounts, diagnosticMethodCounts);
+                    const intel = objectOrEmpty(proof && proof.plannerIntel);
+                    const intelMethodCounts = objectOrEmpty(intel.surfaceReplayMethodCounts);
+                    if (Object.keys(intelMethodCounts).length) {
+                        mergeStringNumberMap(methodCounts, intelMethodCounts);
                     } else {
                         mergeStringNumberMap(methodCounts, plan.methodCounts);
                     }
@@ -290,7 +290,7 @@
                 return result;
             }
 
-            function summarizePlannerDiagnostics(proofs, coverage) {
+            function summarizePlannerIntel(proofs, coverage) {
                 const methodCounts = {};
                 let surfaceReplayItemCount = 0;
                 let surfaceReplayRejectedOpCount = 0;
@@ -298,13 +298,13 @@
                 let invariantViolationCount = 0;
                 const invariantViolationReasons = {};
                 (Array.isArray(proofs) ? proofs : []).forEach((proof) => {
-                    const diagnostics = objectOrEmpty(proof && proof.plannerDiagnostics);
-                    surfaceReplayItemCount += nonNegativeNumber(diagnostics.surfaceReplayItemCount);
-                    surfaceReplayRejectedOpCount += nonNegativeNumber(diagnostics.surfaceReplayRejectedOpCount);
-                    candidateCount += nonNegativeNumber(diagnostics.candidateCount);
-                    invariantViolationCount += nonNegativeNumber(diagnostics.invariantViolationCount);
-                    mergeStringNumberMap(methodCounts, diagnostics.surfaceReplayMethodCounts);
-                    mergeStringNumberMap(invariantViolationReasons, diagnostics.invariantViolationReasons);
+                    const intel = objectOrEmpty(proof && proof.plannerIntel);
+                    surfaceReplayItemCount += nonNegativeNumber(intel.surfaceReplayItemCount);
+                    surfaceReplayRejectedOpCount += nonNegativeNumber(intel.surfaceReplayRejectedOpCount);
+                    candidateCount += nonNegativeNumber(intel.candidateCount);
+                    invariantViolationCount += nonNegativeNumber(intel.invariantViolationCount);
+                    mergeStringNumberMap(methodCounts, intel.surfaceReplayMethodCounts);
+                    mergeStringNumberMap(invariantViolationReasons, intel.invariantViolationReasons);
                 });
                 return {
                     dependencySearchCount: rectCount(coverage && coverage.dependencySearchRects),
@@ -362,7 +362,7 @@
                     ),
                     searchProofs: copySurfaceReplaySearchProofs(source.searchProofs),
                     methodCounts: copyStringNumberMap(source.methodCounts),
-                    diagnostics: copyPlainScalars(source.diagnostics),
+                    intel: copyPlainScalars(source.intel),
                 };
             }
 
@@ -410,7 +410,7 @@
                 };
             }
 
-            function copyPlannerDiagnostics(value) {
+            function copyPlannerIntel(value) {
                 const source = objectOrEmpty(value);
                 return {
                     dependencySearchCount: finiteNumber(source.dependencySearchCount),
@@ -833,7 +833,7 @@
                 copyCoverageGaps,
                 copySurfaceReplayPlan,
                 copyExecutionSteps,
-                copyPlannerDiagnostics,
+                copyPlannerIntel,
                 copyDirtyUpload,
                 copySkippedCandidates,
                 copyCandidateProofs,

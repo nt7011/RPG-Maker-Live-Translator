@@ -78,7 +78,7 @@
                         throw new Error('[LiveTranslator] logger context is required before cache context.');
                     }
 
-                    const { logger, telemetry, preview, dbg, diag } = loggerContext;
+                    const { logger, telemetry, preview, dbg, traceLog } = loggerContext;
                     const pathContext = paths && typeof paths === 'object' ? paths : resolvePathContext();
                     const configModule = resolveConfigModule();
                     const translatorConfig = configModule.getTranslatorConfig(globalScope);
@@ -118,7 +118,7 @@
                         isLocalProvider: providerContext.isLocalProvider === true,
                         isCacheOnlyProvider: providerContext.isCacheOnlyProvider === true,
                         dbg,
-                        diag,
+                        traceLog,
                         settings,
                         paths: pathContext,
                     });

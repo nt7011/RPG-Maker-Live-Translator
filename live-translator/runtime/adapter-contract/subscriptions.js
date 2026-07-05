@@ -49,7 +49,7 @@
                     return subscribe((event) => {
                         if (!event || typeof event !== 'object') return;
                         const eventType = String(event.type || '');
-                        if (eventType === 'item.render_queued') {
+                        if (eventType === 'item.render_command_ready') {
                             const command = createRenderCommand(event.details);
                             if (renderStrategy && String(command.strategy || '') !== renderStrategy) return;
                             dispatchRenderCommand(source, event, command, records);
@@ -61,10 +61,12 @@
                             && String(event.adapterId) !== adapterId) {
                             return;
                         }
-                        if (eventType === 'item.skipped') {
+                        if (eventType === 'item.skipped'
+                            || eventType === 'item.translation_skipped_detached') {
                             dispatchRecordEvent(source, source.onSkipped, event, null, records, 'skipped');
                         } else if (eventType === 'item.failed'
                             || eventType === 'item.translation_noop'
+                            || eventType === 'item.translation_failed_detached'
                             || eventType === 'item.translation_noop_detached') {
                             dispatchRecordEvent(source, source.onFailed, event, null, records, 'failed');
                         } else if (typeof source.onEvent === 'function') {
@@ -74,7 +76,7 @@
                 }
 
                 function dispatchRenderCommand(source, event, command, records) {
-                    if (typeof source.onRenderQueued !== 'function') return false;
+                    if (typeof source.onRenderCommandReady !== 'function') return false;
                     const recordId = getEventRecordId(event, command);
                     const route = createRenderRoute(event, command, recordId, adapterId);
                     const target = resolveEventRecord(source, recordId, event, command, records);
@@ -85,7 +87,7 @@
                             createRenderDecision('rejected', 'missing-adapter-record', command, route),
                             route
                         );
-                        dispatchMissingRecord(source, route, event, command, 'render_queued');
+                        dispatchMissingRecord(source, route, event, command, 'render_command_ready');
                         return false;
                     }
                     const lifecycleRecord = resolveLifecycleRecord(source, target, command, route);
@@ -100,8 +102,8 @@
                     rememberRecordEvent(lifecycleRecord, recordId, event);
                     let adapterOutcome = false;
                     try {
-                        adapterOutcome = callAdapterCallback('subscribeRecords.render_queued', () => {
-                            return source.onRenderQueued(target, command, route);
+                        adapterOutcome = callAdapterCallback('subscribeRecords.render_command_ready', () => {
+                            return source.onRenderCommandReady(target, command, route);
                         });
                     } catch (error) {
                         dispatchRenderRejected(
@@ -210,7 +212,7 @@
                             describeCallbackError(error)
                         );
                     }
-                    if (isDeniedRenderCommandRebase(proof)) {
+                    if (isRejectedRenderCommandRebaseProof(proof)) {
                         return createRenderDecision('rejected', 'generation-mismatch', command, route, {
                             commandGeneration: context.commandGeneration,
                             targetGeneration: context.targetGeneration,
@@ -348,12 +350,9 @@
 
             function createRenderCommand(details) {
                 const source = details && typeof details === 'object' ? details : {};
-                const commandId = nonEmptyString(source.commandId, source.id);
+                const commandId = nonEmptyString(source.commandId);
                 return freezePlainObject({
                     commandId,
-                    // Legacy alias: adapter callbacks still receive command.id.
-                    // Remove after adapter render paths use commandId directly.
-                    id: commandId,
                     itemId: nonEmptyString(source.itemId),
                     surfaceId: nonEmptyString(source.surfaceId),
                     targetSurfaceId: nonEmptyString(source.targetSurfaceId, source.surfaceId),
@@ -383,7 +382,7 @@
                     targetSurfaceId: nonEmptyString(command && command.targetSurfaceId, command && command.surfaceId, event && event.surfaceId),
                     status: event && event.status ? String(event.status) : '',
                     message: event && event.message ? String(event.message) : '',
-                    commandId: nonEmptyString(command && command.commandId, command && command.id),
+                    commandId: nonEmptyString(command && command.commandId),
                     strategy: nonEmptyString(command && command.strategy),
                     commandGeneration: numberOrZero(command && command.generation),
                     renderIntent: nonEmptyString(command && command.renderIntent),
@@ -408,7 +407,7 @@
                     reason: normalizedReason,
                     recordId: route && route.recordId ? route.recordId : '',
                     itemId: route && route.itemId ? route.itemId : '',
-                    commandId: command && (command.commandId || command.id) ? (command.commandId || command.id) : '',
+                    commandId: command && command.commandId ? command.commandId : '',
                     strategy: command && command.strategy ? command.strategy : '',
                     commandGeneration: numberOrZero(command && command.generation),
                     details: normalizedDetails,
@@ -430,7 +429,7 @@
                 const targetGeneration = numberOrZero(source.targetGeneration);
                 return freezePlainObject({
                     reason: 'generation-mismatch',
-                    commandId: nonEmptyString(command && command.commandId, command && command.id, route && route.commandId),
+                    commandId: nonEmptyString(command && command.commandId, route && route.commandId),
                     recordId: nonEmptyString(route && route.recordId, command && command.itemId),
                     itemId: nonEmptyString(route && route.itemId, route && route.recordId, command && command.itemId),
                     adapterId: nonEmptyString(route && route.adapterId),
@@ -446,7 +445,7 @@
             }
 
             function normalizeRenderCommandRebaseRequest(proof, command, route, context) {
-                if (!isAcceptedRenderCommandRebase(proof)) return null;
+                if (!isRebasedRenderCommandProof(proof)) return null;
                 const source = proof && typeof proof === 'object' ? proof : {};
                 const replacementSource = source.replacementCommand && typeof source.replacementCommand === 'object'
                     ? source.replacementCommand
@@ -476,7 +475,7 @@
                     copyPlainObject(source.metadata, {}),
                     copyPlainObject(replacementSource.metadata, {}),
                     {
-                        rebasedFromCommandId: nonEmptyString(command && command.commandId, command && command.id, route && route.commandId),
+                        rebasedFromCommandId: nonEmptyString(command && command.commandId, route && route.commandId),
                         oldGeneration,
                         newGeneration,
                     }
@@ -489,7 +488,7 @@
                 if (currentSlotProof) details.currentSlotProof = currentSlotProof;
                 return freezePlainObject({
                     reason: nonEmptyString(source.reason, 'render-command-rebased'),
-                    commandId: nonEmptyString(command && command.commandId, command && command.id, route && route.commandId),
+                    commandId: nonEmptyString(command && command.commandId, route && route.commandId),
                     oldGeneration,
                     newGeneration,
                     commandGeneration: oldGeneration,
@@ -517,21 +516,12 @@
                 });
             }
 
-            function isAcceptedRenderCommandRebase(value) {
-                if (!value || typeof value !== 'object') return false;
-                const status = String(value.status || value.result || value.decision || '').toLowerCase();
-                return value.accepted === true
-                    || value.rebased === true
-                    || status === 'accepted'
-                    || status === 'rebased';
+            function isRebasedRenderCommandProof(value) {
+                return !!(value && typeof value === 'object' && nonEmptyString(value.status) === 'rebased');
             }
 
-            function isDeniedRenderCommandRebase(value) {
-                if (!value || typeof value !== 'object') return false;
-                const status = String(value.status || value.result || value.decision || '').toLowerCase();
-                return value.accepted === false
-                    || status === 'denied'
-                    || status === 'rejected';
+            function isRejectedRenderCommandRebaseProof(value) {
+                return !!(value && typeof value === 'object' && nonEmptyString(value.status) === 'rejected');
             }
 
             function getRebaseReplacementText(source, replacementSource, command) {
@@ -547,19 +537,12 @@
             }
 
             function normalizeRenderCallbackDecision(value, command, route) {
-                if (value === true) return createRenderDecision('committed', 'committed', command, route);
-                if (typeof value === 'string') {
-                    const status = normalizeRenderDecisionStatus(value);
-                    if (status === 'committed') return createRenderDecision('committed', value || 'committed', command, route);
-                    if (status === 'deferred') return createRenderDecision('deferred', value || 'deferred', command, route);
-                    return createRenderDecision('rejected', value || 'adapter-declined', command, route);
-                }
                 if (value && typeof value === 'object') {
-                    const status = normalizeRenderDecisionStatus(value.status || value.result || value.decision);
+                    const status = normalizeRenderDecisionStatus(value.status);
                     const reason = nonEmptyString(value.reason, status === 'committed' ? 'committed' : (status === 'deferred' ? 'deferred' : 'adapter-declined'));
                     return createRenderDecision(status, reason, command, route, value.details || {}, value);
                 }
-                return createRenderDecision('rejected', 'adapter-declined', command, route);
+                return createRenderDecision('rejected', 'adapter-render-outcome-required', command, route);
             }
 
             function normalizeRenderDecisionDetails(details, source = {}) {
@@ -616,7 +599,7 @@
                     surfaceId: nonEmptyString(route && route.targetSurfaceId, route && route.surfaceId, command && command.targetSurfaceId, command && command.surfaceId, commitSource.surfaceId),
                     slotKey: nonEmptyString(sourceObject.slotKey, details && details.slotKey, commandMetadata.slotKey, commitSource.slotKey),
                     strategy: nonEmptyString(command && command.strategy, route && route.strategy, commitSource.strategy),
-                    commandId: nonEmptyString(command && command.commandId, command && command.id, route && route.commandId, commitSource.commandId),
+                    commandId: nonEmptyString(command && command.commandId, route && route.commandId, commitSource.commandId),
                     commandGeneration: numberOrZero(command && command.generation) || numberOrZero(route && route.commandGeneration) || numberOrZero(commitSource.commandGeneration),
                     generation: numberOrZero(command && command.generation) || numberOrZero(commitSource.generation),
                     translationReceived: nonEmptyString(details && details.translationReceived, sourceObject.translationReceived, command && command.text, commitSource.translationReceived),
@@ -642,10 +625,8 @@
 
             function resolveDecisionRenderPhase(status) {
                 const phases = renderTransaction.PHASES || {};
-                const normalized = String(status || '').toLowerCase();
-                // Legacy callback payload alias: remove after callback result strings
-                // are fully migrated from "accepted" to "committed".
-                if (normalized === 'committed' || normalized === 'accepted') return phases.RENDER_COMMITTED || 'render-committed';
+                const normalized = String(status || '').trim();
+                if (normalized === 'committed') return phases.RENDER_COMMITTED || 'render-committed';
                 if (normalized === 'deferred') return phases.RENDER_DEFERRED || 'render-deferred';
                 if (normalized === 'noop') return phases.RENDER_NOOP || 'render-noop';
                 return phases.RENDER_REJECTED || 'render-rejected';

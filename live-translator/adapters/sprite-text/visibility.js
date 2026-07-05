@@ -135,13 +135,14 @@
         }
         
         /**
-         * Move terminal off-screen sprite records out of the active diagnostics set.
+         * Move terminal off-screen sprite records out of the active intel set.
          */
         function deactivateHiddenSpriteRecord(record, reason, details) {
             if (!record || !record.recordId || !isRecordActive(record)) return false;
             scope.adapterContract.retireItem(record, 'disappeared', {
                 eventType: 'item.disappeared',
                 message: reason || 'sprite-hidden',
+                policy: { kind: 'retired' },
                 details,
             });
             return true;

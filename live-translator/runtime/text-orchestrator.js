@@ -30,8 +30,9 @@
             identityController: 'runtime.textOrchestrator.identity',
             sourceCacheController: 'runtime.textOrchestrator.sourceCache',
             intelController: 'runtime.textOrchestrator.intel',
+            historyStore: 'runtime.textOrchestrator.historyStore',
         },
-        factory({ constants, textLifecycle, renderTransaction, baseUtils, recordUtils, eligibilityUtils, serviceUtils, controllerFacades, policyController, lifecycleController, ownershipController, ownershipSurfaceDrawController, requestController, translationStateController, renderController, itemsController, eventsController, identityController, sourceCacheController, intelController }, { scope: globalScope }) {
+        factory({ constants, textLifecycle, renderTransaction, baseUtils, recordUtils, eligibilityUtils, serviceUtils, controllerFacades, policyController, lifecycleController, ownershipController, ownershipSurfaceDrawController, requestController, translationStateController, renderController, itemsController, eventsController, identityController, sourceCacheController, intelController, historyStore }, { scope: globalScope }) {
             const controllers = {
                 controllerFacades,
                 policy: policyController,
@@ -85,9 +86,8 @@
             });
 
             function resolveItemTrailStore(globalScopeRef, options) {
-                const hooks = globalScopeRef && globalScopeRef.LiveTranslatorDiagnosticsHooks;
-                const factory = hooks && typeof hooks.createTextOrchestratorTrailStore === 'function'
-                    ? hooks.createTextOrchestratorTrailStore
+                const factory = historyStore && typeof historyStore.createTextOrchestratorTrailStore === 'function'
+                    ? historyStore.createTextOrchestratorTrailStore
                     : null;
                 if (!factory) return noopItemTrailStore;
                 try {
@@ -163,11 +163,10 @@
                 });
                 scope.itemTrailStore = resolveItemTrailStore(globalScope, {
                     itemEventLimit: scope.itemEventLimit,
-                    cloneEvent: scope.cloneDiagnosticEvent,
+                    cloneEvent: scope.cloneIntelEvent,
                 });
 
                 const methodControllers = {
-                    normalizeLifecycleIntent: 'policy',
                     resolveLifecyclePolicy: 'policy',
                     applyLifecyclePolicy: 'policy',
                     resolveBackgroundPriorityPolicy: 'policy',
@@ -179,6 +178,8 @@
                     observeRecord: 'lifecycle',
                     updateItem: 'lifecycle',
                     retireItem: 'lifecycle',
+                    invalidateRenderTarget: 'lifecycle',
+                    retargetRenderTarget: 'lifecycle',
                     recordDraw: 'lifecycle',
                     recordDecision: 'lifecycle',
                     recordTranslationEvent: 'lifecycle',
@@ -340,6 +341,8 @@
                     observeRecord: scope.observeRecord,
                     updateItem: scope.updateItem,
                     retireItem: scope.retireItem,
+                    invalidateRenderTarget: scope.invalidateRenderTarget,
+                    retargetRenderTarget: scope.retargetRenderTarget,
                     requestItemTranslation: scope.requestItemTranslation,
                     retryFailedTranslations: scope.retryFailedTranslations,
                     cancelItemTranslation: scope.cancelItemTranslation,

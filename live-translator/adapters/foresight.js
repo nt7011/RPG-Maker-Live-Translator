@@ -1,5 +1,5 @@
 // Game Message foresight scanner public runtime module.
-// Support files register catalog, traversal, budget, and diagnostics pieces in the internal parts registry.
+// Support files register catalog, traversal, budget, and intel pieces in the internal parts registry.
 (() => {
     'use strict';
 

@@ -35,10 +35,10 @@ function syncFoldedPanelDefaults(policySnapshot = getGuiPolicySnapshot()) {
     applyFoldedPanelDefault('active-text-panel', 'activeText', true, 'active:default');
     applyFoldedPanelDefault('detached-text-panel', 'detachedText', true, 'detached:default');
     applyFoldedPanelDefault('archived-text-panel', 'archivedText', true, 'archived:default');
-    if (typeof syncDiagnosticsPanelDefault === 'function') {
-        syncDiagnosticsPanelDefault(
-            typeof createDiagnosticsSummaryModel === 'function'
-                ? createDiagnosticsSummaryModel(policySnapshot)
+    if (typeof syncIntelPanelDefault === 'function') {
+        syncIntelPanelDefault(
+            typeof createIntelSummaryModel === 'function'
+                ? createIntelSummaryModel(policySnapshot)
                 : undefined
         );
     }
@@ -56,9 +56,9 @@ function createTextMetaGrid(item) {
     appendMeta(grid, 'Screen', item.screenState || (item.onScreen === false ? 'offscreen' : 'visible'));
     if (item.disappearedAt) appendMeta(grid, 'Disappeared', formatTime(item.disappearedAt));
     if (item.deactivatedAt) appendMeta(grid, 'Deactivated', formatTime(item.deactivatedAt));
-    appendMeta(grid, 'Lifecycle', item.lifecycleState || item.displayLifecycle || '-');
+    appendMeta(grid, 'Lifecycle', item.lifecycleState || '-');
     appendMeta(grid, 'Priority', Number.isFinite(Number(item.priority)) ? formatNumber(item.priority) : '-');
-    const policy = getTextRecordRuntimePolicyDiagnostics(item);
+    const policy = getTextRecordRuntimePolicyIntel(item);
     if (policy.lifecycle) appendMeta(grid, 'Last Lifecycle Policy', formatPolicySection(policy.lifecycle));
     if (policy.priority) appendMeta(grid, 'Last Priority Policy', formatPolicySection(policy.priority));
     if (policy.request) appendMeta(grid, 'Last Request Policy', formatPolicySection(policy.request));
@@ -177,7 +177,7 @@ function normalizeStatusClass(status) {
     return 'detected';
 }
 
-function normalizeDiagnosticStatusClass(status) {
+function normalizeIntelStatusClass(status) {
     const value = String(status || 'queued').toLowerCase();
     if (value === 'running' || value === 'queued' || value === 'completed' || value === 'canceled') return value;
     if (value === 'failed' || value === 'error') return 'failed';
