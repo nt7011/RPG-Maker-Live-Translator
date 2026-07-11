@@ -202,6 +202,7 @@
                 body.max_output_tokens = Number.isFinite(cfg.max_output_tokens)
                     ? cfg.max_output_tokens
                     : DEFAULT_LOCAL_MAX_OUTPUT_TOKENS;
+                body.reasoning = 'off';
                 return body;
             }
 
