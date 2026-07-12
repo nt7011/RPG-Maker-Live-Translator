@@ -1,6 +1,7 @@
 {
     "schemaVersion": 4,
     "supportDirectory": "live-translator",
+    "errorGuard": "live-translator-error-guard.js",
     "loader": "live-translator-loader.js",
     "fileInventory": {
         "sourceFiles": [
@@ -169,6 +170,7 @@
             "hooks/window/registry-helpers.js",
             "hooks/window/text-scale.js",
             "install-manifest.json",
+            "live-translator-error-guard.js",
             "live-translator-loader.js",
             "live-translator-runtime-loader.js",
             "loader/path-resolver.js",

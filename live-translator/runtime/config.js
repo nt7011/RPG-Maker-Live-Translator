@@ -122,6 +122,13 @@
                 validateBooleanSetting(settings.disableLiveTranslatorGui, 'disableLiveTranslatorGui', logger);
                 validateBooleanSetting(settings.enableForesight, 'enableForesight', logger);
                 validateBooleanSetting(settings.showForesightSpoilers, 'showForesightSpoilers', logger);
+                if (settings.errorHandling && typeof settings.errorHandling === 'object') {
+                    validateBooleanSetting(
+                        settings.errorHandling.suppressRuntimeErrors,
+                        'errorHandling.suppressRuntimeErrors',
+                        logger
+                    );
+                }
                 validateTextScaleSetting(settings.textScaleOthers, 'textScaleOthers', logger);
                 validateIntelSettings(settings, logger);
                 validateDiagnosticsSettings(settings, logger);
@@ -200,6 +207,9 @@
                 }
                 if (assets['settings.json'] && assets['settings.json'].json) {
                     scope.LiveTranslatorSettings = assets['settings.json'].json;
+                }
+                if (scope.LiveTranslatorErrorGuard && typeof scope.LiveTranslatorErrorGuard.applySettings === 'function') {
+                    scope.LiveTranslatorErrorGuard.applySettings(scope.LiveTranslatorSettings);
                 }
                 validateAssets(assets, logger);
                 return {

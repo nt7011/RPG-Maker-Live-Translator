@@ -1,5 +1,8 @@
 {
     "checkUpdates": true,
+    "errorHandling": {
+        "suppressRuntimeErrors": true
+    },
     "disableLiveTranslatorGui": false,
     "enableForesight": true,
     "showForesightSpoilers": false,
