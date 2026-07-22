@@ -48,6 +48,7 @@ function buildLocalChatBody(items, cfg, selection) {
     if (Number.isFinite(cfg.top_k)) body.top_k = cfg.top_k;
     if (Number.isFinite(cfg.min_p)) body.min_p = cfg.min_p;
     if (Number.isFinite(cfg.repeat_penalty)) body.repeat_penalty = cfg.repeat_penalty;
+    if (selection.reasoningSetting === 'off') body.reasoning = 'off';
 
     return body;
 }

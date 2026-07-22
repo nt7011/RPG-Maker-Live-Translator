@@ -65,6 +65,39 @@
                 return marker >= 0 ? selectedVariant.slice(marker + 1).trim() : '';
             }
 
+            function readReasoningCapability(model) {
+                const capabilities = model && model.capabilities && typeof model.capabilities === 'object'
+                    ? model.capabilities
+                    : null;
+                const reasoning = capabilities && capabilities.reasoning && typeof capabilities.reasoning === 'object'
+                    ? capabilities.reasoning
+                    : null;
+                if (!reasoning) return null;
+
+                return {
+                    allowedOptions: Array.isArray(reasoning.allowed_options)
+                        ? reasoning.allowed_options.filter((option) => typeof option === 'string')
+                        : [],
+                    defaultOption: typeof reasoning.default === 'string' ? reasoning.default : '',
+                };
+            }
+
+            function resolveNoReasoningSetting(reasoningCapability, modelLabel) {
+                // Omitting the request field is required for models that do not expose
+                // LM Studio's reasoning control. Sending even "off" to those models is
+                // rejected by /api/v1/chat.
+                if (!reasoningCapability) return '';
+                if (reasoningCapability.allowedOptions.indexOf('off') >= 0) return 'off';
+
+                const allowed = reasoningCapability.allowedOptions.length
+                    ? reasoningCapability.allowedOptions.join(', ')
+                    : 'none';
+                throw new Error(
+                    `LM Studio model "${modelLabel || '<unknown>'}" cannot disable reasoning `
+                    + `(allowed reasoning options: ${allowed}). Translation requires reasoning to be off.`
+                );
+            }
+
             function createLocalModelMetadata(model) {
                 const source = model && typeof model === 'object' ? model : {};
                 return {
@@ -73,6 +106,7 @@
                     displayName: readApiString(source, ['display_name', 'displayName', 'name']),
                     quantization: readQuantizationName(source),
                     selectedVariant: readApiString(source, ['selected_variant', 'selectedVariant']),
+                    reasoningCapability: readReasoningCapability(source),
                 };
             }
 
@@ -94,6 +128,7 @@
             function createSelectionFromInstance(configuredModel, instance) {
                 const source = instance && typeof instance === 'object' ? instance : {};
                 const model = source.model && typeof source.model === 'object' ? source.model : {};
+                const modelLabel = source.instanceId || source.modelKey || model.key || configuredModel;
                 return {
                     configuredModel,
                     requestedModel: source.instanceId,
@@ -105,6 +140,7 @@
                     selectedVariant: model.selectedVariant || '',
                     capacity: source.capacity || 1,
                     capacityVerified: source.capacityVerified === true,
+                    reasoningSetting: resolveNoReasoningSetting(model.reasoningCapability, modelLabel),
                 };
             }
 
@@ -202,8 +238,15 @@
                 body.max_output_tokens = Number.isFinite(cfg.max_output_tokens)
                     ? cfg.max_output_tokens
                     : DEFAULT_LOCAL_MAX_OUTPUT_TOKENS;
-                body.reasoning = 'off';
                 return body;
+            }
+
+            function applyNoReasoningSetting(body, selection) {
+                const requestBody = Object.assign({}, body || {});
+                if (selection && selection.reasoningSetting === 'off') {
+                    requestBody.reasoning = 'off';
+                }
+                return requestBody;
             }
 
             function extractMessageContentFromV1(data) {
@@ -328,12 +371,15 @@
             return {
                 readParallelCapacityDetail,
                 readParallelCapacity,
+                readReasoningCapability,
+                resolveNoReasoningSetting,
                 createLocalModelMetadata,
                 getLoadedLlmInstances,
                 describeLoadedLlmInstances,
                 getLoadedInstancesForModel,
                 selectLocalChatModel,
                 buildLocalChatBody,
+                applyNoReasoningSetting,
                 extractMessageContentFromV1,
                 sanitizeLocalOutput,
                 parseLocalTextOutput,

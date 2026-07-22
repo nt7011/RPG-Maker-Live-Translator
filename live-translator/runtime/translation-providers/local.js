@@ -23,6 +23,7 @@
             } = utils;
             const {
                 assertLocalChatResponseMatchesSelection,
+                applyNoReasoningSetting,
                 buildLocalChatBody,
                 createSseParser,
                 createThinkBlockStripper,
@@ -187,7 +188,10 @@
                         timeoutMs: requestOptions.timeoutMs || cfg.request_timeout_ms,
                     });
                     const url = `${getLocalApiBaseUrl(cfg)}/api/v1/chat`;
-                    const requestBody = { ...body, model: selection.requestedModel };
+                    const requestBody = applyNoReasoningSetting(
+                        { ...body, model: selection.requestedModel },
+                        selection
+                    );
                     try {
                         const response = await fetchImpl(url, {
                             method: 'POST',
@@ -221,7 +225,10 @@
                         timeoutMs: requestOptions.timeoutMs || cfg.request_timeout_ms,
                     });
                     const url = `${getLocalApiBaseUrl(cfg)}/api/v1/chat`;
-                    const requestBody = { ...body, model: selection.requestedModel };
+                    const requestBody = applyNoReasoningSetting(
+                        { ...body, model: selection.requestedModel },
+                        selection
+                    );
                     const onDelta = typeof requestOptions.onDelta === 'function' ? requestOptions.onDelta : null;
                     let reader = null;
 

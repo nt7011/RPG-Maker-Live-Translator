@@ -90,6 +90,38 @@ function assertFetchAvailable() {
     }
 }
 
+function readReasoningCapability(model) {
+    const capabilities = model && model.capabilities && typeof model.capabilities === 'object'
+        ? model.capabilities
+        : null;
+    const reasoning = capabilities && capabilities.reasoning && typeof capabilities.reasoning === 'object'
+        ? capabilities.reasoning
+        : null;
+    if (!reasoning) return null;
+
+    return {
+        allowedOptions: Array.isArray(reasoning.allowed_options)
+            ? reasoning.allowed_options.filter((option) => typeof option === 'string')
+            : [],
+        defaultOption: typeof reasoning.default === 'string' ? reasoning.default : '',
+    };
+}
+
+function resolveNoReasoningSetting(reasoningCapability, modelLabel) {
+    // A model without an exposed reasoning control must receive no reasoning
+    // field. LM Studio rejects unsupported settings instead of ignoring them.
+    if (!reasoningCapability) return '';
+    if (reasoningCapability.allowedOptions.indexOf('off') >= 0) return 'off';
+
+    const allowed = reasoningCapability.allowedOptions.length
+        ? reasoningCapability.allowedOptions.join(', ')
+        : 'none';
+    throw new Error(
+        `LM Studio model "${modelLabel || '<unknown>'}" cannot disable reasoning `
+        + `(allowed reasoning options: ${allowed}). Translation requires reasoning to be off.`
+    );
+}
+
 function getLoadedLlmInstances(models) {
     const out = [];
     for (const model of Array.isArray(models) ? models : []) {
@@ -97,13 +129,26 @@ function getLoadedLlmInstances(models) {
             continue;
         }
         const modelKey = model.key.trim();
+        const reasoningCapability = readReasoningCapability(model);
         const instances = Array.isArray(model.loaded_instances) ? model.loaded_instances : [];
         for (const instance of instances) {
             const instanceId = instance && typeof instance.id === 'string' ? instance.id.trim() : '';
-            if (instanceId) out.push({ instanceId, modelKey });
+            if (instanceId) out.push({ instanceId, modelKey, reasoningCapability });
         }
     }
     return out;
+}
+
+function createLocalChatModelSelection(instance) {
+    const source = instance && typeof instance === 'object' ? instance : {};
+    return {
+        requestedModel: source.instanceId,
+        expectedInstanceId: source.instanceId,
+        reasoningSetting: resolveNoReasoningSetting(
+            source.reasoningCapability,
+            source.instanceId || source.modelKey
+        ),
+    };
 }
 
 function describeLoadedLlmInstances(instances) {
@@ -126,10 +171,7 @@ async function resolveLocalChatModelSelection(cfg, options = {}) {
                 + `${describeLoadedLlmInstances(loadedInstances)}. Load exactly one LLM instance or set the LM Studio model in settings.json to a specific loaded instance identifier.`
             );
         }
-        return {
-            requestedModel: loadedInstances[0].instanceId,
-            expectedInstanceId: loadedInstances[0].instanceId,
-        };
+        return createLocalChatModelSelection(loadedInstances[0]);
     }
 
     const exactModel = models.find((model) => model
@@ -146,18 +188,12 @@ async function resolveLocalChatModelSelection(cfg, options = {}) {
                 + `${describeLoadedLlmInstances(instances)}. Set the LM Studio model in settings.json to a specific loaded instance identifier.`
             );
         }
-        return {
-            requestedModel: instances[0].instanceId,
-            expectedInstanceId: instances[0].instanceId,
-        };
+        return createLocalChatModelSelection(instances[0]);
     }
 
     const exactInstance = loadedInstances.find((instance) => instance.instanceId === configuredModel);
     if (exactInstance) {
-        return {
-            requestedModel: exactInstance.instanceId,
-            expectedInstanceId: exactInstance.instanceId,
-        };
+        return createLocalChatModelSelection(exactInstance);
     }
 
     throw new Error(`Configured model "${configuredModel}" was not found in LM Studio /api/v1/models.`);
@@ -165,11 +201,14 @@ async function resolveLocalChatModelSelection(cfg, options = {}) {
 
 module.exports = {
     assertFetchAvailable,
+    createLocalChatModelSelection,
     describeLoadedLlmInstances,
     getLoadedLlmInstances,
     getLocalApiBaseUrl,
     normalizeLocalConfig,
     optionalNumber,
+    readReasoningCapability,
     requestLocalModelCatalog,
+    resolveNoReasoningSetting,
     resolveLocalChatModelSelection,
 };
