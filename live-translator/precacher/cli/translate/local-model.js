@@ -113,13 +113,8 @@ function resolveNoReasoningSetting(reasoningCapability, modelLabel) {
     if (!reasoningCapability) return '';
     if (reasoningCapability.allowedOptions.indexOf('off') >= 0) return 'off';
 
-    const allowed = reasoningCapability.allowedOptions.length
-        ? reasoningCapability.allowedOptions.join(', ')
-        : 'none';
-    throw new Error(
-        `LM Studio model "${modelLabel || '<unknown>'}" cannot disable reasoning `
-        + `(allowed reasoning options: ${allowed}). Translation requires reasoning to be off.`
-    );
+    // Models that cannot disable reasoning remain usable with their default.
+    return '';
 }
 
 function getLoadedLlmInstances(models) {
