@@ -1,0 +1,98 @@
+/* Shared header and runtime status presentation. */
+.status-console-panel {
+    display: block;
+}
+
+.status-stack {
+    display: grid;
+    gap: 14px;
+}
+
+.status-section {
+    display: grid;
+    gap: 8px;
+    min-width: 0;
+    padding-top: 14px;
+    border-top: 1px solid var(--gui-border-soft);
+}
+
+.status-section:first-child {
+    padding-top: 0;
+    border-top: 0;
+}
+
+.subsection-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    min-height: 30px;
+    margin-bottom: 8px;
+}
+
+.capture-trace-list {
+    display: grid;
+    gap: 6px;
+    max-height: 260px;
+    overflow: auto;
+}
+
+.capture-trace-row {
+    display: grid;
+    grid-template-columns: 132px minmax(0, 1fr);
+    gap: 8px;
+    align-items: start;
+    padding: 8px 10px;
+    border: 1px solid var(--gui-border-soft);
+    border-radius: 6px;
+    background: var(--gui-surface-soft);
+    font-size: 12px;
+}
+
+.capture-trace-stage {
+    overflow-wrap: anywhere;
+    color: var(--gui-text-muted);
+    font-weight: 700;
+}
+
+.capture-trace-main {
+    min-width: 0;
+}
+
+.capture-trace-text {
+    overflow-wrap: anywhere;
+    color: var(--gui-text);
+    font-weight: 650;
+}
+
+.capture-trace-meta {
+    margin-top: 3px;
+    overflow-wrap: anywhere;
+    color: var(--gui-text-muted);
+}
+
+.translation-diagnostics-job-running {
+    border-color: var(--gui-job-running-border);
+    background: var(--gui-job-running-bg);
+}
+
+.translation-diagnostics-job-queued {
+    border-color: var(--gui-job-queued-border);
+    background: var(--gui-job-queued-bg);
+}
+
+.translation-diagnostics-job-completed {
+    border-color: var(--gui-job-completed-border);
+    background: var(--gui-job-completed-bg);
+}
+
+.translation-diagnostics-job-failed {
+    border-color: var(--gui-job-failed-border);
+    background: var(--gui-job-failed-bg);
+}
+
+.translation-diagnostics-job-canceled,
+.translation-diagnostics-job-skipped {
+    border-color: var(--gui-job-muted-border);
+    background: var(--gui-job-muted-bg);
+}

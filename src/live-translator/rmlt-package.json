@@ -1,0 +1,40 @@
+{
+    "schemaVersion": 1,
+    "id": "live-translator",
+    "version": "local-development-PRIVATE",
+    "kind": "installable",
+    "destination": "live-translator",
+    "pluginEntries": [
+        {
+            "name": "live-translator/live-translator-error-guard",
+            "description": "Early runtime error suppression for Live Translator",
+            "position": "first"
+        },
+        {
+            "name": "live-translator/live-translator-loader",
+            "description": "Live Translator runtime loader",
+            "position": "last",
+            "after": ["diagnostics/diagnostics-loader"]
+        }
+    ],
+    "stateFiles": [
+        {
+            "path": "settings.jsonc",
+            "default": "config/settings.jsonc"
+        },
+        {
+            "path": "translator.jsonc",
+            "default": "config/translator.jsonc"
+        },
+        {
+            "path": "translation-cache.log"
+        }
+    ],
+    "runtime": {
+        "minimumNwjs": "0.100.1",
+        "recommendedNwjs": "0.105.0",
+        "syntaxTarget": "ES2024",
+        "requiredAssets": ["translator.jsonc", "settings.jsonc"],
+        "optionalAssets": []
+    }
+}

@@ -1,0 +1,555 @@
+/* Foresight is styled here and hidden when its diagnostics surface is absent. */
+.foresight-tree-host {
+    display: grid;
+    gap: 10px;
+    min-width: 0;
+    --foresight-node-width-compact: 190px;
+    --foresight-node-width-full: var(--foresight-node-width-compact);
+    --foresight-node-width: var(--foresight-node-width-full);
+    --foresight-column-gap: 24px;
+    --foresight-row-gap: 14px;
+    --foresight-panel-width: 920px;
+}
+
+.foresight-overview {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+    gap: 7px;
+    align-items: center;
+}
+
+.foresight-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    min-width: 0;
+    width: 100%;
+    min-height: 28px;
+    padding: 4px 8px;
+    gap: 6px;
+    border: 1px solid var(--gui-border);
+    border-radius: 999px;
+    background: var(--gui-surface-muted);
+    color: var(--gui-text-secondary);
+    font-size: 12px;
+}
+
+.foresight-chip-label {
+    color: var(--gui-text-muted);
+    font-weight: 650;
+}
+
+.foresight-chip strong {
+    min-width: 0;
+    overflow: hidden;
+    font-weight: 750;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.foresight-panel-scroll {
+    position: relative;
+    max-height: 80vh;
+    min-height: 260px;
+    padding: 6px 10px 6px 6px;
+    overflow: auto;
+    border: 1px solid var(--gui-border-soft);
+    border-radius: 8px;
+    background: var(--gui-surface-soft);
+}
+
+.foresight-panel-scroll-messages-only {
+    --foresight-node-width: var(--foresight-node-width-compact);
+}
+
+.foresight-panel-timeline {
+    display: inline-flex;
+    align-items: start;
+    gap: var(--foresight-column-gap);
+    width: max-content;
+    min-width: 100%;
+    margin: 0;
+    padding: 8px 12px 18px 8px;
+}
+
+.foresight-current-message-slot {
+    flex: 0 0 auto;
+    width: fit-content;
+    min-width: 0;
+    max-width: min(460px, calc(var(--foresight-panel-width) / 2));
+}
+
+.foresight-timeline-grid {
+    display: grid;
+    grid-auto-columns: var(--foresight-node-width);
+    grid-auto-rows: max-content;
+    column-gap: var(--foresight-column-gap);
+    row-gap: var(--foresight-row-gap);
+    align-items: start;
+    width: max-content;
+    min-width: max-content;
+    position: relative;
+    z-index: 1;
+}
+
+.foresight-timeline-cell {
+    display: grid;
+    gap: 6px;
+    position: relative;
+    width: var(--foresight-node-width);
+    min-width: var(--foresight-node-width);
+    min-height: 1px;
+}
+
+.foresight-timeline-cell::before {
+    content: '';
+    position: absolute;
+    top: 22px;
+    right: 100%;
+    width: var(--foresight-column-gap);
+    border-top: 2px solid var(--gui-border-control);
+}
+
+.foresight-timeline-cell-start::before,
+.foresight-timeline-cell-placeholder::before {
+    border-top-color: var(--gui-border-dashed);
+}
+
+.foresight-timeline-label {
+    min-width: 0;
+    min-height: 24px;
+    padding: 4px 7px;
+    overflow: hidden;
+    border: 1px solid var(--gui-border-control);
+    border-radius: 6px;
+    background: var(--gui-surface);
+    color: var(--gui-text-secondary);
+    font-size: 12px;
+    font-weight: 750;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.foresight-action-card {
+    display: grid;
+    gap: 6px;
+    width: var(--foresight-node-width);
+    min-width: var(--foresight-node-width);
+    padding: 8px;
+    border: 1px solid var(--gui-border);
+    border-left: 5px solid var(--gui-hook-unknown);
+    border-radius: 8px;
+    background: var(--gui-surface);
+}
+
+.foresight-panel-scroll-messages-only .foresight-current-message-slot {
+    width: fit-content;
+    min-width: 0;
+    max-width: var(--foresight-node-width);
+}
+
+.foresight-message-node-card {
+    width: var(--foresight-node-width);
+    min-width: var(--foresight-node-width);
+}
+
+.foresight-current-message-card {
+    width: fit-content;
+    min-width: 0;
+    max-width: 100%;
+}
+
+.foresight-action-header {
+    display: grid;
+    grid-template-columns: minmax(31px, auto) minmax(0, 1fr) auto;
+    gap: 5px;
+    align-items: center;
+    min-width: 0;
+}
+
+.foresight-code-badge {
+    min-width: 31px;
+    padding: 2px 5px;
+    border-radius: 5px;
+    background: var(--gui-contrast-bg);
+    color: var(--gui-contrast-text);
+    font-family: Consolas, 'SFMono-Regular', Menlo, monospace;
+    font-size: 11px;
+    font-weight: 750;
+    text-align: center;
+}
+
+.foresight-action-label {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--gui-text);
+    font-size: 12px;
+    font-weight: 750;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.foresight-class-badge {
+    min-height: 20px;
+    padding: 2px 6px;
+    border-radius: 999px;
+    background: var(--gui-surface-pill);
+    color: var(--gui-text-subtle);
+    font-size: 10px;
+    font-weight: 750;
+    white-space: nowrap;
+}
+
+.foresight-action-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+    color: var(--gui-text-muted);
+    font-family: Consolas, 'SFMono-Regular', Menlo, monospace;
+    font-size: 11px;
+}
+
+.foresight-action-meta span {
+    min-width: 0;
+    max-width: 100%;
+    min-height: 22px;
+    padding: 3px 6px;
+    border-radius: 5px;
+    background: var(--gui-code-bg);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.foresight-condensed-actions {
+    width: fit-content;
+    max-width: min(720px, calc(100vw - 120px));
+    min-height: 26px;
+    padding: 5px 8px;
+    overflow: hidden;
+    border: 1px dashed var(--gui-border-dashed);
+    border-radius: 6px;
+    background: var(--gui-surface);
+    color: var(--gui-text-muted);
+    font-family: Consolas, 'SFMono-Regular', Menlo, monospace;
+    font-size: 11px;
+    font-weight: 700;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.foresight-class-linear {
+    border-left-color: var(--gui-foresight-linear-border);
+    background: var(--gui-foresight-linear-bg);
+}
+
+.foresight-class-continuation {
+    border-left-color: var(--gui-foresight-continuation-border);
+    background: var(--gui-foresight-continuation-bg);
+}
+
+.foresight-class-nesting {
+    border-left-color: var(--gui-foresight-nesting-border);
+    background: var(--gui-foresight-nesting-bg);
+}
+
+.foresight-class-branching {
+    border-left-color: var(--gui-foresight-branching-border);
+    background: var(--gui-foresight-branching-bg);
+}
+
+.foresight-class-terminal {
+    border-left-color: var(--gui-foresight-terminal-border);
+    background: var(--gui-foresight-terminal-bg);
+}
+
+.foresight-class-external {
+    border-left-color: var(--gui-foresight-external-border);
+    background: var(--gui-foresight-external-bg);
+}
+
+.foresight-action-message {
+    border-left-color: var(--gui-foresight-message-card-border);
+    background: var(--gui-foresight-message-card-bg);
+}
+
+.foresight-class-badge-continuation {
+    background: var(--gui-foresight-badge-continuation-bg);
+    color: var(--gui-foresight-badge-continuation-text);
+}
+
+.foresight-class-badge-nesting {
+    background: var(--gui-foresight-badge-nesting-bg);
+    color: var(--gui-foresight-badge-nesting-text);
+}
+
+.foresight-class-badge-branching {
+    background: var(--gui-foresight-badge-branching-bg);
+    color: var(--gui-foresight-badge-branching-text);
+}
+
+.foresight-class-badge-terminal {
+    background: var(--gui-foresight-badge-terminal-bg);
+    color: var(--gui-foresight-badge-terminal-text);
+}
+
+.foresight-class-linear .foresight-action-label,
+.foresight-class-continuation .foresight-action-label,
+.foresight-class-nesting .foresight-action-label,
+.foresight-class-branching .foresight-action-label,
+.foresight-class-terminal .foresight-action-label,
+.foresight-class-external .foresight-action-label,
+.foresight-action-message .foresight-action-label {
+    color: var(--gui-foresight-action-text);
+}
+
+.foresight-class-linear .foresight-action-meta,
+.foresight-class-continuation .foresight-action-meta,
+.foresight-class-nesting .foresight-action-meta,
+.foresight-class-branching .foresight-action-meta,
+.foresight-class-terminal .foresight-action-meta,
+.foresight-class-external .foresight-action-meta,
+.foresight-action-message .foresight-action-meta {
+    color: var(--gui-foresight-action-meta);
+}
+
+.foresight-class-linear .foresight-action-meta span,
+.foresight-class-continuation .foresight-action-meta span,
+.foresight-class-nesting .foresight-action-meta span,
+.foresight-class-branching .foresight-action-meta span,
+.foresight-class-terminal .foresight-action-meta span,
+.foresight-class-external .foresight-action-meta span,
+.foresight-action-message .foresight-action-meta span {
+    background: var(--gui-foresight-action-meta-bg);
+}
+
+.foresight-message-pill {
+    min-width: 0;
+}
+
+.foresight-action-card .foresight-message-pill {
+    display: grid;
+    margin: 2px -8px -8px -13px;
+}
+
+.foresight-text-pill {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 18px;
+    align-items: stretch;
+    width: min(100%, 460px);
+    min-height: 50px;
+    padding: 0;
+    overflow: hidden;
+    border: 1px solid var(--gui-border);
+    border-left: 6px solid var(--gui-hook-message);
+    border-radius: 8px;
+    background: var(--gui-surface);
+    color: var(--gui-text);
+    text-align: left;
+}
+
+.foresight-message-node-card .foresight-text-pill,
+.foresight-current-message-card .foresight-text-pill {
+    width: 100%;
+    max-width: 100%;
+}
+
+.foresight-action-card .foresight-message-pill .foresight-text-pill {
+    width: 100%;
+    max-width: 100%;
+    border-top-left-radius: 0;
+}
+
+.foresight-action-card .foresight-message-pill .foresight-text-pill:hover {
+    filter: none;
+}
+
+.foresight-action-card .foresight-message-pill .text-line.source {
+    color: var(--gui-foresight-action-text);
+}
+
+.foresight-action-card .foresight-message-pill .text-line.translation {
+    color: var(--gui-foresight-action-meta);
+}
+
+.foresight-text-pill:hover {
+    filter: var(--gui-hover-filter);
+}
+
+.foresight-text-pill.foresight-spoiler-censored {
+    cursor: not-allowed;
+    opacity: 1;
+}
+
+.foresight-text-pill.foresight-spoiler-censored:hover {
+    filter: none;
+}
+
+.foresight-text-pill-content {
+    display: grid;
+    align-content: center;
+    min-width: 0;
+    padding: 8px 9px;
+    gap: 3px;
+}
+
+.foresight-timeline-cell .foresight-text-pill-content {
+    max-height: 94px;
+    overflow: hidden;
+}
+
+.foresight-timeline-cell .foresight-text-pill .text-line.translation {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 4;
+    line-clamp: 4;
+}
+
+.foresight-text-pill .text-translation-rail {
+    min-height: 50px;
+}
+
+.foresight-text-pill.text-status-detected {
+    background: var(--gui-message-state-normal-bg);
+}
+
+.foresight-text-pill.text-status-pending {
+    background: var(--gui-message-state-pending-bg);
+}
+
+.foresight-text-pill.text-status-translating {
+    background: var(--gui-message-state-translating-bg);
+}
+
+.foresight-text-pill.text-status-completed {
+    background: var(--gui-message-state-translated-bg);
+}
+
+.foresight-text-pill.text-status-failed {
+    background: var(--gui-message-state-failed-bg);
+}
+
+.foresight-text-pill.text-status-skipped,
+.foresight-text-pill.text-status-disappeared,
+.foresight-text-pill.text-status-removed,
+.foresight-text-pill.text-status-stale {
+    background: var(--gui-message-state-skipped-bg);
+}
+
+.foresight-route-list {
+    display: grid;
+    gap: 5px;
+    min-width: 0;
+}
+
+.foresight-route-row {
+    display: grid;
+    grid-template-columns: 42px minmax(0, 1fr) auto;
+    gap: 7px;
+    align-items: center;
+    min-height: 28px;
+    padding: 4px 6px;
+    border: 1px solid var(--gui-border-soft);
+    border-left-width: 4px;
+    border-radius: 6px;
+    background: var(--gui-translucent-surface);
+    font-size: 12px;
+}
+
+.foresight-route-code {
+    color: var(--gui-text-muted);
+    font-family: Consolas, 'SFMono-Regular', Menlo, monospace;
+    font-weight: 750;
+}
+
+.foresight-route-label {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--gui-text-secondary);
+    font-weight: 650;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.foresight-route-classification {
+    color: var(--gui-text-muted);
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.foresight-control-flow-target {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 7px;
+    align-items: center;
+    min-height: 28px;
+    padding: 4px 7px;
+    border: 1px solid var(--gui-foresight-control-border);
+    border-left: 4px solid var(--gui-foresight-control-accent);
+    border-radius: 6px;
+    background: var(--gui-foresight-control-bg);
+    color: var(--gui-foresight-control-text);
+    font-size: 12px;
+}
+
+.foresight-control-flow-key {
+    color: var(--gui-foresight-control-key);
+    font-family: Consolas, 'SFMono-Regular', Menlo, monospace;
+    font-weight: 750;
+}
+
+.foresight-control-flow-value {
+    min-width: 0;
+    overflow: hidden;
+    font-weight: 650;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.foresight-placeholder-panel,
+.foresight-truncated-panel {
+    min-height: 34px;
+    padding: 7px 9px;
+    border: 1px dashed var(--gui-border-control);
+    border-radius: 6px;
+    background: var(--gui-surface);
+    color: var(--gui-text-muted);
+    font-size: 12px;
+    font-weight: 650;
+}
+
+.foresight-stop-panel {
+    display: grid;
+    gap: 5px;
+}
+
+.foresight-stop-row {
+    display: grid;
+    grid-template-columns: 31px minmax(0, 1fr);
+    gap: 5px;
+    align-items: center;
+    min-height: 22px;
+    padding: 3px 6px;
+    border: 1px solid var(--gui-foresight-stop-border);
+    border-left: 3px solid var(--gui-foresight-stop-accent);
+    border-radius: 5px;
+    background: var(--gui-foresight-stop-bg);
+    color: var(--gui-foresight-stop-text);
+    font-size: 11px;
+}
+
+.foresight-stop-code {
+    color: var(--gui-foresight-stop-code);
+    font-family: Consolas, 'SFMono-Regular', Menlo, monospace;
+    font-weight: 750;
+}
+
+.foresight-stop-label {
+    min-width: 0;
+    overflow: hidden;
+    font-weight: 650;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}

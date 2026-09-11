@@ -1,0 +1,305 @@
+/* Shared monitor layout and controls. */
+* {
+    box-sizing: border-box;
+}
+
+[hidden] {
+    display: none !important;
+}
+
+body {
+    margin: 0;
+    min-width: 780px;
+    background: var(--gui-bg);
+}
+
+button {
+    font: inherit;
+}
+
+h2,
+h3 {
+    margin: 0;
+    line-height: 1.2;
+    letter-spacing: 0;
+}
+
+h2 {
+    font-size: 18px;
+    font-weight: 650;
+}
+
+h3 {
+    font-size: 14px;
+    font-weight: 700;
+}
+
+main {
+    display: grid;
+    gap: 16px;
+    padding: 18px 20px 24px;
+}
+
+.panel {
+    padding: 18px;
+    background: var(--gui-surface);
+    border: 1px solid var(--gui-border);
+    border-radius: 8px;
+}
+
+.collapsible-panel > summary {
+    position: relative;
+    cursor: pointer;
+    list-style: none;
+}
+
+.collapsible-panel > summary.section-title {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: center;
+}
+
+.collapsible-panel > summary.section-title h2 {
+    min-width: 0;
+}
+
+.collapsible-panel > summary.section-title > .section-title-actions,
+.collapsible-panel > summary.section-title > .summary-status {
+    justify-self: end;
+}
+
+.collapsible-panel > summary::-webkit-details-marker {
+    display: none;
+}
+
+.collapsible-panel.collapsible-panel-has-status > summary::after {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    background-image: var(--gui-disclosure-icon);
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: 18px 18px;
+    content: '';
+    transform: rotate(0deg);
+    transition: transform 120ms ease;
+}
+
+.collapsible-panel.collapsible-panel-has-status:not([open]) > summary::after {
+    transform: rotate(-90deg);
+}
+
+#foresight-panel.foresight-panel-disabled > summary {
+    cursor: default;
+}
+
+#foresight-panel.foresight-panel-disabled > summary::after {
+    background-image: var(--gui-disabled-icon);
+    transform: none;
+}
+
+.collapsible-panel:not([open]) > summary {
+    margin-bottom: 0;
+}
+
+.collapsible-panel.collapsible-panel-body-empty > summary {
+    margin-bottom: 0;
+}
+
+.section-title,
+.logs-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 14px;
+}
+
+.section-title.compact {
+    margin-bottom: 12px;
+}
+
+.section-title-actions {
+    display: flex;
+    flex-wrap: wrap;
+    min-width: 0;
+    max-width: 100%;
+    gap: 8px;
+    align-items: center;
+    justify-content: flex-end;
+}
+
+.section-title-actions > .summary-status {
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.foresight-filter-toggle {
+    display: inline-flex;
+    align-items: center;
+    min-height: 30px;
+    padding: 0 9px;
+    gap: 7px;
+    border: 1px solid var(--gui-border-control);
+    border-radius: 999px;
+    background: var(--gui-surface-muted);
+    color: var(--gui-text-secondary);
+    font-size: 12px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.foresight-filter-toggle input {
+    width: 15px;
+    height: 15px;
+    margin: 0;
+    accent-color: var(--gui-accent);
+}
+
+.header-panel {
+    display: grid;
+    gap: 9px;
+    padding: 10px 14px;
+}
+
+.version-panel {
+    padding: 10px 14px;
+}
+
+.version-row,
+.header-status-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 34px;
+    gap: 12px;
+}
+
+.header-status-main {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    flex: 1 1 auto;
+    min-width: 0;
+    gap: 8px;
+}
+
+.header-status-separator {
+    color: var(--gui-text-faint);
+    font-weight: 700;
+}
+
+.version-indicator,
+.version-status-message {
+    min-width: 0;
+    padding: 6px 10px;
+    overflow-wrap: anywhere;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 650;
+}
+
+.priority-lane-notification,
+.local-llm-complaint,
+.local-llm-status {
+    min-width: 0;
+    padding: 6px 10px;
+    overflow-wrap: anywhere;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 650;
+}
+
+.local-llm-status {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 7px;
+}
+
+/* The status feed owns visibility; CSS owns the decorative spinner. */
+.local-llm-status.busy #local-llm-connection::before {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    margin-right: 6px;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    vertical-align: -2px;
+    content: '';
+    animation: local-llm-spin 800ms linear infinite;
+}
+
+@keyframes local-llm-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .local-llm-status.busy #local-llm-connection::before {
+        animation: none;
+    }
+}
+
+.header-complaints {
+    display: grid;
+    gap: 6px;
+    padding-top: 8px;
+    border-top: 1px solid var(--gui-border-soft);
+}
+
+.header-complaint {
+    width: fit-content;
+    max-width: 100%;
+}
+
+.version-status-message {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    min-height: 30px;
+    border: 1px solid transparent;
+    white-space: nowrap;
+}
+
+.version-status-message.version-update-button {
+    border-color: currentColor;
+    box-shadow: inset 0 0 0 1px currentColor;
+    cursor: pointer;
+}
+
+.version-status-message.version-update-button:hover {
+    filter: var(--gui-hover-filter);
+}
+
+.version-status-message.version-update-button:focus-visible {
+    outline: 2px solid var(--gui-accent);
+    outline-offset: 2px;
+}
+
+button {
+    min-height: 36px;
+    padding: 0 14px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    color: var(--gui-on-solid);
+    cursor: pointer;
+}
+
+button:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+}
+
+.secondary {
+    background: var(--gui-secondary-bg);
+    border-color: var(--gui-secondary-border);
+    color: var(--gui-secondary-text);
+}

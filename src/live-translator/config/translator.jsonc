@@ -1,0 +1,49 @@
+{
+    "provider": "llamacpp",
+    "settings": {
+        // Prompts: [cc]...[/cc] applies when the source has protected ¤ markers;
+        // [fail]...[/fail] applies after a marker-count mismatch in the same job.
+        // Use [[ for a literal [. Sections cannot nest. Keep optional spaces inside sections.
+        // To use LM Studio locally, set "provider" above to "lmstudio".
+        // Start its server at the address and port below and load exactly one LLM for "model": "auto".
+        // Enable 3-5 concurrent requests so low-priority texts do not hold up translation.
+        // Matches llama-server alias gemma-4-26b at http://127.0.0.1:8080 with five parallel slots.
+        "llamacpp": {
+            "base_url": "http://127.0.0.1:8080",
+            "api_key": "", // optional
+            "model": "gemma-4-26b",
+            "system_prompt": "사용자의 텍스트를 한국어로 번역하세요. [cc]모든 ¤ 문자의 개수와 순서를 그대로 유지하고, 번역문에서 원문에 대응하는 텍스트 경계에 배치하세요. [/cc][fail]번역에서 ¤ 개수가 원문과 달랐습니다. 원문과 정확히 같은 개수를 유지하세요.[/fail] 기존 줄바꿈을 정확히 유지하세요. 한국어 번역문만 일반 텍스트로 출력하세요. 설명, 다른 번역안 또는 그 밖의 내용을 덧붙이지 마세요. 가능한 친근한 반말을 사용하세요.",
+            //"system_prompt": "사용자의 텍스트를 한국어로 번역하세요. [cc]모든 ¤ 문자의 개수와 순서를 그대로 유지하고, 번역문에서 원문에 대응하는 텍스트 경계에 배치하세요. [/cc][fail]번역에서 ¤ 개수가 원문과 달랐습니다. 원문과 정확히 같은 개수를 유지하세요. [/fail]기존 줄바꿈을 정확히 유지하세요. 한국어 번역문만 일반 텍스트로 출력하세요. 설명, 다른 번역안 또는 그 밖의 내용을 덧붙이지 마세요. 가능한 친근한 반말을 사용하세요.",
+            //"system_prompt": "Translate the user's text into English. [cc]Preserve every ¤ character exactly in the right place. [/cc][fail]You made a mistake before and it was rejected, so please make sure you get it right. [/fail]Preserve existing line breaks exactly. Return only the translated text. Do not add explanations or a second translation.",
+            "temperature": 1,
+            "top_p": 0.95,
+            "top_k": 64,
+            "min_p": 0,
+            "repeat_penalty": 1
+        },
+        // Managed Windows, macOS and Linux runtime; verified downloads in ~/.rmlt/llamafile.
+        "llamafile": {
+            // Profiles: gemma-4-e4b (Huihui abliterated), gemma-4-12b (HauhauCS Balanced), gemma-4-26b-a4b.
+            // All use QAT targets with their paired MTP drafter.
+            // llamafile is NOT customizable.
+            "profile": "gemma-4-e4b",
+            "system_prompt": "사용자의 텍스트를 한국어로 번역하세요. [cc]모든 ¤ 문자의 개수와 순서를 그대로 유지하고, 번역문에서 원문에 대응하는 텍스트 경계에 배치하세요. [/cc][fail]번역에서 ¤ 개수가 원문과 달랐습니다. 원문과 정확히 같은 개수를 유지하세요.[/fail] 기존 줄바꿈을 정확히 유지하세요. 한국어 번역문만 일반 텍스트로 출력하세요. 설명, 다른 번역안 또는 그 밖의 내용을 덧붙이지 마세요. 가능한 친근한 반말을 사용하세요."
+            //"system_prompt": "사용자의 텍스트를 한국어로 번역하세요. [cc]모든 ¤ 문자의 개수와 순서를 그대로 유지하고, 번역문에서 원문에 대응하는 텍스트 경계에 배치하세요. [/cc][fail]번역에서 ¤ 개수가 원문과 달랐습니다. 원문과 정확히 같은 개수를 유지하세요. [/fail]기존 줄바꿈을 정확히 유지하세요. 한국어 번역문만 일반 텍스트로 출력하세요. 설명, 다른 번역안 또는 그 밖의 내용을 덧붙이지 마세요. 가능한 친근한 반말을 사용하세요.",
+            //"system_prompt": "Translate the user's text into English. [cc]Preserve every ¤ character exactly in the right place. [/cc][fail]You made a mistake before and it was rejected, so please make sure you get it right. [/fail]Preserve existing line breaks exactly. Return only the translated text. Do not add explanations or a second translation.",
+        },
+        "lmstudio": {
+            "api_key": "", // optional LM Studio API token
+            "address": "127.0.0.1",
+            "port": 1234,
+            "model": "auto",
+            "system_prompt": "사용자의 텍스트를 한국어로 번역하세요. [cc]모든 ¤ 문자의 개수와 순서를 그대로 유지하고, 번역문에서 원문에 대응하는 텍스트 경계에 배치하세요. [/cc][fail]번역에서 ¤ 개수가 원문과 달랐습니다. 원문과 정확히 같은 개수를 유지하세요.[/fail] 기존 줄바꿈을 정확히 유지하세요. 한국어 번역문만 일반 텍스트로 출력하세요. 설명, 다른 번역안 또는 그 밖의 내용을 덧붙이지 마세요. 가능한 친근한 반말을 사용하세요.",
+            //"system_prompt": "사용자의 텍스트를 한국어로 번역하세요. [cc]모든 ¤ 문자의 개수와 순서를 그대로 유지하고, 번역문에서 원문에 대응하는 텍스트 경계에 배치하세요. [/cc][fail]번역에서 ¤ 개수가 원문과 달랐습니다. 원문과 정확히 같은 개수를 유지하세요. [/fail]기존 줄바꿈을 정확히 유지하세요. 한국어 번역문만 일반 텍스트로 출력하세요. 설명, 다른 번역안 또는 그 밖의 내용을 덧붙이지 마세요. 가능한 친근한 반말을 사용하세요.",
+            //"system_prompt": "Translate the user's text into English. [cc]Preserve every ¤ character exactly in the right place. [/cc][fail]You made a mistake before and it was rejected, so please make sure you get it right. [/fail]Preserve existing line breaks exactly. Return only the translated text. Do not add explanations or a second translation.",
+            "temperature": 1,
+            "top_p": 0.95,
+            "top_k": 64,
+            "min_p": 0.05,
+            "repeat_penalty": 1.1
+        }
+    }
+}

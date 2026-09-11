@@ -1,4 +1,5 @@
 ## Overview
+
 RPG Maker MV / MZ Live Translator - Simply translates the text on the game screen (does its best).
 
 Supports most games. Since RPG Maker is a scriptable platform, no implementation of a translator will work against every game. Chances are that some games will have subtle issues or won't work at all.
@@ -16,21 +17,27 @@ Intended to be used with LM Studio (but deepl API key support exists as well for
 2. See if cached translation is available.
 3. If not, asynchronous translation request is sent to the LLM.
 4. When ready, fulfill the promise by clearing out the original and draw the translation in place.
-5. Foresight: Tries to peek ahead of the dialogue and finds texts to pre-translate. Branching paths (user choices, if's) are supported.
+5. ~~Foresight: Tries to peek ahead of the dialogue and finds texts to pre-translate. Branching paths (user choices, if's) are supported.~~ (not yet reimplemented as of 5.0)
 
 ## Web Installer (Recommended)
-Simply visit https://rmlt.pages.dev with a Chromium browser and point the game folder (where there's Game.exe).
+
+https://rmlt.pages.dev
+
+Simply visit with a Chromium browser and point the game folder (where there's Game.exe).
 
 ## Prerequisites:
-1. If there's no `scripts/` in your game folder, it's probably been hidden inside `.exe` with Enigma Virtual Box. Unpack first. 
-2. (Required for most games) Update the game's included nw.js library. All RPGMV/MZ games ship with nwjs installations - sometimes with very outdated ones that will not work with this addon. https://nwjs.io/downloads/ - Extract all files to the game directory (where Game.exe is) and change the name of nwjs.exe to Game.exe. 
+
+1. If there's no `scripts/` in your game folder, it's probably been hidden inside `.exe` with Enigma Virtual Box. Unpack first.
+2. (Required for most games) Update the game's included nw.js library. All RPGMV/MZ games ship with nwjs installations - sometimes with very outdated ones that will not work with this addon. https://nwjs.io/downloads/ - Extract all files to the game directory (where Game.exe is) and change the name of nwjs.exe to Game.exe.
 
 ## Alternative Installations
 
 ### Local Installer
+
 - Run `powershell -ExecutionPolicy Bypass -File local-installer\installer.ps1 -GameRoot "C:\Path\To\Game"`. If the release folders are already copied next to `Game.exe`, `-GameRoot` can be omitted.
 
 ### Manual Installation
+
 1. Copy `live-translator/` to `js/plugins/live-translator/` or `www/js/plugins/live-translator/`.
 2. Copy `live-translator/config-templates/settings.release.json` to `js/plugins/live-translator/settings.json` or `www/js/plugins/live-translator/settings.json`.
 3. Copy `live-translator/config-templates/translator.release.json` to `js/plugins/live-translator/translator.json` or `www/js/plugins/live-translator/translator.json`.
@@ -39,34 +46,20 @@ Simply visit https://rmlt.pages.dev with a Chromium browser and point the game f
 
 Then, go to `js/plugins/live-translator/` or `www/js/plugins/live-translator/` to edit `translator.json` for provider settings and `settings.json` for addon behavior.
 
-## Settings
+## Translators
 
-`"translation.disableCjkFilter": true`: Enables translation from non-CJK (Chinese, Japanese, and Korean) sources.
+llamafile - 0-click LLM download and execution
 
-`"overrideTranslationRegex"`: Perform a static translation based on regex
+llama.cpp - for advanced users
 
-`"substitutePlaintextBeforeTranslation"`: Replace things like names before feeding to the LLM.
-
-`textScale` and `textScaleOthers`: Resizes the translation text
-
-and more
+LM Studio (deprecated)
 
 ## Translator GUI
-The translator monitor opens automatically when the game starts. If you close it, press `Ctrl+Shift+Enter` in the game window or run `LiveTranslatorGui.open()` from DevTools.
 
-## Precacher GUI (Beta)
-After installing the plugin, press `Ctrl+Shift+P` in the game window or run `LiveTranslatorPrecacher.open()` from DevTools.
-Extraction follows `settings.json` `translation.disableCjkFilter` and uses the same CJK gate as live translation.
-
-## Recommended LLMs to Get Started
-
-VRAM 8GB - mradermacher/gemma-4-E4B-it-ultra-uncensored-heretic-i1-GGUF@IQ4_XS
-
-VRAM 16GB - mradermacher/gemma-4-26B-A4B-it-ultra-uncensored-heretic-i1-GGUF@IQ4_XS - barely fits but it's so good
-
-Load the model in LM Studio, test token speed by writing some chat in it, and then enable the server in LM Studio. The settings should work as is. 
+The translator monitor opens automatically when the game starts. If you close it, press `Ctrl+Shift+Enter` in the game window.
 
 ## Changelog
+
 1.0 - major refactor - performance and accuracy improvements, etc
 
 1.1 - fix DeepL 429, fix installer messing up `plugins.json` encoding
@@ -91,11 +84,11 @@ Load the model in LM Studio, test token speed by writing some chat in it, and th
 
 2.2 - max token count per request is configurable
 
-2.3 - major cosmetic fixes. original texts are replaced cleanly. fixed ghost text problem in selectable lists 
+2.3 - major cosmetic fixes. original texts are replaced cleanly. fixed ghost text problem in selectable lists
 
 3.0 - Add precacher
 
-3.0.3 - harden GameMessage and invalid battlelog bitmaps detection/handling 
+3.0.3 - harden GameMessage and invalid battlelog bitmaps detection/handling
 
 3.1 - bitmap text handling major breaking change
 
@@ -108,3 +101,5 @@ Load the model in LM Studio, test token speed by writing some chat in it, and th
 3.2.8 - errorneous translation abort hotfix
 
 4.0 - Almost a complete rewrite: foresight support. compatibility improvements, batching, priority, performance optimizations, and more
+
+5.0 - Rewrite. New low level architecture.

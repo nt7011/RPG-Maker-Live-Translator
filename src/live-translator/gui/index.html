@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="color-scheme" content="light dark" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Live Translator Monitor</title>
+        <link rel="stylesheet" href="styles/main.css" />
+    </head>
+    <body>
+        <main>
+            <section id="header-panel" class="panel version-panel header-panel" aria-live="polite">
+                <div class="version-row header-status-row">
+                    <div class="header-status-main">
+                        <span id="version-indicator" class="version-indicator neutral">Version unknown (checking)</span>
+                        <span id="local-llm-status" class="local-llm-status neutral" hidden>
+                            <span id="local-llm-connection"></span>
+                            <span id="local-llm-model"></span>
+                            <span id="local-llm-concurrency"></span>
+                        </span>
+                    </div>
+                </div>
+                <div id="priority-lane-notification" class="priority-lane-notification warn" role="status" hidden></div>
+                <div id="local-llm-complaint" class="local-llm-complaint bad" hidden></div>
+                <div id="header-complaints" class="header-complaints" hidden>
+                    <span id="version-status-message" class="header-complaint version-status-message neutral" hidden
+                        >Update status pending</span
+                    >
+                </div>
+            </section>
+
+            <details id="lag-incidents-panel" class="panel collapsible-panel lag-incidents-panel" hidden>
+                <summary class="section-title compact">
+                    <h2>Recent lag incidents</h2>
+                    <span data-lag-summary class="summary-status neutral">Loading incident panel</span>
+                </summary>
+                <div data-lag-body></div>
+            </details>
+
+            <details id="resource-panel" class="panel collapsible-panel resource-panel" hidden>
+                <summary class="section-title compact">
+                    <h2>GPU memory &amp; limits</h2>
+                    <div class="section-title-actions">
+                        <span id="resource-summary" class="summary-status neutral">Waiting for resource data</span>
+                        <button id="resource-probe-copy" type="button" class="copy-record-button" disabled>
+                            Copy leak report
+                        </button>
+                    </div>
+                </summary>
+                <p class="resource-note">
+                    Translator-owned logical image backing, including Canvas and transfers. Physical VRAM and game-owned
+                    allocations are not measured.
+                </p>
+                <p class="resource-note">
+                    Leak recording starts automatically. After translations stop, copy the report before restarting the
+                    game.
+                </p>
+                <div id="resource-details" class="resource-details"></div>
+            </details>
+
+            <details id="draw-capture-panel" class="panel collapsible-panel capture-trace-panel" open>
+                <summary class="section-title compact">
+                    <h2>Draw Capture Trace</h2>
+                    <div class="section-title-actions">
+                        <span id="draw-capture-feed-health" class="runtime-feed-health warn" hidden></span>
+                        <span id="draw-capture-summary" class="summary-status neutral">0 rejected</span>
+                        <button id="draw-capture-clear" type="button" class="copy-record-button" disabled>Clear</button>
+                        <button id="draw-capture-copy" type="button" class="copy-record-button" disabled>Copy</button>
+                    </div>
+                </summary>
+                <div id="draw-capture-trace" class="capture-trace-list">
+                    <div class="empty">No rejected Bitmap text.</div>
+                </div>
+            </details>
+
+            <details id="foresight-panel" class="panel collapsible-panel foresight-panel" open>
+                <summary class="section-title compact">
+                    <h2 title="Upcoming GameMessages">Foresight</h2>
+                    <div class="section-title-actions">
+                        <span id="foresight-feed-health" class="runtime-feed-health warn" hidden></span>
+                        <span id="foresight-summary" class="summary-status neutral">0 actions</span>
+                        <label class="foresight-filter-toggle">
+                            <input
+                                id="foresight-message-filter-toggle"
+                                type="checkbox"
+                                checked
+                                aria-controls="foresight-tree"
+                            />
+                            <span>Messages</span>
+                        </label>
+                        <button id="foresight-copy" type="button" class="copy-record-button" disabled>Copy</button>
+                    </div>
+                </summary>
+                <div id="foresight-tree" class="foresight-tree-host">
+                    <div class="empty">No foresight scan recorded.</div>
+                </div>
+            </details>
+
+            <details id="text-record-panel" class="panel collapsible-panel" open>
+                <summary class="section-title compact">
+                    <h2>Records</h2>
+                    <div class="section-title-actions">
+                        <span id="text-record-feed-health" class="runtime-feed-health warn" hidden></span>
+                        <span id="text-record-summary" class="summary-status neutral">0 entries</span>
+                        <button id="text-log-copy" type="button" class="copy-record-button" disabled>
+                            Copy Master Log
+                        </button>
+                    </div>
+                </summary>
+                <div id="text-records" class="text-record-list">
+                    <div class="empty">No records.</div>
+                </div>
+            </details>
+
+            <details id="status-panel" class="panel collapsible-panel status-console-panel" open>
+                <summary class="section-title compact">
+                    <h2>Status</h2>
+                    <span id="status-summary" class="summary-status neutral">checking</span>
+                </summary>
+                <div class="status-stack">
+                    <section id="runtime-context-panel" class="status-section">
+                        <div class="subsection-title">
+                            <h3>Runtime Context</h3>
+                            <div class="section-title-actions">
+                                <span id="settings-feed-health" class="runtime-feed-health warn" hidden></span>
+                                <span id="runtime-context-summary" class="summary-status neutral">checking</span>
+                            </div>
+                        </div>
+                        <div class="path-grid">
+                            <div class="label">Game root</div>
+                            <div id="game-root" class="value">-</div>
+                            <div id="game-root-status" class="status neutral">checking</div>
+
+                            <div class="label">Support folder</div>
+                            <div id="support-path" class="value">-</div>
+                            <div id="support-path-status" class="status neutral">checking</div>
+
+                            <div class="label">Heartbeat</div>
+                            <div id="heartbeat" class="value">-</div>
+                            <div id="main-window-link" class="status neutral">checking</div>
+                        </div>
+                    </section>
+
+                    <section id="hook-installation-panel" class="status-section">
+                        <div class="subsection-title">
+                            <h3>Hook Installation</h3>
+                            <div class="section-title-actions">
+                                <span id="hooks-feed-health" class="runtime-feed-health warn" hidden></span>
+                                <span id="hook-summary" class="summary-status neutral">0 hooks</span>
+                            </div>
+                        </div>
+                        <div class="table-wrap">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Hook</th>
+                                        <th>Status</th>
+                                        <th>Surface</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="hook-results">
+                                    <tr>
+                                        <td colspan="3" class="empty">No hook installation records.</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </section>
+
+                    <section id="runtime-log-panel" class="status-section">
+                        <div class="logs-header">
+                            <h3>Console</h3>
+                            <button id="clear-log" type="button" class="secondary">Clear</button>
+                        </div>
+                        <pre id="logs" class="logs">No log entries.</pre>
+                    </section>
+                </div>
+            </details>
+        </main>
+
+        <script src="app/index.js"></script>
+    </body>
+</html>

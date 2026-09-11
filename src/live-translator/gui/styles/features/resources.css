@@ -1,0 +1,48 @@
+/* A compact diagnostics table, readable at narrow monitor widths. */
+.resource-note {
+    margin: 0.6rem 0;
+    color: var(--gui-text-muted);
+    font-size: 0.85rem;
+}
+.resource-details {
+    overflow-x: auto;
+}
+.resource-details progress {
+    width: 100%;
+    height: 0.65rem;
+    accent-color: var(--gui-accent);
+}
+.resource-memory {
+    display: grid;
+    grid-template-columns: minmax(12rem, 1fr) auto;
+    gap: 0.25rem 1rem;
+    font-size: 0.85rem;
+}
+.resource-memory dd {
+    margin: 0;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+.resource-limits {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8rem;
+}
+.resource-limits th,
+.resource-limits td {
+    padding: 0.4rem 0.6rem;
+    text-align: right;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+.resource-limits th:first-child {
+    text-align: left;
+    white-space: normal;
+    font-weight: 500;
+}
+.resource-limits thead th {
+    font-weight: 600;
+}
+.resource-refused {
+    color: var(--gui-pill-warn-text);
+}

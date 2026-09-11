@@ -1,0 +1,46 @@
+{
+    "translation": {
+        // cap translator output (approx. token counts)
+        "maxOutputTokens": 512
+    },
+    "targets": {
+        // Keep counters and other non-linguistic text observable without sending
+        // them to the translation provider.
+        "rejectCounterLike": true
+    },
+    "adapters": {
+        // Optional native clues, enabled by default. Changes apply after restarting the runtime.
+        // Use Window source order and available text space.
+        "window": true,
+        // Translate the current message before its native slow reveal completes.
+        "gameMessage": true
+    },
+    "manipulation": {
+        "ignoreTranslationRegex": [],
+        "overrideTranslationRegex": [],
+        "substitutePlaintextBeforeTranslation": []
+    },
+    "diskCache": {
+        "enabled": true,
+        // Normal writes append JSONL records. Recovery and growth-threshold
+        // compaction replace the file with one complete retained checkpoint.
+        "maxMegabytes": 2048,
+        "clearOnLaunch": false
+    },
+    "hacks": {
+        // ignore game exceptions (some games think nwjs 0.100 is lower than 0.90)
+        "suppressGameExceptions": {
+            "enabled": true,
+            "showErrorAlert": true
+        }
+    },
+    "logging": {
+        "enabled": false,
+        "level": "warn",
+        // Testing only. Replace game text in logs and monitor feeds with stable
+        // numbered glyph tokens. Translation/drawing/cache remain original.
+        // Applies at startup; restart the game after changing this switch.
+        "redactText": false,
+        "suppressExact": []
+    }
+}
