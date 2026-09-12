@@ -1,5 +1,5 @@
 {
-    "provider": "llamacpp",
+    "provider": "llamafile",
     "settings": {
         // Prompts: [cc]...[/cc] applies when the source has protected ¤ markers;
         // [fail]...[/fail] applies after a marker-count mismatch in the same job.

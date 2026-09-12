@@ -18,7 +18,7 @@ import { prepareBitmapCopiedRows, type BitmapCopiedRows } from '../../stores/bit
 import { createBitmapFragmentPresentation } from './bitmap-fragment-presentation.js';
 import { createBitmapPixelDevice, type BitmapPixelDevice, type PixelCapture, type PixelProof, type PixelProofFailure, type PixelGroupProof, type PixelBounds, type PixelEffect, } from '../../gpu/bitmap-pixel-device.js';
 import { installBitmapCommandObserver, createBitmapSourceReader, type BitmapTextCommand, type BitmapCanvasWrite, } from '../../observer-hooks/bitmap/bitmap-command-observer.js';
-import { locateProperty, type OwnedHookDisposal, type OwnedHookLease, } from '../../observer-hooks/owned-hook-installer.js';
+import { locateProperty, type OwnedHookDisposal, type OwnedHookLease, type OwnedHookSpec, } from '../../observer-hooks/owned-hook-installer.js';
 import { createBitmapRenderHost, type BitmapRenderBacking, type BitmapRenderUse, type BitmapDemandUse, } from '../../presentation/bitmap-render-host.js';
 import { assembleBitmapCommandRows, boundsIntersect, type BitmapCommandAtom, type BitmapTextBarriers, } from '../../stores/bitmap-command-rows.js';
 import { assembleBitmapTextAssociations, bitmapAssociationPredecessors, bitmapSemanticCandidates, type BitmapTextAssociation, } from '../../stores/bitmap-text-associations.js';
@@ -39,6 +39,7 @@ export interface BitmapCoreOptions {
     readonly reportFailure: (failure: unknown) => void;
     readonly claimLifetimeOwner: (lease: BitmapCoreLifetimeLease) => void;
     readonly semanticAdapters?: readonly SemanticAdapter[];
+    readonly nativeHooks?: readonly OwnedHookSpec[];
 }
 interface Association extends BitmapTextAssociation {
     readonly handle: SemanticTextRevisionHandle;
@@ -1637,7 +1638,7 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
             contextPrototype,
             sceneManager,
             renderBoundary,
-            ...(semanticObserver === null ? {} : { semanticHooks: semanticObserver.hooks }),
+            additionalHooks: [...(semanticObserver?.hooks ?? []), ...(options.nativeHooks ?? [])],
             resolveSource: resolveSource,
             observesAppearance: (source, image) => bySource.has(source) ||
                 bySource.has(image as HTMLCanvasElement) ||

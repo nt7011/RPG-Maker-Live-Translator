@@ -28,6 +28,15 @@
         "clearOnLaunch": false
     },
     "hacks": {
+        // These switches apply at startup; restart the game after changes.
+        // Keep hold-to-fast-forward available in every scene (hold OK/Z or LMB).
+        // Off installs no speedup hooks and leaves native timing/input untouched.
+        "keepFastForwardAvailable": false,
+        // Simulation ticks per normal tick while held: 1–16, including fractions; default 2.
+        "fastForwardMultiplier": 2,
+        // Reveal message text immediately. Explicit waits and input pauses remain native.
+        // Off installs no reveal hook and leaves native reveal untouched.
+        "instantReveal": false,
         // ignore game exceptions (some games think nwjs 0.100 is lower than 0.90)
         "suppressGameExceptions": {
             "enabled": true,

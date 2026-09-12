@@ -47,7 +47,7 @@ export function installBitmapCommandObserver(options: {
         readonly key: string;
         readonly accepts: (receiver: unknown) => boolean;
     };
-    readonly semanticHooks?: readonly OwnedHookSpec[];
+    readonly additionalHooks?: readonly OwnedHookSpec[];
     readonly resolveSource: (bitmap: object) => HTMLCanvasElement | null;
     readonly begin: (command: BitmapTextCommand) => void;
     readonly observesAppearance: (source: HTMLCanvasElement, image: unknown) => boolean;
@@ -147,7 +147,7 @@ export function installBitmapCommandObserver(options: {
         };
     }
     const hooks: OwnedHookSpec[] = [
-        ...(options.semanticHooks ?? []),
+        ...(options.additionalHooks ?? []),
         {
             kind: 'method',
             target: options.bitmapPrototype,

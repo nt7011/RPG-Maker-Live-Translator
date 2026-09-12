@@ -1,4 +1,5 @@
 import { selectLlamafileProfile, type LlamafileProfileId } from './llamafile/catalog.js';
+import { DEFAULT_SPEEDUP_MULTIPLIER, MAX_SPEEDUP_MULTIPLIER, resolveSpeedupMultiplier, } from '../../configuration/speedup.js';
 type PropertyBag = Record<string, unknown>;
 const DEFAULT_LOCAL_MAX_OUTPUT_TOKENS = 512;
 const DEFAULT_MODEL_CATALOG_TTL_MS = 5000;
@@ -465,12 +466,21 @@ function normalizeSettingsMutable(settings: unknown, sink?: ProviderSchemaWarnin
     for (const inactiveNamespace of ['gui', 'display', 'diagnostics', 'intel']) {
         Reflect.deleteProperty(snapshot, inactiveNamespace);
     }
-    const hacksField = ownField(snapshot, 'hacks');
-    if (hacksField.present && isRecord(hacksField.value)) {
-        Reflect.deleteProperty(hacksField.value, 'originAwareLineBreaks');
-        if (Object.keys(hacksField.value).length === 0)
-            Reflect.deleteProperty(snapshot, 'hacks');
-    }
+    const hacks = ensureSettingsRecord(snapshot, 'hacks', 'hacks', sink);
+    Reflect.deleteProperty(hacks, 'originAwareLineBreaks');
+    const instantReveal = ownField(hacks, 'instantReveal');
+    if (instantReveal.present && typeof instantReveal.value !== 'boolean')
+        warn(sink, '[LiveTranslator][Config] settings.jsonc "hacks.instantReveal" should be a boolean. Falling back to false.');
+    hacks['instantReveal'] = instantReveal.value === true;
+    const keepFastForwardAvailable = ownField(hacks, 'keepFastForwardAvailable');
+    if (keepFastForwardAvailable.present && typeof keepFastForwardAvailable.value !== 'boolean')
+        warn(sink, '[LiveTranslator][Config] settings.jsonc "hacks.keepFastForwardAvailable" should be a boolean. Falling back to false.');
+    hacks['keepFastForwardAvailable'] = keepFastForwardAvailable.value === true;
+    const multiplier = ownField(hacks, 'fastForwardMultiplier');
+    const resolvedMultiplier = resolveSpeedupMultiplier(multiplier.value);
+    if (multiplier.present && multiplier.value !== resolvedMultiplier)
+        warn(sink, `[LiveTranslator][Config] settings.jsonc "hacks.fastForwardMultiplier" should be a finite number from 1 to ${String(MAX_SPEEDUP_MULTIPLIER)}. Falling back to ${String(DEFAULT_SPEEDUP_MULTIPLIER)}.`);
+    hacks['fastForwardMultiplier'] = resolvedMultiplier;
     ensureSettingsRecord(snapshot, 'manipulation', 'manipulation', sink);
     normalizeTargets(snapshot, sink);
     normalizeAdapters(snapshot, sink);
