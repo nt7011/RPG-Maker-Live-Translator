@@ -38,6 +38,7 @@ interface ExistingTextRecordNodes {
 }
 const pillComponents = new WeakMap<HTMLElement, ReturnType<typeof createTextRecordPill>>();
 const describeTextRecordKeyProperty = Object.getOwnPropertyDescriptor;
+const textRecordKeyHasOwn = Object.hasOwn;
 const applyTextRecordKeyFunction = Reflect.apply;
 const UNREADABLE_TEXT_RECORD_KEY_FIELD = Symbol('unreadable-text-record-key-field');
 export function renderHookResults(policySnapshot: GuiPolicySnapshot = getGuiPolicySnapshot()): void {
@@ -162,7 +163,10 @@ export function syncTextTroubleshootingLogCopyEnabled(): void {
 }
 export function reconcileTextRecordListBody(body: HTMLElement, desiredEntries: DesiredTextRecordEntry[], renderContext: TextRecordRenderContext): void {
     const desired = desiredEntries;
-    const desiredDomKeys = new Set<string>(desired.map((entry) => entry.domKey).filter(Boolean));
+    const desiredDomKeys = new Set<string>(desired
+        .values()
+        .map((entry) => entry.domKey)
+        .filter(Boolean));
     const existing = indexExistingTextRecordNodes(body);
     let previous: HTMLElement | null = null;
     removeTextRecordListUnmanagedChildren(body);
@@ -254,12 +258,12 @@ function handleTextRecordDetailToggle(recordKey: string): void {
 export function indexExistingTextRecordNodes(body: HTMLElement): ExistingTextRecordNodes {
     const rows = new Map<string, HTMLElement>();
     const details = new Map<string, HTMLElement>();
-    Array.from(body.children).forEach((child) => {
+    for (const child of body.children) {
         if (isTextRecordRowNode(child))
             rows.set(getTextRecordNodeDomKey(child), child);
         if (isTextRecordDetailNode(child))
             details.set(getTextRecordNodeDomKey(child), child);
-    });
+    }
     return { rows, details };
 }
 export function applyTextRecordNodeDataset(node: HTMLElement, entry: DesiredTextRecordEntry): void {
@@ -300,7 +304,8 @@ export function removeTextRecordNode(node: Node): void {
     }
 }
 export function getTextRecordListBodies(): HTMLElement[] {
-    return ['text-records'].map((id) => refs[id]).filter((body): body is HTMLElement => body !== undefined);
+    const body = refs['text-records'];
+    return body === undefined ? [] : [body];
 }
 export function isTextRecordManagedNode(node: unknown): node is HTMLElement {
     return isTextRecordRowNode(node) || isTextRecordDetailNode(node);
@@ -462,7 +467,7 @@ function readTextRecordKeyDataProperty(item: GuiTextRecord, key: PropertyKey): u
     const descriptor: PropertyDescriptor | undefined = applyTextRecordKeyFunction(describeTextRecordKeyProperty, Object, [item, key]);
     if (!descriptor)
         return null;
-    if (!('value' in descriptor))
+    if (!textRecordKeyHasOwn(descriptor, 'value'))
         return UNREADABLE_TEXT_RECORD_KEY_FIELD;
     return descriptor.value ?? null;
 }
@@ -570,8 +575,7 @@ export function setTextRecordMetaValue(root: HTMLElement, label: string, value: 
     const item = findTextRecordMetaItem(root, label);
     if (!item)
         return;
-    const valueNode = Array.from(item.children).find((child) => child.tagName.toUpperCase() === 'STRONG') ??
-        Array.from(item.children).slice(-1)[0];
+    const valueNode = Iterator.from(item.children).find((child) => child.tagName.toUpperCase() === 'STRONG') ?? item.lastElementChild;
     if (valueNode)
         valueNode.textContent = value === undefined || value === null || value === '' ? '-' : stringValue(value);
 }
@@ -600,5 +604,5 @@ export function findElementByDataAttribute(key: string, value: string): HTMLElem
     if (!key || !value)
         return null;
     const selector = `[data-${key.replace(/[A-Z]/g, (match) => `-${match.toLowerCase()}`)}]`;
-    return (Array.from(document.querySelectorAll(selector)).find((element): element is HTMLElement => isGuiHtmlElement(element) && element.dataset[key] === value) ?? null);
+    return (Iterator.from(document.querySelectorAll(selector)).find((element): element is HTMLElement => isGuiHtmlElement(element) && element.dataset[key] === value) ?? null);
 }

@@ -249,8 +249,7 @@ function compactRows(rows: (TimelineRow | undefined)[]): TimelineRow[] {
         lane: row.lane,
         rowIndex,
         items: row.items
-            .slice()
-            .sort((left, right) => left.column - right.column)
+            .toSorted((left, right) => left.column - right.column)
             .map((item) => ({ ...item, rowIndex })),
     }));
 }

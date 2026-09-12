@@ -296,10 +296,7 @@ export function createBitmapPixelDevice(options: {
     }
     const sourceIds = new WeakMap<HTMLCanvasElement, object>();
     function sourceId(source: HTMLCanvasElement): object {
-        let id = sourceIds.get(source);
-        if (id === undefined)
-            sourceIds.set(source, (id = {}));
-        return id;
+        return sourceIds.getOrInsertComputed(source, () => ({}));
     }
     const captures = new Map<PixelCapture, Capture>(), effects = new Map<PixelEffect, Effect>();
     const snapshots = new Map<PixelSnapshot, {

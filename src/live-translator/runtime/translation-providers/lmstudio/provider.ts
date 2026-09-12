@@ -666,13 +666,13 @@ export function createLmStudioProviderModule(common: TranslationProviderCommonMo
                 if (outcomeClaimed)
                     return false;
                 outcomeClaimed = true;
-                rejectAbort(error instanceof Error ? error : new Error(fallbackMessage));
+                rejectAbort(Error.isError(error) ? error : new Error(fallbackMessage));
                 return true;
             };
             const abortError = (): Error => {
                 try {
                     const reason = linked.getAbortReason();
-                    return reason instanceof Error ? reason : new Error('LM Studio model catalog request cancelled.');
+                    return Error.isError(reason) ? reason : new Error('LM Studio model catalog request cancelled.');
                 }
                 catch {
                     return new Error('LM Studio model catalog request cancelled.');

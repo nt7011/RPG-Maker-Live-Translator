@@ -398,7 +398,7 @@ export function createWindowLifecycleBoundary(entryLifecycle: EntryLifecycleModu
         if (context.contentsSettlement === 'complete')
             return;
         if (context.contentsSettlement === 'preparation-failed') {
-            if (context.contentsPreparationFailure instanceof Error)
+            if (Error.isError(context.contentsPreparationFailure))
                 throw context.contentsPreparationFailure;
             throw new Error('Window refresh contents preparation failed.', {
                 cause: context.contentsPreparationFailure,

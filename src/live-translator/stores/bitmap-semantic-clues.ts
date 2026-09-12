@@ -292,7 +292,7 @@ export function createBitmapSemanticClues(options: {
         return source !== undefined &&
             source.text.length > 0 &&
             !source.rejected &&
-            [...source.complete].some((producer) => producer.enabled)
+            source.complete.values().some((producer) => producer.enabled)
             ? source
             : null;
     }
@@ -314,7 +314,7 @@ export function createBitmapSemanticClues(options: {
                 !source.rejected &&
                 !source.ambiguous &&
                 producers.some((producer) => producer.enabled) &&
-                (source.normalizers.size === 0 || [...source.normalizers].some((producer) => producer.enabled)));
+                (source.normalizers.size === 0 || source.normalizers.values().some((producer) => producer.enabled)));
         },
         disable(): void {
             for (const producer of producers)
@@ -411,9 +411,7 @@ export function createBitmapSemanticClues(options: {
         },
         issueDraw: (): BitmapDrawRef => Object.freeze({}) as BitmapDrawRef,
         copyDraw(draw: BitmapDrawRef, destination: object): BitmapDrawRef {
-            let surface = surfaces.get(destination);
-            if (surface === undefined)
-                surfaces.set(destination, (surface = Object.freeze({}) as BitmapSurfaceRef));
+            const surface = surfaces.getOrInsertComputed(destination, () => Object.freeze({}) as BitmapSurfaceRef);
             const copied = Object.freeze({}) as BitmapDrawRef;
             copies.set(copied, { origin: copies.get(draw)?.origin ?? draw, surface });
             return copied;
@@ -440,11 +438,7 @@ export function createBitmapSemanticClues(options: {
                         !sameTextIgnoringWhitespace(source.text.slice(matching.start, matching.end), entry.text));
                 }))
                 rejectSource(observation);
-            let surfaceRef = surfaces.get(surface);
-            if (surfaceRef === undefined) {
-                surfaceRef = Object.freeze({}) as BitmapSurfaceRef;
-                surfaces.set(surface, surfaceRef);
-            }
+            const surfaceRef = surfaces.getOrInsertComputed(surface, () => Object.freeze({}) as BitmapSurfaceRef);
             const snapshot = Object.freeze({
                 kind: 'draw' as const,
                 observation,
@@ -464,9 +458,7 @@ export function createBitmapSemanticClues(options: {
                     if (clue.kind !== 'ordered-members')
                         continue;
                     for (const member of clue.members) {
-                        const values = ranges.get(member.draw) ?? [];
-                        values.push(member.range);
-                        ranges.set(member.draw, values);
+                        ranges.getOrInsertComputed(member.draw, () => []).push(member.range);
                     }
                 }
                 const areas = clues.filter((clue) => clue.kind === 'safe-area').map((clue) => clue.rect);
@@ -501,7 +493,7 @@ export function createBitmapSemanticClues(options: {
                 !item.source.rejected &&
                 !item.source.ambiguous &&
                 (item.source.normalizers.size === 0 ||
-                    [...item.source.normalizers].some((producer) => producer.enabled)));
+                    item.source.normalizers.values().some((producer) => producer.enabled)));
         },
         completeSource,
         characters: (observation: TextObservationRef): BitmapSourceCharacterIndex | null => {

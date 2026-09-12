@@ -466,7 +466,7 @@ export function createTranslationManagerModuleFromDependencies(dependencies: unk
             const normalized = shared.normalizeCacheKey(key);
             const outcome = shared.findIgnoredTranslationRegexMatch(normalized, ignoreTranslationRegexRules);
             if (outcome.status === 'failed') {
-                if (outcome.cause instanceof Error)
+                if (Error.isError(outcome.cause))
                     throw outcome.cause;
                 throw new Error(`Translation regex matching failed: ${outcome.reason}`);
             }

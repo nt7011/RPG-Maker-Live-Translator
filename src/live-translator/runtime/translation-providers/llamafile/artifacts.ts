@@ -141,7 +141,7 @@ export function createLlamafileArtifactsModule(runtimeScope: unknown): Llamafile
                 if (!closed) {
                     status.phase = 'error';
                     status.code = readErrorCode(error) || 'LLAMAFILE_ARTIFACT_ERROR';
-                    status.message = error instanceof Error ? error.message : 'Local artifact preparation failed.';
+                    status.message = Error.isError(error) ? error.message : 'Local artifact preparation failed.';
                 }
                 throw error;
             }

@@ -6,7 +6,7 @@ function own(value: unknown, key: PropertyKey): unknown {
         return undefined;
     try {
         const descriptor = Object.getOwnPropertyDescriptor(value, key);
-        return descriptor && 'value' in descriptor ? descriptor.value : undefined;
+        return descriptor && Object.hasOwn(descriptor, 'value') ? descriptor.value : undefined;
     }
     catch {
         return undefined;

@@ -3,6 +3,7 @@ import type { UnknownRecord } from './types.js';
 import { isUnknownRecord, propertyValue } from './types.js';
 export type NodeEventHandler = (...args: unknown[]) => void;
 type NodeRequire = (moduleName: string) => unknown;
+let utf8Encoder: TextEncoder | undefined;
 function callMethod(receiver: unknown, name: PropertyKey, args: unknown[]): unknown {
     const method = propertyValue(receiver, name);
     if (typeof method !== 'function')
@@ -151,10 +152,12 @@ export function getBrowserShell(): BrowserShell | null {
 export function getUtf8ByteLength(value: string): number {
     const buffer = propertyValue(globalThis, 'Buffer');
     const byteLength = propertyValue(buffer, 'byteLength');
-    if (typeof byteLength !== 'function')
-        return value.length;
-    const result: unknown = Reflect.apply(byteLength, buffer, [value, 'utf8']);
-    return typeof result === 'number' && Number.isFinite(result) ? result : value.length;
+    if (typeof byteLength === 'function') {
+        const result: unknown = Reflect.apply(byteLength, buffer, [value, 'utf8']);
+        if (typeof result === 'number' && Number.isFinite(result))
+            return result;
+    }
+    return (utf8Encoder ??= new TextEncoder()).encode(value).byteLength;
 }
 export function unknownRecord(value: unknown): UnknownRecord | null {
     return isUnknownRecord(value) ? value : null;

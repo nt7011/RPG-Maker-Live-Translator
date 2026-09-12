@@ -31,9 +31,9 @@
         }
     ],
     "runtime": {
-        "minimumNwjs": "0.100.1",
-        "recommendedNwjs": "0.105.0",
-        "syntaxTarget": "ES2024",
+        "minimumNwjs": "0.115.0",
+        "recommendedNwjs": "0.115.0",
+        "syntaxTarget": "ESNext",
         "requiredAssets": ["translator.jsonc", "settings.jsonc"],
         "optionalAssets": []
     }

@@ -2,6 +2,7 @@ import type { SemanticTextRevisionHandle } from '../../stores/semantic-text-stor
 import type { PixelBounds } from '../../gpu/bitmap-pixel-device.js';
 import type { BitmapScreenSample } from '../../presentation/bitmap-render-host.js';
 import type { BitmapSemanticProvenance } from '../../stores/bitmap-semantic-clues.js';
+import type {} from '../../types/esnext-iterator.js';
 export type BitmapSemanticContext = 'window' | 'game-message' | null;
 export function bitmapDemandContext(provenance: readonly BitmapSemanticProvenance[]): BitmapSemanticContext {
     return provenance.some((item) => item.source.family === 'game-message')
@@ -132,28 +133,28 @@ export function createBitmapTranslationDemand(options: {
         const previous = outputs.get(output) ?? new Map<SemanticTextRevisionHandle, Map<object, State>>();
         const next: Rows = complete
             ? new Map<SemanticTextRevisionHandle, Map<object, State>>()
-            : new Map([...previous].map(([handle, uses]) => [
+            : new Map(previous
+                .entries()
+                .map(([handle, uses]) => [
                 handle,
-                new Map([...uses].map(([occurrence, state]) => [occurrence, { ...state, onScreen: false }])),
-            ]));
+                new Map(uses
+                    .entries()
+                    .map(([occurrence, state]) => [occurrence, { ...state, onScreen: false }] as const)),
+            ] as const));
         for (const { handle, occurrence, context, visible } of observations) {
             if (!options.isCurrent(handle))
                 continue;
             const old = previous.get(handle)?.get(occurrence);
             if (!complete && old === undefined)
                 continue;
-            let uses = next.get(handle);
-            if (uses === undefined) {
-                uses = new Map();
-                next.set(handle, uses);
-            }
+            const uses = next.getOrInsertComputed(handle, () => new Map());
             uses.set(occurrence, {
                 context,
                 visible: complete && visible !== null ? visible : (old?.visible ?? false),
                 onScreen: complete && visible === true,
             });
         }
-        const handles = [...new Set([...previous.keys(), ...next.keys()])];
+        const handles = [...new Set(Iterator.concat(previous.keys(), next.keys()))];
         const before = handles.map(priority);
         const pinnedBefore = handles.map(onScreenGameMessage);
         outputs.set(output, next);

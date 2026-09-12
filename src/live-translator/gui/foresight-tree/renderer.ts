@@ -45,7 +45,7 @@ function propertyValue(value: object, key: PropertyKey): unknown {
 function ownDataValue(value: object, key: PropertyKey): unknown {
     try {
         const descriptor = Object.getOwnPropertyDescriptor(value, key);
-        return descriptor && Object.prototype.hasOwnProperty.call(descriptor, 'value') ? descriptor.value : undefined;
+        return descriptor && Object.hasOwn(descriptor, 'value') ? descriptor.value : undefined;
     }
     catch {
         return undefined;

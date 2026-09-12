@@ -140,15 +140,7 @@ export function createTranslationManagerHandlesModule(common: unknown, cancellat
             typeof getSourceHint !== 'function') {
             throw new TypeError('[TranslationService] Subscriber handle controls must be complete functions.');
         }
-        let resolve: DeferredResolve<unknown> | undefined;
-        let reject: DeferredReject | undefined;
-        const promise = new Promise<unknown>((resolvePromise, rejectPromise) => {
-            resolve = resolvePromise;
-            reject = rejectPromise;
-        });
-        if (resolve === undefined || reject === undefined) {
-            throw new Error('[TranslationService] Subscriber handle promise capabilities were not initialized.');
-        }
+        const { promise, resolve, reject } = Promise.withResolvers<unknown>();
         promise.catch(() => undefined);
         try {
             const capabilities = capturePromiseHandleCapabilities(promise, '[TranslationService]');

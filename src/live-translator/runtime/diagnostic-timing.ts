@@ -22,7 +22,8 @@ export function timed<F extends (this: never, ...args: never[]) => unknown>(timi
     return function (this: unknown, ...args: Parameters<F>): unknown {
         let units = 0, pixels = 0;
         try {
-            [units, pixels] = work?.(args) ?? [0, 0];
+            if (work !== undefined)
+                [units, pixels] = work(args);
         }
         catch {
         }

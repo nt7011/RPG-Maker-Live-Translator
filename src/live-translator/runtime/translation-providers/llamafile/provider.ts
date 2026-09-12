@@ -89,10 +89,9 @@ export function createLlamafileProviderModule(common: TranslationProviderCommonM
                 return backend;
             }
             catch (error) {
-                startupError =
-                    error instanceof Error
-                        ? error
-                        : createError('Managed llamafile startup failed.', 'LLAMAFILE_STARTUP_ERROR');
+                startupError = Error.isError(error)
+                    ? error
+                    : createError('Managed llamafile startup failed.', 'LLAMAFILE_STARTUP_ERROR');
                 throw startupError;
             }
         }

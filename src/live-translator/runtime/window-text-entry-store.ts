@@ -78,12 +78,7 @@ function sameIdentity(left: WindowTextEntryIdentity, right: WindowTextEntryIdent
     return left.slotKey === right.slotKey && left.replacementAnchorKey === right.replacementAnchorKey;
 }
 function addToBucket(index: Map<string, Set<IndexedEntry>>, key: string, record: IndexedEntry): void {
-    const existing = index.get(key);
-    if (existing) {
-        existing.add(record);
-        return;
-    }
-    index.set(key, new Set([record]));
+    index.getOrInsertComputed(key, () => new Set()).add(record);
 }
 function removeFromBucket(index: Map<string, Set<IndexedEntry>>, key: string, record: IndexedEntry): void {
     const bucket = index.get(key);
@@ -111,12 +106,7 @@ function addRecordToState(state: WindowTextIdentityIndexState, record: IndexedEn
     addToBucket(state.entriesByReplacementAnchor, record.identity.replacementAnchorKey, record);
     if (!isObjectReference(record.entry))
         return;
-    const existing = state.recordsByEntry.get(record.entry);
-    if (existing) {
-        existing.add(record);
-        return;
-    }
-    state.recordsByEntry.set(record.entry, new Set([record]));
+    state.recordsByEntry.getOrInsertComputed(record.entry, () => new Set()).add(record);
 }
 class AuthoredWindowTextEntryStore extends Map<unknown, unknown> implements WindowTextEntryStore {
     private identityIndex = createIdentityIndexState(null);

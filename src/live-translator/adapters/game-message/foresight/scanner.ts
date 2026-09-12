@@ -897,12 +897,7 @@ export function createForesightScanner(dependencies: ForesightScannerDependencie
     function getQueuedFrameListId(identity: unknown): string {
         if (!identity || typeof identity !== 'object')
             return 'missing';
-        let id = queuedPathListIds.get(identity);
-        if (!id) {
-            id = nextQueuedPathListId;
-            nextQueuedPathListId += 1;
-            queuedPathListIds.set(identity, id);
-        }
+        const id = queuedPathListIds.getOrInsertComputed(identity, () => nextQueuedPathListId++);
         const templateId: string = id as DirectTemplateString<typeof id>;
         return `list:${templateId}`;
     }

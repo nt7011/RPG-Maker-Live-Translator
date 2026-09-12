@@ -160,9 +160,7 @@ export function createBitmapFragmentPresentation(options: {
                 const value = groupEvidence(item);
                 if (value === null)
                     continue;
-                const entries = sources.get(value.source.observation) ?? [];
-                entries.push({ item, value });
-                sources.set(value.source.observation, entries);
+                sources.getOrInsertComputed(value.source.observation, () => []).push({ item, value });
             }
             for (const entries of sources.values()) {
                 entries.sort((a, b) => a.value.start - b.value.start);
@@ -566,7 +564,9 @@ export function createBitmapFragmentPresentation(options: {
                 changed: markDirty(occurrence),
             };
         },
-        hasCompleteSource: (token: TextObservationRef) => [...occurrences].some((occurrence) => occurrence.clue?.complete === true && occurrence.clue.source.observation === token),
+        hasCompleteSource: (token: TextObservationRef) => occurrences
+            .values()
+            .some((occurrence) => occurrence.clue?.complete === true && occurrence.clue.source.observation === token),
         prepare: timed(options.timing, 'fragment-admission', prepare, ([uses]) => [uses.length, 0]),
         dispose,
     };

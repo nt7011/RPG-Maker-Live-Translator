@@ -136,10 +136,7 @@ async function deliverSettlement(promise: Promise<unknown>, delivery: Settlement
     complete?.(value, failed);
 }
 function createCell(request: SemanticTextTranslationRequest): TranslationSettlementCell {
-    let resolveCompletion!: (settlement: SemanticTranslationSettlement) => void;
-    const completion = new Promise<SemanticTranslationSettlement>((resolve) => {
-        resolveCompletion = resolve;
-    });
+    const { promise: completion, resolve: resolveCompletion } = Promise.withResolvers<SemanticTranslationSettlement>();
     return {
         request,
         encoded: encodeTranslationText(request.handle),
@@ -172,11 +169,7 @@ export function createSemanticTextTranslationHandoff(options: SemanticTextTransl
     }
     function addActive(cell: TranslationSettlementCell): void {
         const textId = cell.request.handle.textId;
-        const active = activeByTextId.get(textId);
-        if (active === undefined)
-            activeByTextId.set(textId, new Set([cell]));
-        else
-            active.add(cell);
+        activeByTextId.getOrInsertComputed(textId, () => new Set()).add(cell);
     }
     function finishCell(cell: TranslationSettlementCell, settlement: SemanticTranslationSettlement): void {
         if (cell.terminal)

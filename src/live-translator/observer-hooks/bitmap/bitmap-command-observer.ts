@@ -64,6 +64,23 @@ export function installBitmapCommandObserver(options: {
     const invokeNative = timed(options.timing, 'bitmap-native', Reflect.apply);
     const cleared = createCanvasClearEvidence(options.canvasPrototype, options.contextPrototype);
     const reader = createCanvasPixelDamageReader(options.contextPrototype);
+    const emptyTextStateTrusted = ['globalCompositeOperation', 'filter'].every((key) => {
+        const property = locateProperty(options.contextPrototype, key);
+        return property === null
+            ? key === 'filter'
+            : isNativeCanvasOperation(Reflect.get(property.descriptor, 'get'), `get ${key}`);
+    });
+    function emptyTextDoesNotPaint(context: CanvasRenderingContext2D): boolean {
+        if (!emptyTextStateTrusted)
+            return false;
+        try {
+            return (reader.readState(context, 'globalCompositeOperation') === 'source-over' &&
+                reader.readState(context, 'filter') === 'none');
+        }
+        catch {
+            return false;
+        }
+    }
     const canvasGetter: unknown = Reflect.get(locateProperty(options.contextPrototype, 'canvas')?.descriptor ?? {}, 'get');
     const getContext = locateProperty(options.canvasPrototype, 'getContext')?.descriptor.value as unknown;
     if (typeof canvasGetter !== 'function' || typeof getContext !== 'function')
@@ -217,7 +234,8 @@ export function installBitmapCommandObserver(options: {
                         (args.length === 3 || (args.length === 4 && typeof maxWidth === 'number')) &&
                         (!Number.isFinite(x) ||
                             !Number.isFinite(y) ||
-                            (args.length === 4 && !Number.isFinite(maxWidth))))
+                            (args.length === 4 && (!Number.isFinite(maxWidth) || (maxWidth as number) <= 0)) ||
+                            (text.length === 0 && emptyTextDoesNotPaint(this as CanvasRenderingContext2D))))
                         return invokeNative(native, this, args);
                     const write: {
                         receipt: BitmapCanvasWrite | null;

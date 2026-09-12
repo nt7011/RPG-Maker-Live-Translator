@@ -133,7 +133,7 @@ function requireRegexOutcome<Outcome extends IgnoredTranslationRegexOutcome | Ov
         return outcome as Exclude<Outcome, {
             readonly status: 'failed';
         }>;
-    if (outcome.cause instanceof Error)
+    if (Error.isError(outcome.cause))
         throw outcome.cause;
     throw new Error(`Translation regex matching failed: ${outcome.reason}`);
 }

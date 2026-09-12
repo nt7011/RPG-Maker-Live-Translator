@@ -427,7 +427,7 @@ function createRealmQueueControllerFactory(runtimeScope: object): TranslationMan
             return restoredQueuedWork;
         }
         function hasPendingQueueJournals(): boolean {
-            return pendingPrunes.size > 0 || Array.from(pendingDispatches).some((lease) => lease.rollbackPending);
+            return pendingPrunes.size > 0 || pendingDispatches.values().some((lease) => lease.rollbackPending);
         }
         function runQueueJournalRecovery(): void {
             journalRecoveryScheduled = false;
@@ -481,7 +481,9 @@ function createRealmQueueControllerFactory(runtimeScope: object): TranslationMan
                 }
                 if (queued)
                     continue;
-                const alreadyOwned = Array.from(pendingPrunes).some((journal) => journal.job === job && !journal.queueRemoved);
+                const alreadyOwned = pendingPrunes
+                    .values()
+                    .some((journal) => journal.job === job && !journal.queueRemoved);
                 if (alreadyOwned)
                     continue;
                 const journal: TranslationManagerQueuePruneJournal = {
@@ -680,10 +682,6 @@ function createRealmQueueControllerFactory(runtimeScope: object): TranslationMan
     return createController;
 }
 export function createTranslationManagerQueueModule(runtimeScope: object): TranslationManagerQueueModule {
-    let createController = queueControllerFactories.get(runtimeScope);
-    if (createController === undefined) {
-        createController = createRealmQueueControllerFactory(runtimeScope);
-        queueControllerFactories.set(runtimeScope, createController);
-    }
+    const createController = queueControllerFactories.getOrInsertComputed(runtimeScope, createRealmQueueControllerFactory);
     return { create: createController };
 }

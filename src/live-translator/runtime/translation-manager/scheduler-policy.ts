@@ -306,11 +306,7 @@ export function createTranslationManagerSchedulerPolicyModule(constants: unknown
             return projection;
         }
         function projectionMatchesLane(snapshot: TranslationManagerSchedulerStateSnapshot, job: unknown, lane: TranslationManagerReservedLaneCandidate): boolean {
-            let matchesByJob = snapshot.laneMatches.get(lane);
-            if (matchesByJob === undefined) {
-                matchesByJob = new Map<unknown, boolean>();
-                snapshot.laneMatches.set(lane, matchesByJob);
-            }
+            const matchesByJob = snapshot.laneMatches.getOrInsertComputed(lane, () => new Map());
             if (matchesByJob.has(job))
                 return matchesByJob.get(job) === true;
             const projection = getJobProjection(snapshot, job);

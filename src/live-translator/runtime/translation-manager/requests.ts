@@ -473,10 +473,6 @@ function createRealmRequestsControllerFactory(runtimeScope: object): Translation
     return createController;
 }
 export function createTranslationManagerRequestsModule(runtimeScope: object): TranslationManagerRequestsModule {
-    let createController = requestsControllerFactories.get(runtimeScope);
-    if (createController === undefined) {
-        createController = createRealmRequestsControllerFactory(runtimeScope);
-        requestsControllerFactories.set(runtimeScope, createController);
-    }
+    const createController = requestsControllerFactories.getOrInsertComputed(runtimeScope, createRealmRequestsControllerFactory);
     return { create: createController };
 }

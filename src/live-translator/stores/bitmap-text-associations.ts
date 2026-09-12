@@ -33,13 +33,9 @@ export function assembleBitmapTextAssociations(groups: readonly BitmapCommandRow
     const groupOrder = new Map(groups.map((group, index) => [group, index]));
     for (const group of groups)
         for (const atom of group.atoms) {
-            const owners = membership.get(atom) ?? [];
-            owners.push(group);
-            membership.set(atom, owners);
+            membership.getOrInsertComputed(atom, () => []).push(group);
             if (atom.effect !== null) {
-                const owners = effectGroups.get(atom.effect) ?? new Set();
-                owners.add(group);
-                effectGroups.set(atom.effect, owners);
+                effectGroups.getOrInsertComputed(atom.effect, () => new Set()).add(group);
             }
         }
     interface Membership {
@@ -76,16 +72,13 @@ export function assembleBitmapTextAssociations(groups: readonly BitmapCommandRow
             continue;
         }
         const effects = new Set(candidate.atoms.flatMap((atom) => (atom.effect === null ? [] : [atom.effect])));
-        if ([...effects].some((effect) => [...(effectGroups.get(effect) ?? [])].some((group) => !selected.has(group)))) {
+        if (effects.values().some((effect) => effectGroups.get(effect)?.isSubsetOf(selected) === false)) {
             rejected?.(candidate, 'candidate-divides-shared-effect');
             continue;
         }
         let suggestion = suggestions;
         for (const atom of candidate.reading) {
-            let next = suggestion.next.get(atom);
-            if (next === undefined)
-                suggestion.next.set(atom, (next = { next: new Map(), used: false }));
-            suggestion = next;
+            suggestion = suggestion.next.getOrInsertComputed(atom, () => ({ next: new Map(), used: false }));
         }
         if (!suggestion.used)
             admitted.push({ ...candidate, groups: participating });
@@ -155,14 +148,12 @@ export function bitmapSemanticCandidates(groups: readonly BitmapCommandRow[], op
                 if (relation.surface !== options.surface)
                     continue;
                 const token = relation.source.observation;
-                let candidate = observations.get(token);
-                if (candidate === undefined) {
-                    candidate = { source: relation.source, members: new Map(), groups: new Set() };
-                    observations.set(token, candidate);
-                }
-                const relations = candidate.members.get(atom) ?? [];
-                relations.push(relation);
-                candidate.members.set(atom, relations);
+                const candidate = observations.getOrInsertComputed(token, () => ({
+                    source: relation.source,
+                    members: new Map(),
+                    groups: new Set(),
+                }));
+                candidate.members.getOrInsertComputed(atom, () => []).push(relation);
                 candidate.groups.add(group);
             }
         }
@@ -184,13 +175,13 @@ export function bitmapSemanticCandidates(groups: readonly BitmapCommandRow[], op
                 options.contradict(token);
             continue;
         }
-        if ([...members.keys()].some((atom) => conflicting.has(atom))) {
+        if (!conflicting.isDisjointFrom(members)) {
             reject?.('conflicting-bitmap-source-advances');
             if (complete)
                 options.contradict(token);
             continue;
         }
-        const entries = [...members].map(([atom, relations]) => ({
+        const entries = Array.from(members, ([atom, relations]) => ({
             atom,
             range: relations.find((relation) => relation.range !== null)?.range ?? null,
         }));
@@ -268,7 +259,10 @@ export function bitmapSemanticCandidates(groups: readonly BitmapCommandRow[], op
             reject?.(matched ? 'incomplete-source-without-complete-source-clue' : matchFailure);
             continue;
         }
-        const proposedArea = intersectSemanticAreas([...members.values()].flatMap((relations) => relations.flatMap((relation) => (relation.area === null ? [] : [relation.area]))));
+        const proposedArea = intersectSemanticAreas(members
+            .values()
+            .flatMap((relations) => relations.values().flatMap((relation) => (relation.area === null ? [] : [relation.area])))
+            .toArray());
         const area = partial
             ? null
             : bitmapAllocation(proposedArea, options.width, options.height, (reason) => reject?.(reason, proposedArea));
@@ -303,9 +297,7 @@ export function bitmapSemanticCandidates(groups: readonly BitmapCommandRow[], op
             },
         };
         if (partial) {
-            const entries = partials.get(first) ?? [];
-            entries.push(candidate);
-            partials.set(first, entries);
+            partials.getOrInsertComputed(first, () => []).push(candidate);
         }
         else
             candidates.push(candidate);
@@ -406,15 +398,8 @@ function uniqueBitmapOverlaps(opposite: readonly BitmapTextAssociation[], querie
     ] as const)
         for (const [owner, association] of associations.entries())
             for (const { frame } of association.groups) {
-                let heights = rows.get(frame.y);
-                if (heights === undefined)
-                    rows.set(frame.y, (heights = new Map<number, {
-                        opposite: Interval[];
-                        queried: Interval[];
-                    }>()));
-                let row = heights.get(frame.lineHeight);
-                if (row === undefined)
-                    heights.set(frame.lineHeight, (row = { opposite: [], queried: [] }));
+                const heights = rows.getOrInsertComputed(frame.y, () => new Map());
+                const row = heights.getOrInsertComputed(frame.lineHeight, () => ({ opposite: [], queried: [] }));
                 row[side].push({ owner, left: frame.x, right: frame.x + frame.width });
             }
     const matches: (number | null | undefined)[] = Array.from({ length: queried.length });

@@ -1,8 +1,8 @@
 type RuntimeFunction = (...args: never[]) => unknown;
 type PropertyBag = Record<PropertyKey, unknown>;
-const MIN_NW_VERSION = '0.100.1';
-const RECOMMENDED_NW_VERSION = '0.105.0';
-const RELEASE_SYNTAX_TARGET = 'ES2024';
+const MIN_NW_VERSION = '0.115.0';
+const RECOMMENDED_NW_VERSION = '0.115.0';
+const RELEASE_SYNTAX_TARGET = 'ESNext';
 const RUNTIME_LOADER_FILE = 'live-translator-runtime-loader.js';
 interface RuntimeLoaderFailureState {
     readonly status: 'failed';

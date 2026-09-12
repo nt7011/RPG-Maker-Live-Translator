@@ -54,7 +54,7 @@ export function updateHeaderComplaintsVisibility(): void {
     const container = refs['header-complaints'];
     if (!container)
         return;
-    const visible = Array.from(container.children).some((child) => isGuiHtmlElement(child) && child.hidden !== true);
+    const visible = Iterator.from(container.children).some((child) => isGuiHtmlElement(child) && child.hidden !== true);
     container.hidden = !visible;
 }
 export function formatNumber(value: unknown): string {
@@ -355,7 +355,7 @@ export function bindFoldedPanelSummaryControls(): void {
     });
 }
 export function syncPanelDisclosureIndicators(root: Document | Element = document): void {
-    Array.from(root.querySelectorAll('.collapsible-panel')).forEach(syncPanelDisclosureIndicator);
+    root.querySelectorAll('.collapsible-panel').forEach(syncPanelDisclosureIndicator);
 }
 export function syncPanelDisclosureIndicator(panel: Element): void {
     const summary = panel.querySelector('summary');
@@ -370,7 +370,7 @@ export function syncPanelDisclosureIndicatorForStatus(statusElement: Element): v
 export function summaryHasDisclosureStatus(summary: Element | null): boolean {
     if (!summary)
         return false;
-    return Array.from(summary.querySelectorAll('.summary-status')).some((status) => {
+    return Iterator.from(summary.querySelectorAll('.summary-status')).some((status) => {
         if (!isGuiHtmlElement(status) || status.hidden === true)
             return false;
         return falsyFallback(status.textContent, '').trim() !== '';

@@ -441,10 +441,6 @@ function createRealmHandoffControllerFactory(runtimeScope: object): TranslationM
     return createController;
 }
 export function createTranslationManagerRequestHandoffModule(runtimeScope: object): TranslationManagerRequestHandoffModule {
-    let createController = handoffControllerFactories.get(runtimeScope);
-    if (createController === undefined) {
-        createController = createRealmHandoffControllerFactory(runtimeScope);
-        handoffControllerFactories.set(runtimeScope, createController);
-    }
+    const createController = handoffControllerFactories.getOrInsertComputed(runtimeScope, createRealmHandoffControllerFactory);
     return { create: createController };
 }

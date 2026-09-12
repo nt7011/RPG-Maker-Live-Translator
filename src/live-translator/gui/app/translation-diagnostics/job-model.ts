@@ -1,3 +1,4 @@
+import type {} from '../../../types/esnext-iterator.js';
 import { formatNumber } from '../core.js';
 import { normalizeHookClass, normalizeTranslationDiagnosticsStatusClass, normalizeStatusClass } from '../formatters.js';
 import { getTextRecordRuntimePolicy } from '../runtime/records.js';
@@ -50,11 +51,7 @@ export function getAllTranslationDiagnosticsJobs(): GuiTranslationDiagnosticsDis
     const jobs = state.translationDiagnostics?.jobs;
     if (!jobs)
         return [];
-    return [
-        ...jobs.running.map((job) => ({ ...job, displayMode: 'running' as const })),
-        ...jobs.queued.map((job) => ({ ...job, displayMode: 'queued' as const })),
-        ...jobs.past.map((job) => ({ ...job, displayMode: 'past' as const })),
-    ];
+    return Iterator.concat<GuiTranslationDiagnosticsDisplayJob>(jobs.running.values().map((job) => ({ ...job, displayMode: 'running' as const })), jobs.queued.values().map((job) => ({ ...job, displayMode: 'queued' as const })), jobs.past.values().map((job) => ({ ...job, displayMode: 'past' as const }))).toArray();
 }
 export function getMatchedTranslationDiagnosticsJobs(item: GuiTextRecord | null | undefined): GuiTranslationDiagnosticsDisplayJob[] {
     if (!item)

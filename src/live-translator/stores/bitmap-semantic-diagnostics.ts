@@ -112,6 +112,7 @@ export function createBitmapSemanticDiagnostics() {
                         return found === undefined ? [] : [found];
                     });
                     const localDecision = row.reading
+                        .values()
                         .map((atom) => decisions.get(atom))
                         .find((value) => value !== undefined);
                     const tokens = new Set(evidence.flatMap((item) => (item.observation === null ? [] : [item.observation])));
@@ -121,7 +122,9 @@ export function createBitmapSemanticDiagnostics() {
                         const found = sources.get(item.observation);
                         return found === undefined ? [] : [found];
                     }) ?? [];
-                    const token = witnesses?.[0].observation ?? localDecision?.source?.observation ?? [...tokens][0];
+                    const token = witnesses?.[0].observation ??
+                        localDecision?.source?.observation ??
+                        tokens.values().next().value;
                     const source = token === undefined ? undefined : sources.get(token);
                     const decision = source?.rejection ?? localDecision;
                     const native = evidence.find((item) => item.native?.allocationReason != null)?.native ?? evidence[0]?.native;

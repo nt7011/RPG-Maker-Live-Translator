@@ -375,10 +375,6 @@ function createRealmSubscribersControllerFactory(runtimeScope: object): Translat
     return createController;
 }
 export function createTranslationManagerSubscribersModule(runtimeScope: object): TranslationManagerSubscribersModule {
-    let createController = subscribersControllerFactories.get(runtimeScope);
-    if (createController === undefined) {
-        createController = createRealmSubscribersControllerFactory(runtimeScope);
-        subscribersControllerFactories.set(runtimeScope, createController);
-    }
+    const createController = subscribersControllerFactories.getOrInsertComputed(runtimeScope, createRealmSubscribersControllerFactory);
     return { create: createController };
 }

@@ -32,11 +32,7 @@ export function supportsBitmapCommandOrder(reading: readonly BitmapCommandAtom[]
         const geometry = atom.geometry;
         if (geometry === null)
             return false;
-        let heights = rows.get(geometry.y);
-        if (heights === undefined) {
-            heights = new Map<number, BitmapSourceGeometry>();
-            rows.set(geometry.y, heights);
-        }
+        const heights = rows.getOrInsertComputed(geometry.y, () => new Map());
         const previous = heights.get(geometry.lineHeight);
         if (previous !== undefined) {
             if (!orderedBitmapAdvances(previous, geometry))
@@ -57,11 +53,7 @@ export function assembleBitmapCommandRows(atoms: readonly BitmapCommandAtom[], b
     const captures = new Map<PixelEffect | BitmapCommandAtom, BitmapCommandAtom[]>();
     for (const atom of atoms) {
         const key = atom.effect ?? atom;
-        const members = captures.get(key);
-        if (members === undefined)
-            captures.set(key, [atom]);
-        else
-            members.push(atom);
+        captures.getOrInsertComputed(key, () => []).push(atom);
     }
     const result: BitmapCommandRow[] = [];
     function emit(members: readonly BitmapCommandAtom[]): boolean {
@@ -84,7 +76,7 @@ export function assembleBitmapCommandRows(atoms: readonly BitmapCommandAtom[], b
             if (atom.effect !== null)
                 effects.set(atom.effect, (effects.get(atom.effect) ?? 0) + 1);
         }
-        if ([...effects].some(([effect, count]) => captures.get(effect)?.length !== count))
+        if (effects.entries().some(([effect, count]) => captures.get(effect)?.length !== count))
             return false;
         if (effects.size === 0 && members.some((atom) => atom.text.trim().length !== 0))
             return false;

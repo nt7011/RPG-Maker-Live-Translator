@@ -820,7 +820,7 @@ export function createSubscriberOwnershipRegistry(options: SubscriberOwnershipOp
         const receipt = batch.receipts[0];
         if (receipt === undefined) {
             const failure = batch.failures[0]?.error;
-            if (failure instanceof Error)
+            if (Error.isError(failure))
                 throw failure;
             throw new Error('[TranslationService] Subscriber terminal delivery failed.');
         }
@@ -1131,7 +1131,7 @@ export function createSubscriberOwnershipRegistry(options: SubscriberOwnershipOp
         const receipt = batch.receipts[0];
         if (receipt === undefined) {
             const failure = batch.failures[0]?.error;
-            if (failure instanceof Error)
+            if (Error.isError(failure))
                 throw failure;
             throw new Error('[TranslationService] Subscriber admission terminal delivery failed.');
         }

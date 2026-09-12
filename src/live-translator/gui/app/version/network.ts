@@ -16,7 +16,7 @@ export function fetchRemoteTextWithNode(rawUrl: string | URL, redirectCount: num
             validateVersionCheckUrl(url);
         }
         catch (error: unknown) {
-            reject(error instanceof Error ? error : new Error(stringValue(error)));
+            reject(Error.isError(error) ? error : new Error(stringValue(error)));
             return;
         }
         let finished = false;
@@ -25,7 +25,7 @@ export function fetchRemoteTextWithNode(rawUrl: string | URL, redirectCount: num
                 return;
             finished = true;
             if (error)
-                reject(error instanceof Error ? error : new Error(stringValue(error)));
+                reject(Error.isError(error) ? error : new Error(stringValue(error)));
             else
                 resolve(value ?? '');
         }

@@ -180,15 +180,13 @@ function textDamage(reader: CanvasPixelDamageReader, context: CanvasRenderingCon
     return { kind: 'rect', x: left, y: top, width: right - left, height: bottom - top };
 }
 function drawImageDamage(reader: CanvasPixelDamageReader, context: CanvasRenderingContext2D, arguments_: readonly unknown[]): ExactGpuMutationDamage {
-    if (!boundedPaintState(reader, context))
+    if (arguments_.length !== 5 && arguments_.length !== 9)
         return fullDamage;
-    if (arguments_.length === 3)
+    if (!boundedPaintState(reader, context))
         return fullDamage;
     if (arguments_.length === 5)
         return rectangle(arguments_[1], arguments_[2], arguments_[3], arguments_[4], 1);
-    if (arguments_.length === 9)
-        return rectangle(arguments_[5], arguments_[6], arguments_[7], arguments_[8], 1);
-    return fullDamage;
+    return rectangle(arguments_[5], arguments_[6], arguments_[7], arguments_[8], 1);
 }
 function putImageDataDamage(arguments_: readonly unknown[]): ExactGpuMutationDamage {
     const [, destinationX, destinationY, dirtyX, dirtyY, dirtyWidth, dirtyHeight] = arguments_;

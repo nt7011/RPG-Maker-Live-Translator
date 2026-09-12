@@ -233,7 +233,7 @@ export function createLlamafileProcessModule(common: TranslationProviderCommonMo
                 throw createError('llamafile did not become ready within 10 minutes.', 'LLAMAFILE_STARTUP_TIMEOUT');
             }
             catch (error) {
-                const failure = error instanceof Error
+                const failure = Error.isError(error)
                     ? error
                     : createError('llamafile startup failed.', 'LLAMAFILE_STARTUP_ERROR');
                 if (!closed) {

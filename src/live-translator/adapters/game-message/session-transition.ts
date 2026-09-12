@@ -122,7 +122,7 @@ export function createGameMessageSessionTransitionController(scope: unknown = {}
     function replaceState(expected: MessageWindowContext, messageState: MessageState, renderSession: MessageRenderSession): MessageWindowContext {
         const replacement = windowContextAuthority.replace({ expected, messageState, renderSession });
         if (replacement.status !== 'committed' && replacement.status !== 'unchanged') {
-            throw replacement.error instanceof Error
+            throw Error.isError(replacement.error)
                 ? replacement.error
                 : new Error(`[GameMessage] State publication failed: ${replacement.reason}`);
         }

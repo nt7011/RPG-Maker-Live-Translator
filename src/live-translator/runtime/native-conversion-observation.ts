@@ -89,18 +89,13 @@ export function createNativeConversionObservationService(): NativeConversionObse
     const statesByReceiver = new WeakMap<object, ReceiverConversionState>();
     let activeGeneration: GenerationState | null = null;
     function receiverState(receiver: object): ReceiverConversionState {
-        let state = statesByReceiver.get(receiver);
-        if (!state) {
-            state = {
-                observations: [],
-                bypassDepth: 0,
-                bypassGeneration: null,
-                receipt: null,
-                receiptGeneration: null,
-            };
-            statesByReceiver.set(receiver, state);
-        }
-        return state;
+        return statesByReceiver.getOrInsertComputed(receiver, () => ({
+            observations: [],
+            bypassDepth: 0,
+            bypassGeneration: null,
+            receipt: null,
+            receiptGeneration: null,
+        }));
     }
     function prepareGeneration(): NativeConversionObservationGeneration {
         const generation: GenerationState = { token: Object.freeze({}), wrappers: [], state: 'prepared' };

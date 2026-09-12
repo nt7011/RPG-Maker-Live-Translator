@@ -133,7 +133,7 @@ export function createSemanticTextStore(): SemanticTextStore {
         }
     }
     function getSnapshot(): readonly SemanticTextRecordSnapshot[] {
-        return Object.freeze([...records.values()].map(({ handle, translation, attempt, request, translator }) => Object.freeze({
+        return Object.freeze(Array.from(records.values(), ({ handle, translation, attempt, request, translator }) => Object.freeze({
             request,
             translator,
             textId: handle.textId,

@@ -117,7 +117,7 @@ export function createBitmapFragmentGroups(options: {
             current.delete(owner);
         if (isDisposed())
             return [];
-        const present = new Set([...current.keys()].map((owner) => owners.get(owner)?.group));
+        const present = new Set(current.keys().map((owner) => owners.get(owner)?.group));
         const admissions = present.has(undefined) || present.size > 1 ? groupBitmapFragments([...current.values()]) : [];
         for (const fragments of admissions) {
             const existing = new Set(fragments.flatMap((fragment) => {
@@ -125,7 +125,7 @@ export function createBitmapFragmentGroups(options: {
                 return group === undefined ? [] : [group];
             }));
             const positions = new Map(fragments.map((fragment, index) => [owners.get(fragment.use.owner)?.reference, index]));
-            if ([...existing].some((group) => {
+            if (existing.values().some((group) => {
                 let previous = -1;
                 return group.members.some((member) => {
                     const next = positions.get(member.owner);
@@ -195,11 +195,11 @@ export function createBitmapFragmentGroups(options: {
                 }
             }
         }
-        const selected = new Set([...current.keys()].flatMap((owner) => {
-            const group = owners.get(owner)?.group;
-            return group === undefined ? [] : [group];
-        }));
-        const references = new Map([...current.values()].map((fragment) => [owners.get(fragment.use.owner)?.reference, fragment]));
+        const selected = new Set(current
+            .keys()
+            .map((owner) => owners.get(owner)?.group)
+            .filter((group) => group !== undefined));
+        const references = new Map(current.values().map((fragment) => [owners.get(fragment.use.owner)?.reference, fragment] as const));
         const visible: VisibleBitmapFragmentGroup[] = [];
         for (const group of selected) {
             const fragments = group.members.map((member) => references.get(member.owner));

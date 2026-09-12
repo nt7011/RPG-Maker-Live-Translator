@@ -191,17 +191,9 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
     const pendingProofs = new Map<PixelProof, DisplayProof>();
     const regionOccurrences = new WeakMap<object, WeakMap<object, object>>();
     function regionOccurrence(driver: object, member: object): object {
-        let regions = regionOccurrences.get(driver);
-        if (regions === undefined) {
-            regions = new WeakMap();
-            regionOccurrences.set(driver, regions);
-        }
-        let token = regions.get(member);
-        if (token === undefined) {
-            token = Object.freeze({});
-            regions.set(member, token);
-        }
-        return token;
+        return regionOccurrences
+            .getOrInsertComputed(driver, () => new WeakMap())
+            .getOrInsertComputed(member, () => Object.freeze({}));
     }
     const pendingTemplates = new Map<TextObservationRef, PendingTemplate>();
     const renderEpochs = new Map<SourceState, number>();
@@ -267,7 +259,7 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
                     state.atoms.length,
                     state.associations.length,
                     effects.size,
-                    [...effects].reduce((sum, effect) => sum + (gpu?.effectBytes(effect) ?? 0), 0),
+                    effects.values().reduce((sum, effect) => sum + (gpu?.effectBytes(effect) ?? 0), 0),
                     state.display === null ? 0 : state.display.width * state.display.height * 4,
                     Number(state.dirty),
                     Number(state.observed),
@@ -295,7 +287,7 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
                 retainedAtoms,
                 captures.size,
                 batches.size,
-                [...batches.values()].reduce((sum, batch) => sum + batch.commands.length, 0),
+                batches.values().reduce((sum, batch) => sum + batch.commands.length, 0),
             ],
         });
     }
@@ -359,7 +351,10 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
                 rejectCopy('copy-appearance-operation-unsupported', [{ text: textOrigin(inherited).source.text }]);
             return null;
         }
-        const unfinished = [...captures].filter(([, capture]) => capture.state === donor);
+        const unfinished = captures
+            .entries()
+            .filter(([, capture]) => capture.state === donor)
+            .toArray();
         if (unfinished.length > 0) {
             rejectCopy('copy-source-command-in-progress', unfinished.map(([command]) => command));
             return null;
@@ -426,9 +421,7 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
         },
         readRoot: (source) => {
             const state = bySource.get(source);
-            if (state === undefined ||
-                gpu === null ||
-                [...captures.values()].some((capture) => capture.state === state))
+            if (state === undefined || gpu === null || captures.values().some((capture) => capture.state === state))
                 return null;
             const batch = batches.get(state);
             if (batch !== undefined)
@@ -496,7 +489,9 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
         request: (predecessor, template, changed, completeSource) => {
             const pending = predecessor === null && completeSource !== null ? pendingTemplates.get(completeSource) : undefined;
             const adopted = pending !== undefined &&
-                ![...states].some((state) => state.atoms.some((atom) => atom.draw !== undefined &&
+                !states
+                    .values()
+                    .some((state) => state.atoms.some((atom) => atom.draw !== undefined &&
                     clues
                         ?.provenance(atom.draw)
                         .some((relation) => relation.source.observation === completeSource)))
@@ -518,7 +513,7 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
             if (completeSource !== null) {
                 clues?.attached(completeSource);
                 if (pending !== undefined && adopted === undefined)
-                    releasePending([pending]);
+                    releasePending([pending], 'pending-template-not-adopted');
             }
             return successor.handle;
         },
@@ -669,7 +664,7 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
                 continue;
             let value = demand.get(handle);
             const fresh = value === undefined ||
-                (value.outputs.size > 0 && [...value.outputs.values()].every((present) => present === false));
+                (value.outputs.size > 0 && value.outputs.values().every((present) => present === false));
             if (value === undefined) {
                 value = { outputs: new Map(), episode: Object.freeze({}) };
                 demand.set(handle, value);
@@ -708,11 +703,7 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
             const state = bySource.get(use.source);
             if (state?.display == null || currentSource(state) !== use.source)
                 continue;
-            const group = grouped.get(state);
-            if (group === undefined)
-                grouped.set(state, [use]);
-            else
-                group.push(use);
+            grouped.getOrInsertComputed(state, () => []).push(use);
         }
         const selected = [...grouped].flatMap(([state, currentUses]) => {
             const first = currentUses[0];
@@ -960,7 +951,7 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
         state.height = source.height;
         return state;
     }
-    function releasePending(entries: readonly PendingTemplate[]): void {
+    function releasePending(entries: readonly PendingTemplate[], reason: string): void {
         const retired = entries.filter((entry) => semantic.isCurrent(entry.handle)).map((entry) => entry.handle);
         for (const entry of entries)
             pendingTemplates.delete(entry.source.observation);
@@ -971,18 +962,28 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
         priorities.release(retired);
         for (const handle of retired)
             demand.delete(handle);
+        for (const handle of retired)
+            report({
+                type: 'record.released',
+                textId: handle.textId,
+                revision: handle.semanticRevision,
+                message: reason,
+            });
     }
     function trimPending(): void {
         const excess = Math.max(0, semantic.size() - BITMAP_LIMITS.associations);
         if (excess > 0)
-            releasePending([...pendingTemplates.values()].reverse().slice(0, excess));
+            releasePending([...pendingTemplates.values()].reverse().slice(0, excess), 'pending-template-capacity');
     }
     function prepareCompleteSources(): void {
         if (clues === null)
             return;
         const current = clues.pendingSources();
         const tokens = new Set(current.map((source) => source.observation));
-        releasePending([...pendingTemplates.values()].filter((entry) => !tokens.has(entry.source.observation)));
+        releasePending(pendingTemplates
+            .values()
+            .filter((entry) => !tokens.has(entry.source.observation))
+            .toArray(), 'pending-source-unavailable');
         trimPending();
         for (const source of current) {
             if (pendingTemplates.has(source.observation) || semantic.size() >= BITMAP_LIMITS.associations)
@@ -1004,7 +1005,9 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
     }
     function pendingIsUnambiguous(token: TextObservationRef, state: SourceState): boolean {
         return (!fragments.hasCompleteSource(token) &&
-            ![...states].some((other) => other !== state &&
+            !states
+                .values()
+                .some((other) => other !== state &&
                 other.atoms.some((atom) => atom.draw !== undefined &&
                     clues?.provenance(atom.draw).some((relation) => relation.source.observation === token))));
     }
@@ -1080,9 +1083,7 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
             if (prior.clue?.complete !== true)
                 continue;
             const token = prior.clue.sources[0].observation;
-            const entries = completePredecessors.get(token) ?? [];
-            entries.push(prior);
-            completePredecessors.set(token, entries);
+            completePredecessors.getOrInsertComputed(token, () => []).push(prior);
         }
         const predecessors = assembled.map((row, index) => {
             const old = geometric[index];
@@ -1179,7 +1180,7 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
                 return;
         }
         if (clues !== null)
-            releasePending([...pendingTemplates.values()].filter((entry) => clues.completeSource(entry.source.observation) === null));
+            releasePending([...pendingTemplates.values()].filter((entry) => clues.completeSource(entry.source.observation) === null), 'pending-source-unavailable');
         requestTranslations(plan.changes, state.id, () => {
             state.dirty = true;
         });
@@ -1551,9 +1552,9 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
                 if (result.compensated)
                     publication = null;
             }
+            releasePending([...pendingTemplates.values()], 'runtime-disposed');
             translations.dispose();
             clues?.dispose();
-            pendingTemplates.clear();
             demand.clear();
             priorities.dispose();
             semantic.dispose();

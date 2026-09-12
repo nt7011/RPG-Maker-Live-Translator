@@ -62,7 +62,7 @@ function recordValue(value: unknown, key: string): unknown {
         return undefined;
     try {
         const descriptor = Object.getOwnPropertyDescriptor(value, key);
-        return descriptor && Object.prototype.hasOwnProperty.call(descriptor, 'value') ? descriptor.value : undefined;
+        return descriptor && Object.hasOwn(descriptor, 'value') ? descriptor.value : undefined;
     }
     catch {
         return undefined;
@@ -89,7 +89,7 @@ function listValue(value: unknown): unknown[] {
     for (let index = 0; index < length; index += 1) {
         try {
             const descriptor = Object.getOwnPropertyDescriptor(source, String(index));
-            if (descriptor && Object.prototype.hasOwnProperty.call(descriptor, 'value')) {
+            if (descriptor && Object.hasOwn(descriptor, 'value')) {
                 output.push(descriptor.value);
             }
         }
@@ -217,7 +217,7 @@ function findLatestScan(scans: unknown[]): UnknownRecord | null {
         return null;
     try {
         const descriptor = Object.getOwnPropertyDescriptor(scans, String(length - 1));
-        const latestScan: unknown = descriptor && Object.prototype.hasOwnProperty.call(descriptor, 'value') ? descriptor.value : null;
+        const latestScan: unknown = descriptor && Object.hasOwn(descriptor, 'value') ? descriptor.value : null;
         return isUnknownRecord(latestScan) ? latestScan : null;
     }
     catch {
@@ -227,7 +227,7 @@ function findLatestScan(scans: unknown[]): UnknownRecord | null {
 function ownArrayLength(source: readonly unknown[]): number {
     try {
         const descriptor = Object.getOwnPropertyDescriptor(source, 'length');
-        const length: unknown = descriptor && Object.prototype.hasOwnProperty.call(descriptor, 'value') ? descriptor.value : null;
+        const length: unknown = descriptor && Object.hasOwn(descriptor, 'value') ? descriptor.value : null;
         return typeof length === 'number' && Number.isSafeInteger(length) && length >= 0 ? length : 0;
     }
     catch {
@@ -263,7 +263,7 @@ function readOwnArrayPrefix<T>(source: readonly T[], limit: number, admission: M
             admission.reasons.add(reason);
             continue;
         }
-        if (!descriptor || !Object.prototype.hasOwnProperty.call(descriptor, 'value')) {
+        if (!descriptor || !Object.hasOwn(descriptor, 'value')) {
             admission.reasons.add(reason);
             continue;
         }
@@ -309,16 +309,8 @@ function createFlatBranchGroups(actions: unknown[]): FlatBranchGroups {
         if (!parent || !ownerKeys.has(parent.ownerKey))
             continue;
         const groupKey = createBranchGroupKey(parent.ownerKey, parent.branchIndex);
-        const groupedActions = actionsByBranch.get(groupKey);
-        if (groupedActions)
-            groupedActions.push(action);
-        else
-            actionsByBranch.set(groupKey, [action]);
-        const branchIndices = branchIndicesByOwner.get(parent.ownerKey);
-        if (branchIndices)
-            branchIndices.add(parent.branchIndex);
-        else
-            branchIndicesByOwner.set(parent.ownerKey, new Set([parent.branchIndex]));
+        actionsByBranch.getOrInsertComputed(groupKey, () => []).push(action);
+        branchIndicesByOwner.getOrInsertComputed(parent.ownerKey, () => new Set()).add(parent.branchIndex);
         childActions.add(action);
     }
     return { actionsByBranch, branchIndicesByOwner, childActions };
@@ -504,11 +496,7 @@ export function createBranchMergeGroups(branches: ForesightBranch[]): BranchMerg
         if (joinIndex === null)
             return;
         const key = String(joinIndex);
-        let group = groups.get(key);
-        if (!group) {
-            group = { key, joinIndex, lanePositions: [], branchIndices: [] };
-            groups.set(key, group);
-        }
+        const group = groups.getOrInsertComputed(key, () => ({ key, joinIndex, lanePositions: [], branchIndices: [] }));
         group.lanePositions.push(lanePosition);
         group.branchIndices.push(normalizeBranchIndex(branch.branchIndex, lanePosition));
     });
@@ -708,7 +696,7 @@ function getConsumedMessageText(action: unknown): string {
     const admittedLength = Math.min(consumedCommands.length, MAX_CONSUMED_COMMANDS);
     for (let index = 0; index < admittedLength; index += 1) {
         const descriptor = Object.getOwnPropertyDescriptor(consumedCommands, String(index));
-        if (!descriptor || !Object.prototype.hasOwnProperty.call(descriptor, 'value'))
+        if (!descriptor || !Object.hasOwn(descriptor, 'value'))
             continue;
         const candidate: unknown = descriptor.value;
         const command = recordOrEmpty(candidate);

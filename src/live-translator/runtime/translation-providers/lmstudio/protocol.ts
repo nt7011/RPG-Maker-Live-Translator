@@ -703,7 +703,7 @@ export function createLmStudioProtocolModule(common: TranslationProviderCommonMo
             event = JSON.parse(payload);
         }
         catch (error) {
-            const detail = error instanceof Error ? error.message : String(error);
+            const detail = Error.isError(error) ? error.message : String(error);
             throw new Error(`LM Studio stream returned malformed JSON: ${detail}`, { cause: error });
         }
         events.push(event);

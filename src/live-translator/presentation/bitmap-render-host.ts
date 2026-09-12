@@ -296,12 +296,14 @@ export function createBitmapRenderHost(options: {
             return Reflect.apply(native, receiver, args);
         const uses: QueuedUse[] = [];
         try {
-            const clip = screenClip();
+            let clip: PixelBounds | null | undefined;
             for (let slot = 0; slot < size; slot++) {
                 const element = record(elements[slot]);
                 const queued = element && read(element, slot);
+                if (queued && clip === undefined)
+                    clip = screenClip();
                 if (element)
-                    observe(element, queued ? null : 'unsupported-render-geometry', queued && clip !== null
+                    observe(element, queued ? null : 'unsupported-render-geometry', queued && clip != null
                         ? {
                             frame: queued.use.frame,
                             vertices: [...queued.use.vertices],
@@ -386,7 +388,7 @@ export function createBitmapRenderHost(options: {
                     enabled() &&
                     !isDisposed() &&
                     submission.current() &&
-                    [...pinned].every((backing) => !backing.released) &&
+                    pinned.values().every((backing) => !backing.released) &&
                     uses.every((item) => elements[item.slot] === item.element &&
                         (!Array.isArray(textures) || textures[item.slot] === item.texture.baseTexture) &&
                         current(item))) {
@@ -533,11 +535,7 @@ export function createBitmapRenderHost(options: {
             return;
         if (pass?.screen === true && pass.started && !pass.ended) {
             const prior = pass.uses.get(element);
-            let occurrence = occurrenceTokens.get(element);
-            if (occurrence === undefined) {
-                occurrence = Object.freeze({});
-                occurrenceTokens.set(element, occurrence);
-            }
+            const occurrence = occurrenceTokens.getOrInsertComputed(element, () => Object.freeze({}));
             pass.uses.set(element, {
                 owner: element,
                 source: canvas,
@@ -574,12 +572,7 @@ export function createBitmapRenderHost(options: {
             if (leases.has(target))
                 continue;
             if (target === nativeRenderer) {
-                let output = outputs.get(renderer);
-                if (output === undefined) {
-                    output = ++outputSequence;
-                    outputs.set(renderer, output);
-                }
-                const outputId = output;
+                const outputId = outputs.getOrInsertComputed(renderer, () => ++outputSequence);
                 sceneOutput = outputId;
                 const hooks: OwnedHookSpec[] = [
                     {
@@ -732,9 +725,7 @@ export function createBitmapRenderHost(options: {
                             current: () => args[0] === element,
                             immediate: true,
                             hold: (cleanup) => {
-                                const pending = retained.get(target) ?? [];
-                                pending.push(cleanup);
-                                retained.set(target, pending);
+                                retained.getOrInsertComputed(target, () => []).push(cleanup);
                             },
                         });
                     },

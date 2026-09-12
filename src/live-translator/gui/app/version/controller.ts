@@ -181,16 +181,14 @@ export function serializeAvailableVersions(availableVersions: AvailableVersions)
 export function assertRecommendedVersionIsAvailable(parsed: ParsedUpdateVersion | null, availableVersions: AvailableVersions, fieldName: string): void {
     if (!parsed)
         return;
-    if (!Object.prototype.hasOwnProperty.call(availableVersions, parsed.version)) {
+    if (!Object.hasOwn(availableVersions, parsed.version)) {
         throw new Error(`version payload "${fieldName}" must be listed in "available-versions"`);
     }
 }
 export function getVersionAliasesValue(value: unknown): unknown {
     if (!isUnknownRecord(value))
         return undefined;
-    return Object.prototype.hasOwnProperty.call(value, VERSION_ALIASES_FIELD_NAME)
-        ? value[VERSION_ALIASES_FIELD_NAME]
-        : undefined;
+    return Object.hasOwn(value, VERSION_ALIASES_FIELD_NAME) ? value[VERSION_ALIASES_FIELD_NAME] : undefined;
 }
 export function resolveVersionAlias(parsed: ParsedUpdateVersion, aliases: readonly VersionAlias[]): ParsedUpdateVersion;
 export function resolveVersionAlias(parsed: null, aliases: readonly VersionAlias[]): null;
@@ -223,11 +221,11 @@ export function parseVersionPayload(text: unknown): UnknownRecord {
         throw new Error('version payload must be a JSON object');
     }
     const payload = parsedPayload;
-    if (Object.prototype.hasOwnProperty.call(payload, LATEST_BETA_INTERNAL_FIELD_NAME)) {
+    if (Object.hasOwn(payload, LATEST_BETA_INTERNAL_FIELD_NAME)) {
         throw new Error('version payload must use "recommended-beta", not "latestBeta"');
     }
     const recommended = readVersionPayloadField(payload, RECOMMENDED_FIELD_NAME);
-    if (!Object.prototype.hasOwnProperty.call(payload, RECOMMENDED_BETA_REMOTE_FIELD_NAME)) {
+    if (!Object.hasOwn(payload, RECOMMENDED_BETA_REMOTE_FIELD_NAME)) {
         throw new Error('version payload missing "recommended-beta"');
     }
     const recommendedBetaValue = payload[RECOMMENDED_BETA_REMOTE_FIELD_NAME];
@@ -249,7 +247,7 @@ export function parseVersionPayload(text: unknown): UnknownRecord {
     return result;
 }
 export function readVersionPayloadField(payload: UnknownRecord, fieldName: string): ParsedUpdateVersion {
-    if (!Object.prototype.hasOwnProperty.call(payload, fieldName)) {
+    if (!Object.hasOwn(payload, fieldName)) {
         throw new Error(`version payload missing "${fieldName}"`);
     }
     if (typeof payload[fieldName] !== 'string') {
@@ -265,11 +263,11 @@ export function normalizeLatestVersions(value: unknown): LatestVersionTargets {
     if (!isUnknownRecord(value)) {
         throw new Error('latest version payload must be a version object');
     }
-    if (Object.prototype.hasOwnProperty.call(value, RECOMMENDED_BETA_REMOTE_FIELD_NAME)) {
+    if (Object.hasOwn(value, RECOMMENDED_BETA_REMOTE_FIELD_NAME)) {
         throw new Error('latest version payload must be normalized before version selection');
     }
     const latest = readInternalLatestField(value, LATEST_FIELD_NAME);
-    if (!Object.prototype.hasOwnProperty.call(value, LATEST_BETA_INTERNAL_FIELD_NAME)) {
+    if (!Object.hasOwn(value, LATEST_BETA_INTERNAL_FIELD_NAME)) {
         throw new Error('latest version payload missing "latestBeta"');
     }
     let latestBeta = null;
@@ -280,7 +278,7 @@ export function normalizeLatestVersions(value: unknown): LatestVersionTargets {
     return createLatestVersionTargets(latest, latestBeta, versionAliases);
 }
 export function readInternalLatestField(payload: UnknownRecord, fieldName: string): ParsedUpdateVersion {
-    if (!Object.prototype.hasOwnProperty.call(payload, fieldName)) {
+    if (!Object.hasOwn(payload, fieldName)) {
         throw new Error(`latest version payload missing "${fieldName}"`);
     }
     const parsed = parseUpdateVersion(payload[fieldName]);
@@ -547,7 +545,7 @@ export function readCheckUpdatesSetting(): boolean {
     const gui = propertyValue(settings, 'gui');
     if (gui &&
         typeof gui === 'object' &&
-        Object.prototype.hasOwnProperty.call(gui, 'checkUpdates') &&
+        Object.hasOwn(gui, 'checkUpdates') &&
         propertyValue(gui, 'checkUpdates') !== false &&
         propertyValue(gui, 'checkUpdates') !== true) {
         addLog('warn', 'settings.jsonc "gui.checkUpdates" should be a boolean. Defaulting to true.');

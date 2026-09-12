@@ -95,9 +95,7 @@ export function captureNativeText(host: NativeCaptureHost): NativeCapture {
                             ? 'source-range-unavailable'
                             : 'bitmap-source-range-mismatch'), draw.text, matched ? range : null);
             }
-            const entries = bySurface.get(draw.source) ?? [];
-            entries.push(draw);
-            bySurface.set(draw.source, entries);
+            bySurface.getOrInsertComputed(draw.source, () => []).push(draw);
         }
         if (state === null)
             return;

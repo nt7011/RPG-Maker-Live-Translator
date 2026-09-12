@@ -1132,10 +1132,6 @@ function createRealmRunnerControllerFactory(runtimeScope: object): TranslationMa
     return createController;
 }
 export function createTranslationManagerRunnerModule(runtimeScope: object): TranslationManagerRunnerModule {
-    let createController = runnerControllerFactories.get(runtimeScope);
-    if (createController === undefined) {
-        createController = createRealmRunnerControllerFactory(runtimeScope);
-        runnerControllerFactories.set(runtimeScope, createController);
-    }
+    const createController = runnerControllerFactories.getOrInsertComputed(runtimeScope, createRealmRunnerControllerFactory);
     return { create: createController };
 }

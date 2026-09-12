@@ -29,12 +29,7 @@ export function createCanvasClearEvidence(canvasPrototype: object, contextProtot
         return value;
     }
     function state(source: HTMLCanvasElement): CanvasState {
-        let entry = states.get(source);
-        if (entry === undefined) {
-            entry = { blank: false, unclipped: false, stack: [] };
-            states.set(source, entry);
-        }
-        return entry;
+        return states.getOrInsertComputed(source, () => ({ blank: false, unclipped: false, stack: [] }));
     }
     function forget(source: HTMLCanvasElement): void {
         const entry = state(source);

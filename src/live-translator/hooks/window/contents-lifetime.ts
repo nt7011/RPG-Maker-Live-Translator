@@ -600,7 +600,7 @@ export function createWindowContentsLifetimeCoordinator(context: WindowContentsL
         ]) as ExactContentsPublicationInspection;
         if (propertyValue(receipt, 'status') !== 'observed') {
             const error = propertyValue(receipt, 'error');
-            if (error instanceof Error)
+            if (Error.isError(error))
                 throw error;
             throw new Error('Window contents publication inspection failed.', { cause: error });
         }
@@ -619,7 +619,7 @@ export function createWindowContentsLifetimeCoordinator(context: WindowContentsL
             return 'conflict';
         if (status !== 'exchanged' || propertyValue(receipt, 'terminal') !== true) {
             const error = propertyValue(receipt, 'error');
-            if (error instanceof Error)
+            if (Error.isError(error))
                 throw error;
             throw new Error('Window contents publication exchange failed.', { cause: error });
         }
