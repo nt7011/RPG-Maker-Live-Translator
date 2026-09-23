@@ -1,9 +1,17 @@
+import { DEFAULT_FORESIGHT_SETTINGS } from '../../configuration/foresight.js';
 import { rememberSettings, renderStatusSummary, setStatus, setSummaryStatus, setText, updateHeartbeat, } from './core.js';
 import { resetFoldedPanelDefaults } from './core.js';
 import { getGuiEffectivePolicy, refreshGuiPolicySnapshot } from './policy.js';
 import { refreshRuntimeFeed, renderRuntimePanelsForFeed } from './panels/render.js';
 import { normalizeHookFeedResult, summarizeHookResults } from './runtime/records.js';
+import { readProviderStatusSnapshot } from './runtime/provider-status.js';
+import { basicPresentation } from './text-records/presentation.js';
+import type { RuntimeTextRecordSnapshot, SemanticControl } from '../../runtime/text-record-types.js';
+import type { TranslationStatusSnapshot } from '../../runtime/translation-status-types.js';
 import { state } from './state.js';
+import { publishGuiTextRecordsSink } from './runtime/current-translations.js';
+import type { TextRecordsSnapshot } from '../../runtime/text-record-types.js';
+import type { ForesightView } from '../../foresight/view.js';
 import type { GuiRuntimeContext, UnknownRecord } from './types.js';
 import { falsyFallback, isGuiHtmlElement, isUnknownRecord, propertyValue, stringValue } from './types.js';
 import { renderVersionPanel, setVersionStatus } from './version/controller.js';
@@ -31,7 +39,8 @@ interface PreviewOptions {
 interface PreviewTextRecordFields {
     original: string;
     translation: string;
-    status: string;
+    state: RuntimeTextRecordSnapshot['state'];
+    semanticControl: SemanticControl;
     priority: number;
     metadata: UnknownRecord;
     disappearedAt?: number;
@@ -43,11 +52,6 @@ interface PreviewHookResult {
     status: string;
     reason: string;
     timestamp: number;
-}
-interface PreviewTranslationDiagnosticsJobs {
-    running: UnknownRecord[];
-    queued: UnknownRecord[];
-    past: UnknownRecord[];
 }
 interface PreviewRuntimeContext extends GuiRuntimeContext {
     supportPath: string;
@@ -79,6 +83,9 @@ function createTranslatorGuiPreview(root: typeof globalThis) {
     let gameWindow: UnknownRecord | null = null;
     let controlsRoot: HTMLElement | null = null;
     let controlsDismissed = false;
+    let providerSequence = 0;
+    let currentRecords: ReturnType<typeof publishGuiTextRecordsSink> | null = null;
+    let recordSequence = 0;
     function ignorePreviewLifecycleSignal(): void {
     }
     function isEnabled(): boolean {
@@ -274,6 +281,7 @@ function createTranslatorGuiPreview(root: typeof globalThis) {
             body.classList.add('gui-preview-mode');
     }
     function afterBoot(): void {
+        refreshPreviewCurrentRecords();
         setPreviewStatus('Preview data loaded.');
     }
     function getGameWindow(): UnknownRecord | null {
@@ -289,6 +297,7 @@ function createTranslatorGuiPreview(root: typeof globalThis) {
         refreshPreviewConfigSummary();
         refreshPreviewVersionPanel();
         refreshRuntimeFeed(getGameWindow());
+        refreshPreviewCurrentRecords();
         renderRuntimePanelsForFeed(refreshGuiPolicySnapshot(), { force: true });
         updateHeartbeat();
         setPreviewStatus('Preview data updated.');
@@ -318,6 +327,7 @@ function createTranslatorGuiPreview(root: typeof globalThis) {
         state.provider = getPreviewProviderLabel(current.provider);
         state.translatorProvider = current.provider;
         state.translatorConfigError = '';
+        state.providerStatus = readProviderStatusSnapshot(createPreviewProviderStatus(current));
         refreshGuiPolicySnapshot();
     }
     function getPreviewProviderLabel(provider: PreviewProvider): string {
@@ -402,17 +412,6 @@ function createTranslatorGuiPreview(root: typeof globalThis) {
                     return createPreviewTextStatus(current);
                 },
             },
-            LiveTranslatorTranslationDiagnostics: {
-                getSnapshot(request: unknown) {
-                    return createPreviewTranslationDiagnosticsSnapshot(current, request);
-                },
-                flush: ignorePreviewLifecycleSignal,
-            },
-            LiveTranslatorForesightDiagnostics: {
-                getSnapshot() {
-                    return createPreviewForesightDiagnostics(current);
-                },
-            },
             LiveTranslatorDrawCaptureTraceSnapshot: createPreviewDrawCaptureSnapshot(current),
             LiveTranslatorDrawCaptureTrace: {
                 getSnapshot() {
@@ -436,17 +435,13 @@ function createTranslatorGuiPreview(root: typeof globalThis) {
         return {
             gui: {
                 checkUpdates: false,
-                showForesightSpoilers: value.showSpoilers,
             },
-            targets: {
-                enableForesight: value.foresight,
-            },
+            foresight: { ...DEFAULT_FORESIGHT_SETTINGS, showSpoilers: value.showSpoilers },
+            adapters: { window: true, gameMessage: true, foresight: value.foresight },
             diagnostics: {
                 enabled: value.drawCapture,
                 captureWhenGuiClosed: true,
                 limits: {
-                    foresightScans: 5,
-                    foresightMessages: 5,
                     archivedItems: 40,
                     detachedItems: 40,
                     pastJobs: 20,
@@ -523,22 +518,25 @@ function createTranslatorGuiPreview(root: typeof globalThis) {
         const active = [
             createPreviewTextRecord('message-active', 'message', 'active', {
                 original: 'Good morning, traveler.',
+                semanticControl: 'game-message',
                 translation: 'Good morning, traveler.',
-                status: 'completed',
+                state: 'available',
                 priority: 100,
                 metadata: { windowType: 'Window_Message', methodName: 'drawTextEx', x: 32, y: 448 },
             }, now - 9000),
             createPreviewTextRecord('choice-active', 'choice', 'active', {
                 original: 'Ask about the crystal',
+                semanticControl: 'window',
                 translation: 'Ask about the crystal',
-                status: 'translating',
+                state: 'translating',
                 priority: 80,
                 metadata: { windowType: 'Window_ChoiceList', methodName: 'drawItem', x: 48, y: 516 },
             }, now - 5000),
             createPreviewTextRecord('hud-active', 'window', 'active', {
                 original: 'Gold: 1245',
+                semanticControl: 'window',
                 translation: '',
-                status: 'skipped',
+                state: 'no-translation',
                 priority: 20,
                 metadata: { windowType: 'Window_Gold', methodName: 'drawText', x: 654, y: 540 },
             }, now - 2800),
@@ -546,8 +544,9 @@ function createTranslatorGuiPreview(root: typeof globalThis) {
         const attached = [
             createPreviewTextRecord('bitmap-attached', 'bitmap', 'attached', {
                 original: 'Unverified bitmap label',
+                semanticControl: 'none',
                 translation: '',
-                status: 'translating',
+                state: 'translating',
                 priority: 45,
                 metadata: { ownerType: 'Bitmap', methodName: 'drawText', x: 280, y: 180 },
             }, now - 1800),
@@ -555,8 +554,9 @@ function createTranslatorGuiPreview(root: typeof globalThis) {
         const detached = [
             createPreviewTextRecord('detached-help', 'window', 'detached', {
                 original: 'Press Enter to continue',
+                semanticControl: 'window',
                 translation: 'Press Enter to continue',
-                status: 'completed',
+                state: 'available',
                 priority: 40,
                 metadata: { windowType: 'Window_Help', methodName: 'drawTextEx', x: 24, y: 24 },
                 disappearedAt: now - 16000,
@@ -565,51 +565,45 @@ function createTranslatorGuiPreview(root: typeof globalThis) {
         const archived = [
             createPreviewTextRecord('archived-name', 'message', 'archived', {
                 original: 'Village Elder',
+                semanticControl: 'game-message',
                 translation: 'Village Elder',
-                status: 'completed',
+                state: 'available',
                 priority: 60,
                 metadata: { windowType: 'Window_NameBox', methodName: 'drawText', x: 42, y: 388 },
                 disappearedAt: now - 68000,
             }, now - 94000),
         ];
         if (value.recordPreset === 'busy') {
-            active.push(createPreviewTextRecord('message-future', 'message', 'active', {
-                original: 'The bridge will open after sunset.',
-                translation: 'The bridge will open after sunset.',
-                status: 'pending',
-                priority: 95,
-                metadata: {
-                    windowType: 'Window_Message',
-                    methodName: 'drawTextEx',
-                    foresight: true,
-                    foresightConsumed: false,
-                },
-            }, now - 2200), createPreviewTextRecord('sprite-label', 'sprite', 'active', {
+            active.push(createPreviewTextRecord('sprite-label', 'sprite', 'active', {
                 original: 'North Gate',
+                semanticControl: 'sprite',
                 translation: 'North Gate',
-                status: 'completed',
+                state: 'available',
                 priority: 50,
                 metadata: { ownerType: 'Sprite_Label', methodName: 'PIXI.Text', x: 412, y: 82 },
             }, now - 1200));
             detached.push(createPreviewTextRecord('detached-shop', 'choice', 'detached', {
                 original: 'Buy',
+                semanticControl: 'window',
                 translation: 'Buy',
-                status: 'completed',
+                state: 'available',
                 priority: 55,
                 metadata: { windowType: 'Window_ShopCommand', methodName: 'drawItem' },
                 disappearedAt: now - 25000,
             }, now - 42000), createPreviewTextRecord('detached-cancel', 'choice', 'detached', {
                 original: 'Cancel',
+                semanticControl: 'window',
                 translation: 'Cancel',
-                status: 'completed',
+                state: 'available',
                 priority: 45,
                 metadata: { windowType: 'Window_ShopCommand', methodName: 'drawItem' },
                 disappearedAt: now - 25000,
             }, now - 42000));
             archived.push(createPreviewTextRecord('archived-zone', 'pixi', 'archived', {
                 original: 'Crystal Cave',
+                semanticControl: 'sprite',
                 translation: 'Crystal Cave',
-                status: 'completed',
+                state: 'available',
                 priority: 50,
                 metadata: { ownerType: 'PIXI.Text', methodName: 'set text' },
                 disappearedAt: now - 125000,
@@ -619,41 +613,23 @@ function createTranslatorGuiPreview(root: typeof globalThis) {
     }
     function createPreviewTextRecord(id: string, hook: string, lifecycle: string, fields: PreviewTextRecordFields, seenAt: number): UnknownRecord {
         const now = Date.now();
-        const source = Object.assign({
-            original: '',
-            translation: '',
-            status: 'detected',
-            priority: 50,
-            metadata: {},
-        }, fields);
+        const source = fields;
+        const presentation = basicPresentation(source.state, source.semanticControl);
+        const translation = source.state === 'available' ? source.translation : null;
         const history: UnknownRecord[] = [
             {
                 at: seenAt,
-                type: 'item.detected',
-                status: source.status,
+                type: 'Record observed',
                 message: 'Preview record detected.',
-                details: {
-                    priority: source.priority,
-                    policy: {
-                        kind: lifecycle,
-                        translationAction: 'preserve',
-                        priorityAction: 'set',
-                        priority: source.priority,
-                        reason: 'preview sample',
-                    },
-                },
+                details: { priority: source.priority },
             },
         ];
-        if (source.translation) {
+        if (translation !== null) {
             history.push({
                 at: Math.min(now, seenAt + 900),
-                type: 'translation.completed',
-                status: 'completed',
+                type: 'Translation available',
                 message: 'Preview translation completed.',
-                details: {
-                    priority: source.priority,
-                    stream: hook === 'message',
-                },
+                details: { priority: source.priority, stream: hook === 'message' },
             });
         }
         return {
@@ -663,13 +639,9 @@ function createTranslatorGuiPreview(root: typeof globalThis) {
             original: source.original,
             rawText: source.original,
             visibleText: source.original,
-            translationSource: source.original,
-            normalizedSource: source.original,
-            translatedText: source.translation,
-            translation: source.translation,
-            translationReceived: source.translation,
-            translationDrawn: source.translation,
-            status: source.status,
+            translation,
+            presentation,
+            status: presentation.result,
             active: lifecycle === 'active',
             visible: lifecycle === 'active' ? true : lifecycle === 'attached' ? null : false,
             screenState: lifecycle === 'active' ? 'visible' : lifecycle === 'attached' ? 'unverified' : 'hidden',
@@ -677,231 +649,100 @@ function createTranslatorGuiPreview(root: typeof globalThis) {
             seenAt,
             lastSeenAt: seenAt,
             updatedAt: now,
-            disappearedAt: falsyFallback(source.disappearedAt, null),
-            deactivatedAt: falsyFallback(source.disappearedAt, null),
+            disappearedAt: source.disappearedAt ?? null,
+            deactivatedAt: source.disappearedAt ?? null,
             metadata: source.metadata,
             history,
         };
     }
-    function createPreviewTranslationDiagnosticsSnapshot(value: PreviewOptions, request: unknown): UnknownRecord {
-        void request;
+    function createPreviewProviderStatus(value: PreviewOptions): TranslationStatusSnapshot {
         const now = Date.now();
-        const capacity = value.localLlmState === 'pending' ? 0 : clampInteger(value.concurrency, 0, 12, DEFAULT_OPTIONS.concurrency);
-        const running = capacity > 0 ? Math.min(capacity, value.recordPreset === 'busy' ? 3 : 1) : 0;
-        const queued = value.recordPreset === 'busy' ? 4 : value.recordPreset === 'empty' ? 0 : 1;
-        const jobs = createPreviewTranslationDiagnosticsJobs(value, now, running, queued);
-        const provider = createPreviewTranslationProviderStatus(value, now, capacity, running);
+        const local = value.provider === 'llamacpp' || value.provider === 'lmstudio';
+        const active = value.provider !== 'none';
+        const loading = local && value.localLlmState === 'pending';
+        const unverified = local && value.localLlmState === 'unverified-concurrency';
+        const connected = !local || value.localLlmState === 'connected' || unverified;
+        const capacity = connected && active && !unverified ? (local ? value.concurrency : 32) : 0;
+        const capacityVerified = capacity > 0;
+        const dispatchLimit = unverified ? 1 : capacity;
+        const available = active && connected && dispatchLimit > 0;
+        const running = available && value.recordPreset !== 'empty'
+            ? Math.min(dispatchLimit, value.recordPreset === 'busy' ? 3 : 1)
+            : 0;
+        const queued = active && value.recordPreset !== 'empty' ? (value.recordPreset === 'busy' ? 4 : 1) : 0;
+        const name = value.provider === 'llamacpp' ? 'llama.cpp' : 'LM Studio';
+        const modelSelected = connected || value.localLlmState === 'api-error';
+        const modelId = local && modelSelected ? `${value.modelAuthor}/${value.modelName}` : '';
+        let code = available ? 'ready' : loading ? 'model-loading' : 'capacity-pending';
+        let message = '';
+        if (local) {
+            switch (value.localLlmState) {
+                case 'unverified-concurrency':
+                    code = 'capacity-unverified';
+                    message = 'Concurrency is not reported; using one request at a time.';
+                    break;
+                case 'model-not-loaded':
+                    code = 'no-model-loaded';
+                    message = `No model is loaded in ${name}. Load one model to translate.`;
+                    break;
+                case 'auto-many':
+                    code = 'multiple-models-loaded';
+                    message = `${name} exposes multiple models. Select one model in translator.jsonc.`;
+                    break;
+                case 'no-response':
+                    code = 'connection-failed';
+                    message = `${name} request failed: Failed to fetch`;
+                    break;
+                case 'cors':
+                    code = 'connection-failed';
+                    message = `${name} request failed: CORS request blocked by browser.`;
+                    break;
+                case 'timeout':
+                    code = 'request-timeout';
+                    message = 'Translation request timed out after 5000ms.';
+                    break;
+                case 'api-error':
+                    code = 'request-failed';
+                    message = `${name} chat error: 500 Internal Server Error`;
+                    break;
+            }
+        }
         return {
+            generation: 1,
+            sequence: ++providerSequence,
+            active,
             updatedAt: now,
-            provider,
-            summary: {
-                queued,
-                running,
-                jobs: jobs.running.length + jobs.queued.length,
-                pastJobs: jobs.past.length,
-                activeSubscribers: value.recordPreset === 'empty' ? 0 : activeSubscriberCount(value),
-                subscribers: value.recordPreset === 'empty' ? 0 : activeSubscriberCount(value) + 1,
-                streamJobs: running,
-                streamRunning: running,
-                completedCacheEntries: value.recordPreset === 'empty' ? 0 : 142,
-                pumpScheduled: queued > 0,
-                pumpRunning: running > 0,
-            },
-            cache: {
-                completed: value.recordPreset === 'empty' ? 0 : 142,
-                diskEnabled: true,
-            },
-            jobs,
-            priorityBuckets: [
-                {
-                    name: 'active-message',
-                    queued: queued > 0 ? 1 : 0,
-                    running: running > 0 ? 1 : 0,
-                    stream: running > 0 ? 1 : 0,
-                    subscribers: 1,
-                },
-                {
-                    name: 'background',
-                    queued: Math.max(0, queued - 1),
-                    running: Math.max(0, running - 1),
-                    stream: 0,
-                    subscribers: 1,
-                },
-            ],
-            hooks: [
-                {
-                    name: 'message',
-                    queued: queued > 0 ? 1 : 0,
-                    running: running > 0 ? 1 : 0,
-                    stream: 1,
-                    subscribers: 1,
-                },
-                { name: 'choice', queued: Math.max(0, queued - 1), running: 0, stream: 0, subscribers: 1 },
-            ],
-            counters: {
-                preview: true,
-                translated: value.recordPreset === 'empty' ? 0 : 8,
-            },
-            events: [
-                {
-                    id: 'preview-diagnostics-event',
-                    at: now - 700,
-                    type: 'scheduler.pump',
-                    details: { capacity, running, queued },
-                },
-            ],
-            diagnosticsSurface: true,
-        };
-    }
-    function activeSubscriberCount(value: PreviewOptions): number {
-        return value.recordPreset === 'busy' ? 5 : 2;
-    }
-    function createPreviewTranslationProviderStatus(value: PreviewOptions, now: number, capacity: number, running: number): UnknownRecord {
-        if (value.provider !== 'lmstudio' && value.provider !== 'llamacpp') {
-            return {
+            provider: {
                 kind: value.provider,
-                capacity: value.provider === 'mocktranslator' ? 32 : 1,
-                running: 0,
-                available: value.provider === 'mocktranslator' ? 32 : 1,
-                refreshingCapacity: false,
-                lastCapacityRefreshAt: now - 12000,
-            };
-        }
-        const hasSelectedModel = ['connected', 'api-error', 'unverified-concurrency'].includes(value.localLlmState);
-        const apiResponding = [
-            'connected',
-            'api-error',
-            'unverified-concurrency',
-            'model-not-loaded',
-            'auto-many',
-        ].includes(value.localLlmState);
-        const capacityVerified = ['connected', 'api-error'].includes(value.localLlmState);
-        const selectionError = getPreviewLocalLlmSelectionError(value);
-        const connectionError = apiResponding ? '' : getPreviewLocalLlmCapacityError(value);
-        const capacityError = value.localLlmState === 'unverified-concurrency'
-            ? 'llama.cpp /props response missing positive integer "total_slots".'
-            : '';
-        const modelKey = `${value.modelAuthor}/${value.modelName}`;
-        const selectedVariant = value.quantization ? `${modelKey}@${value.quantization}` : modelKey;
-        return {
-            kind: value.provider,
-            apiResponding,
-            modelCatalogAt: apiResponding ? now - 1200 : 0,
-            modelCatalogError: connectionError,
-            modelCount: apiResponding ? 1 : 0,
-            loadedLlmInstanceCount: value.localLlmState === 'auto-many' ? 2 : hasSelectedModel ? 1 : 0,
-            modelSelectionReady: hasSelectedModel,
-            modelSelectionError: selectionError,
-            statusUpdatedAt: now - 1200,
-            modelKey: hasSelectedModel ? modelKey : '',
-            modelInstanceId: hasSelectedModel ? modelKey : '',
-            modelAuthor: hasSelectedModel ? value.modelAuthor : '',
-            modelName: hasSelectedModel ? value.modelName : '',
-            quantization: hasSelectedModel ? value.quantization : '',
-            selectedVariant: hasSelectedModel ? selectedVariant : '',
-            propsAt: capacityVerified ? now - 1200 : 0,
-            capacityError,
-            capacity,
-            capacityVerified,
-            capacitySource: capacityVerified && value.provider === 'llamacpp' ? 'props.total_slots' : '',
-            running,
-            available: Math.max(0, capacity - running),
-            refreshingCapacity: false,
-            lastCapacityRefreshAt: now - 12000,
-            lastCapacityRefreshError: selectionError || capacityError || connectionError,
-        };
-    }
-    function getPreviewLocalLlmSelectionError(value: PreviewOptions): string {
-        if (value.localLlmState === 'model-not-loaded' && value.provider === 'llamacpp') {
-            return 'The llama.cpp model is "auto", but /v1/models returned 0 model(s): none. Expose exactly one model or configure its exact model id.';
-        }
-        if (value.localLlmState === 'model-not-loaded') {
-            return 'The LM Studio model in settings.jsonc is "auto", but LM Studio currently has 0 loaded LLM instance(s): none. Load exactly one LLM instance or set the LM Studio model in settings.jsonc to a specific loaded instance identifier.';
-        }
-        if (value.localLlmState === 'auto-many' && value.provider === 'llamacpp') {
-            return 'The llama.cpp model is "auto", but /v1/models returned 2 model(s): alpha, beta. Expose exactly one model or configure its exact model id.';
-        }
-        if (value.localLlmState === 'auto-many') {
-            return 'The LM Studio model in settings.jsonc is "auto", but LM Studio currently has 2 loaded LLM instance(s): alpha, beta. Load exactly one LLM instance or set the LM Studio model in settings.jsonc to a specific loaded instance identifier.';
-        }
-        return '';
-    }
-    function getPreviewLocalLlmCapacityError(value: PreviewOptions): string {
-        if (value.localLlmState === 'no-response')
-            return `${value.provider === 'llamacpp' ? 'llama.cpp /props' : 'Local LLM model list'} request failed: Failed to fetch`;
-        if (value.localLlmState === 'cors')
-            return `${value.provider === 'llamacpp' ? 'llama.cpp /props' : 'Local LLM model list'} request failed: CORS request blocked by browser.`;
-        if (value.localLlmState === 'timeout')
-            return 'Translation request timed out after 5000ms.';
-        return '';
-    }
-    function createPreviewTranslationDiagnosticsJobs(value: PreviewOptions, now: number, runningCount: number, queuedCount: number): PreviewTranslationDiagnosticsJobs {
-        const running: UnknownRecord[] = runningCount > 0
-            ? [
-                createPreviewJob('job-message-active', 'running', 'message', 'Good morning, traveler.', 'message-active', now - 2400, 100, true),
-            ]
-            : [];
-        if (runningCount > 1) {
-            running.push(createPreviewJob('job-choice-active', 'running', 'choice', 'Ask about the crystal', 'choice-active', now - 1800, 80, false));
-        }
-        if (runningCount > 2) {
-            running.push(createPreviewJob('job-message-future', 'running', 'message', 'The bridge will open after sunset.', 'message-future', now - 1200, 95, true));
-        }
-        const queued: UnknownRecord[] = [];
-        for (let index = 0; index < queuedCount; index += 1) {
-            queued.push(createPreviewJob(`job-queued-${String(index + 1)}`, 'queued', index === 0 ? 'message' : 'window', index === 0 ? 'Next message preview' : `Background label ${String(index)}`, index === 0 ? 'message-future' : '', now - (index + 1) * 900, Math.max(10, 75 - index * 10), index === 0));
-        }
-        const past: UnknownRecord[] = value.recordPreset === 'empty'
-            ? []
-            : [
-                Object.assign(createPreviewJob('job-archived-name', 'completed', 'message', 'Village Elder', 'archived-name', now - 82000, 60, true), { terminalAt: now - 80000, terminalReason: 'completed' }),
-            ];
-        if ((value.provider === 'lmstudio' || value.provider === 'llamacpp') && value.localLlmState === 'api-error') {
-            past.unshift(Object.assign(createPreviewJob('job-local-llm-error', 'failed', 'message', 'Good morning, traveler.', 'message-active', now - 2200, 100, true), {
-                terminalAt: now - 900,
-                terminalReason: 'failed',
-                lastError: value.provider === 'llamacpp'
-                    ? 'llama.cpp chat error: 500 Internal Server Error'
-                    : 'Local LLM error: 500 Internal Server Error',
-            }));
-        }
-        return { running, queued, past };
-    }
-    function createPreviewJob(id: string, status: string, hook: string, textPreview: string, recordId: string, at: number, priority: number, stream: boolean): UnknownRecord {
-        return {
-            id,
-            status,
-            hook,
-            source: hook,
-            textPreview,
-            textLength: textPreview.length,
-            createdAt: at - 500,
-            queuedAt: at - 500,
-            startedAt: status === 'running' || status === 'completed' ? at : null,
-            queuePosition: status === 'queued' ? 1 : null,
-            effectivePriority: priority,
-            priorityBucket: priority >= 90 ? 'active-message' : 'background',
-            stream,
-            timeoutMs: 45000,
-            attempt: 1,
-            retryCount: 0,
-            lastError: '',
-            lastDeltaAt: status === 'running' ? Date.now() - 500 : null,
-            deltaCount: status === 'running' && stream ? 4 : 0,
-            subscribers: recordId ? 1 : 0,
-            totalSubscribers: recordId ? 1 : 0,
-            subscriberRecords: recordId ? [{ id: `${id}-sub`, status, recordId, hook, priority, stream }] : [],
-            history: [
-                {
-                    id: `${id}-event`,
-                    at,
-                    type: `job.${status}`,
-                    hook,
-                    jobId: id,
-                    recordId,
-                    details: { jobId: id, recordId, priority, effectivePriority: priority, textPreview },
-                },
-            ],
+                state: available ? 'available' : loading || connected ? 'pending' : 'unavailable',
+                code,
+                message,
+                model: local ? modelId + (modelId && value.quantization ? ` (${value.quantization})` : '') : '',
+                observation: local
+                    ? {
+                        apiResponding: modelSelected ||
+                            value.localLlmState === 'model-not-loaded' ||
+                            value.localLlmState === 'auto-many',
+                        modelId,
+                        instanceId: modelId,
+                        publisher: modelId ? value.modelAuthor : '',
+                        quantization: modelId ? value.quantization : '',
+                        capacitySource: capacityVerified ? 'preview' : '',
+                    }
+                    : null,
+                capacity,
+                capacityVerified,
+                dispatchLimit,
+                running,
+                queued,
+                available: Math.max(0, dispatchLimit - running),
+                connection: available ? 'connected' : loading || connected ? 'pending' : 'error',
+                refreshing: loading,
+                checkedAt: now,
+                lastSuccessAt: available ? now : 0,
+                expiresAt: 0,
+                priorityLane: capacityVerified && capacity >= 3,
+            },
         };
     }
     function createPreviewDrawCaptureSnapshot(value: PreviewOptions): UnknownRecord | null {
@@ -941,51 +782,90 @@ function createTranslatorGuiPreview(root: typeof globalThis) {
             y: 420 + seq * 24,
         };
     }
-    function createPreviewForesightDiagnostics(value: PreviewOptions): UnknownRecord | null {
+    function refreshPreviewCurrentRecords(): void {
+        const value = options ?? loadOptions();
+        currentRecords ??= publishGuiTextRecordsSink(root);
+        const snapshot: TextRecordsSnapshot = {
+            generation: 1,
+            sequence: ++recordSequence,
+            active: true,
+            records: value.recordPreset === 'empty'
+                ? []
+                : [
+                    {
+                        textId: 1,
+                        semanticRevision: 1,
+                        attempt: 1,
+                        sourceText: 'The road leads to the village.',
+                        translation: 'The road leads to the village.',
+                        state: 'available',
+                        semanticControl: 'game-message',
+                        onScreenGameMessage: true,
+                        request: { priority: 1000, stream: false },
+                    },
+                ],
+            foresight: createPreviewForesightView(value),
+        };
+        currentRecords.accept(snapshot);
+    }
+    function createPreviewForesightView(value: PreviewOptions): ForesightView | null {
         if (!value.foresight)
             return null;
-        const now = Date.now();
-        const busy = value.recordPreset === 'busy';
+        const empty = value.recordPreset === 'empty';
         return {
-            updatedAt: now,
-            diagnosticsSurface: true,
-            summary: { scans: 1, matched: 1, messages: busy ? 3 : 2, updatedAt: now },
-            recent: [
-                {
-                    at: now - 1400,
-                    interpreterId: 'preview:map:1',
-                    status: busy ? 'blocked' : 'scanned',
-                    matchedCurrentMessage: true,
-                    startIndex: 4,
-                    stopIndex: 8,
-                    stopReason: busy ? 'control-flow-target' : 'event-end',
-                    stopReasonLabel: busy ? 'Control-flow target' : 'Event end',
-                    budget: { initial: 30, spent: 6, remaining: 24 },
-                    scannedCommands: busy ? 14 : 8,
-                    advancedCommands: busy ? 9 : 5,
-                    blocks: busy ? 3 : 2,
-                    commandActionLimit: 150,
-                    commandActionsTruncated: 0,
-                    commandActions: [
+            revision: recordSequence,
+            showSpoilers: value.showSpoilers,
+            limits: DEFAULT_FORESIGHT_SETTINGS.limits.view,
+            state: empty ? 'waiting' : 'complete',
+            waiting: empty ? 'no-submission' : null,
+            anchor: empty ? null : { id: 1, textId: 1, index: 4 },
+            stats: empty ? null : { reads: 8, nodes: 2, candidates: 1, units: 34, stops: { end: 1 }, lastStop: null },
+            prepared: empty ? 0 : 1,
+            failed: 0,
+            outstanding: false,
+            graph: {
+                truncated: false,
+                projection: null,
+                nodes: empty
+                    ? []
+                    : [
                         {
+                            id: 0,
                             index: 4,
-                            code: 101,
-                            label: 'Show Text',
-                            classification: 'linear',
-                            native: true,
-                            category: 'message',
-                            scanBehavior: 'message',
-                            action: 'message',
-                            branchDepth: 0,
-                            branchPath: [],
-                            consumedCommands: [
-                                { index: 4, code: 101, parameters: ['', 0, 0, 2] },
-                                { index: 5, code: 401, parameters: ['A preview of the next message.'] },
+                            kind: 'root',
+                            arm: null,
+                            valid: true,
+                            next: [1],
+                            texts: [],
+                            stops: [],
+                            location: { commonEvent: null, index: 4, via: [] },
+                            omittedNext: 0,
+                            outcome: null,
+                        },
+                        {
+                            id: 1,
+                            index: 6,
+                            kind: 'message',
+                            arm: null,
+                            valid: true,
+                            next: [],
+                            stops: [],
+                            location: { commonEvent: null, index: 6, via: [] },
+                            omittedNext: 0,
+                            outcome: null,
+                            texts: [
+                                {
+                                    choice: null,
+                                    preview: 'A preview of the next message.',
+                                    truncated: false,
+                                    preparation: 'ready',
+                                    translation: 'A prepared translation.',
+                                    translationTruncated: false,
+                                },
                             ],
                         },
                     ],
-                },
-            ],
+            },
         };
     }
     function loadOptions(): PreviewOptions {

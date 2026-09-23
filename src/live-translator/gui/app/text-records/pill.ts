@@ -1,12 +1,12 @@
 import type { RecordView } from './model.js';
-import { hasFailedPresentation, hasFailedSemanticAssociation } from './model.js';
-import { getSemanticFamilyClass } from './semantic-family.js';
-import { formatRecordOutcome } from '../formatters.js';
-import { getTextRecordTranslationRailInfo, getTranslationRailLabel } from '../translation-diagnostics/job-model.js';
+import { controlLabel, type RecordPresentation } from './presentation.js';
 export interface TextPillRail {
-    state: string;
+    state: RecordPresentation['result'];
     label: string;
     title: string;
+    priority: number | null;
+    stream: boolean;
+    warnings: RecordPresentation['warnings'];
 }
 export interface TextRecordPillOptions {
     detailKey?: string;
@@ -17,67 +17,105 @@ export interface TextRecordPillOptions {
     onToggle?: () => void;
     onCopy?: (target: HTMLElement) => void;
 }
-export const recordStates = Object.freeze({
-    observed: { status: 'detected', rail: 'neutral', label: 'WAIT' },
-    translating: { status: 'pending', rail: 'pending', label: 'WAIT' },
-    available: { status: 'completed', rail: 'completed', label: '' },
-    'no-translation': { status: 'skipped', rail: 'skipped', label: 'NOOP' },
-    failed: { status: 'failed', rail: 'failed', label: 'FAIL' },
-});
-function projectTextRecordPill(input: RecordView) {
-    const state = hasFailedPresentation(input) ? 'failed' : input.state;
-    const status = state === null ? { status: 'detected', rail: 'neutral', label: '?' } : recordStates[state];
-    const translatorComplaint = input.translator?.markerMismatch === true;
-    const associationFailed = hasFailedSemanticAssociation(input);
-    const requestRail = input.diagnostics === null ? null : getTextRecordTranslationRailInfo(input.diagnostics);
-    const request = input.request ??
-        (requestRail?.priority != null ? { priority: requestRail.priority, stream: requestRail.stream } : null);
-    const label = state === 'failed' || state === 'no-translation' || request === null
-        ? status.label
-        : getTranslationRailLabel(state === 'available' ? 'completed' : 'queued', request.priority, request.stream);
+export function projectTextRecordPill(input: RecordView) {
+    const view = input.presentation;
     return {
         key: input.key,
-        status: status.status,
+        status: view.result,
         sourceText: input.sourceText,
         translation: input.translation,
-        hookClass: getSemanticFamilyClass(input.diagnostics),
+        control: view.semanticControl ?? 'unknown',
+        controlLabel: controlLabel(view.semanticControl),
         rail: {
-            state: translatorComplaint ? 'complaint' : associationFailed ? 'questionable' : status.rail,
-            label: label + (associationFailed ? 'Q' : '') + (translatorComplaint ? 'T' : ''),
-            title: formatRecordOutcome(input) +
-                (associationFailed ? ' — Semantic association failed' : '') +
-                (translatorComplaint ? ' — Translator marker count differs' : ''),
+            state: view.result,
+            label: view.label,
+            title: view.explanation,
+            priority: input.request?.priority ?? null,
+            stream: input.request?.stream === true,
+            warnings: view.warnings,
         },
     };
 }
-export function createTextTranslationRail(info: TextPillRail): HTMLElement {
-    const rail = document.createElement('span');
+function updateRail(rail: HTMLElement, info: TextPillRail): void {
     rail.className = `text-translation-rail text-translation-rail-${info.state}`;
-    rail.title = info.title;
-    const label = document.createElement('span');
+    const label = rail.children[0] as HTMLElement, result = label.children[0] as HTMLElement, request = label.children[1] as HTMLElement, warnings = label.children[2] as HTMLElement;
+    const terminal = info.state === 'miss' || info.state === 'fail' || info.state === 'noop';
+    const hasRequest = info.priority !== null;
+    setText(result, terminal
+        ? info.state.toUpperCase()
+        : hasRequest || info.state === 'success'
+            ? ''
+            : info.state === 'pending'
+                ? 'WAIT'
+                : '?');
+    setText(request, hasRequest && !terminal ? `${String(info.priority)}${info.stream ? 'S' : ''}` : '');
+    request.hidden = terminal || !hasRequest;
+    request.title =
+        info.priority === null
+            ? 'Streaming request'
+            : `Request priority ${String(info.priority)}${info.stream ? ' · streaming' : ''}`;
+    const warningText = info.warnings.map((warning) => warning.label).join('');
+    setText(warnings, warningText);
+    warnings.hidden = warningText.length === 0;
+    warnings.title = info.warnings.map((warning) => warning.text).join('\n');
+    warnings.setAttribute('aria-label', warnings.title);
+    if (info.warnings.some((warning) => warning.label === 'T'))
+        rail.className += ' text-translation-rail-complaint';
+    else if (info.warnings.some((warning) => warning.label === 'Q'))
+        rail.className += ' text-translation-rail-questionable';
+    const description = [info.title, hasRequest || info.stream ? request.title : '', warnings.title]
+        .filter(Boolean)
+        .join(' — ');
+    rail.title = description;
+    rail.setAttribute('aria-label', `${info.label}. ${description}`);
+}
+export function createTextTranslationRail(info: TextPillRail, doc: Document = document): HTMLElement {
+    const rail = doc.createElement('span');
+    const label = doc.createElement('span');
     label.className = 'text-translation-rail-label';
-    label.textContent = info.label;
+    for (const name of ['result', 'request', 'warnings']) {
+        const element = doc.createElement('span');
+        element.className = `text-translation-rail-${name}`;
+        label.appendChild(element);
+    }
     rail.appendChild(label);
+    updateRail(rail, info);
     return rail;
 }
 function setText(element: HTMLElement, value: string): void {
     if (element.textContent !== value)
         element.textContent = value;
 }
+export function createTextPillContent(doc: Document, input: {
+    sourceText: string;
+    translation: string | null;
+    rail: TextPillRail;
+}) {
+    const content = doc.createElement('span');
+    content.className = 'text-bubble-content';
+    const source = doc.createElement('span');
+    source.className = 'text-line source';
+    const translation = doc.createElement('span');
+    translation.className = 'text-line translation';
+    content.appendChild(source);
+    content.appendChild(translation);
+    const rail = createTextTranslationRail(input.rail, doc);
+    function update(next: typeof input): void {
+        setText(source, next.sourceText);
+        setText(translation, next.translation ?? '');
+        translation.hidden = next.translation === null;
+        updateRail(rail, next.rail);
+    }
+    update(input);
+    return { content, rail, update };
+}
 export function createTextRecordPill(input: RecordView, options: TextRecordPillOptions = {}) {
     const element = document.createElement('article');
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'text-bubble';
-    const content = document.createElement('span');
-    content.className = 'text-bubble-content';
-    const source = document.createElement('span');
-    source.className = 'text-line source';
-    const translation = document.createElement('span');
-    translation.className = 'text-line translation';
-    content.appendChild(source);
-    content.appendChild(translation);
-    const rail = createTextTranslationRail(projectTextRecordPill(input).rail);
+    const body = createTextPillContent(document, projectTextRecordPill(input));
+    const { content, rail } = body;
     button.appendChild(content);
     button.appendChild(rail);
     element.appendChild(button);
@@ -99,7 +137,7 @@ export function createTextRecordPill(input: RecordView, options: TextRecordPillO
         element.className = [
             'text-record',
             `text-status-${model.status}`,
-            `text-hook-${model.hookClass}`,
+            `text-control-${model.control}`,
             `text-translation-${model.rail.state}`,
             active ? 'text-record-active' : '',
             inactive ? 'text-record-inactive' : '',
@@ -113,6 +151,8 @@ export function createTextRecordPill(input: RecordView, options: TextRecordPillO
             element.dataset['domKey'] = nextOptions.domKey;
         else
             delete element.dataset['domKey'];
+        button.dataset['semanticControl'] = model.control;
+        button.setAttribute('aria-description', model.controlLabel);
         button.disabled = censored === true;
         button.setAttribute('aria-expanded', onToggle && active && !censored ? 'true' : 'false');
         button.title = censored
@@ -134,12 +174,7 @@ export function createTextRecordPill(input: RecordView, options: TextRecordPillO
             content.setAttribute('aria-hidden', 'true');
         else
             content.removeAttribute('aria-hidden');
-        setText(source, model.sourceText);
-        setText(translation, model.translation ?? '');
-        translation.hidden = model.translation === null;
-        rail.className = `text-translation-rail text-translation-rail-${model.rail.state}`;
-        rail.title = model.rail.title;
-        setText(rail.firstElementChild as HTMLElement, model.rail.label);
+        body.update(model);
     }
     update(input, options);
     return { element, update };
@@ -148,11 +183,11 @@ export function createTextRecordDetailShell(recordKey: string, options: {
     detailKey?: string;
     domKey?: string;
     statusClass: string;
-    hookClass: string;
+    control: string;
     inactive?: boolean;
 }): HTMLElement {
     const expanded = document.createElement('div');
-    expanded.className = `text-expanded text-detail-row text-status-${options.statusClass} text-hook-${options.hookClass}`;
+    expanded.className = `text-expanded text-detail-row text-status-${options.statusClass} text-control-${options.control}`;
     if (options.inactive)
         expanded.className += ' text-record-inactive';
     if (recordKey)

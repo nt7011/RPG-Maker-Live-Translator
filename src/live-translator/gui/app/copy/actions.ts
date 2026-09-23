@@ -1,13 +1,12 @@
 import { addLog, formatError } from '../core.js';
-import { normalizeCoordinate, normalizeHookClass } from '../formatters.js';
-import { GUI_PROJECTION_LIMITS, serializeGuiValue, type GuiProjectionLimits } from '../../projection.js';
+import { GUI_PROJECTION_LIMITS, GUI_UNBOUNDED_PROJECTION_LIMITS, serializeGuiValue, type GuiProjectionLimits, } from '../../projection.js';
 import { copyTimestamp } from './values.js';
 import { state } from '../state.js';
 import { copyRuntimeFeedHealth } from '../runtime/feed-health.js';
 import { getConfiguredGuiProjectionLimits } from '../policy.js';
 import type { GuiDrawCaptureTrace, GuiTextRecord, UnknownRecord } from '../types.js';
 import { falsyFallback, isGuiButtonElement } from '../types.js';
-import { getSemanticFamily } from '../text-records/semantic-family.js';
+import { copyForesightView } from '../../foresight-tree/model.js';
 const applyCopyFunction = Reflect.apply;
 const getCopyProperty = Reflect.get;
 const CopyPromise = Promise;
@@ -28,17 +27,18 @@ function readCopyProperty(value: unknown, key: PropertyKey): unknown {
     return applyCopyFunction(getCopyProperty, Reflect, [value, key, value]);
 }
 export function copyForesightDiagnostics(feedbackTarget: HTMLElement | null | undefined): void {
-    void runCopyAction(buildForesightDiagnosticsCopyPayload, feedbackTarget, 'Foresight status', getConfiguredGuiProjectionLimits());
+    void runCopyAction(buildForesightDiagnosticsCopyPayload, feedbackTarget, 'Foresight status', GUI_UNBOUNDED_PROJECTION_LIMITS);
 }
 export function buildForesightDiagnosticsCopyPayload(): UnknownRecord {
-    const snapshot = state.foresight;
     return {
         copiedAt: copyTimestamp(Date.now()),
         kind: 'foresight-diagnostics',
-        runtimeFeed: copyRuntimeFeedHealth(state.runtimeFeedHealth, ['foresight', 'textRecords', 'translation']),
-        summary: snapshot?.summary ?? {},
-        updatedAt: copyTimestamp(snapshot?.updatedAt),
-        recent: snapshot?.recent ?? [],
+        runtimeFeed: {
+            generation: state.runtimeTextRecords?.generation ?? null,
+            sequence: state.runtimeTextRecords?.sequence ?? null,
+            active: state.runtimeTextRecords?.active === true,
+        },
+        view: copyForesightView(state.runtimeTextRecords?.foresight ?? null, state.runtimeTextRecords?.foresight?.showSpoilers === true, state.foresightMessagesOnly),
     };
 }
 export function copyDrawCaptureTrace(feedbackTarget: HTMLElement | null | undefined): void {
@@ -257,54 +257,14 @@ export function flashCopyRecord(record: HTMLElement | null | undefined, label: s
     }, 700);
 }
 export function buildTextRecordCopyPayload(item: GuiTextRecord): UnknownRecord {
-    const payload = {
-        copiedAt: copyTimestamp(Date.now()),
-        diagnosticsRevision: state.diagnosticsFeedRevision,
-        id: item.id || '',
-        semanticFamily: getSemanticFamily(item),
-        hook: {
-            key: item.hookKey || '',
-            label: item.hook || '',
-            type: normalizeHookClass(item.hookKey || item.hook),
-        },
-        latestRecordStatus: item.status || 'detected',
-        text: {
-            original: item.original || '',
-            translation: item.translation,
-            translationState: item.translationState,
-            policyReason: item.policyReason,
-            raw: item.rawText || '',
-            converted: item.convertedText || '',
-            visible: item.visibleText || '',
-            translationSource: item.translationSource || '',
-            normalizedSource: item.normalizedSource || '',
-            translationReceived: item.translationReceived || '',
-            translationDrawn: item.translationDrawn || '',
-        },
-        surface: {
-            surfaceType: item.surfaceType || '',
-            windowType: item.windowType || '',
-            ownerType: item.ownerType || '',
-            methodName: item.methodName || '',
-            onScreen: item.onScreen,
-            screenState: item.screenState || '',
-            x: normalizeCoordinate(item.x),
-            y: normalizeCoordinate(item.y),
-            bounds: item.bounds ?? null,
-        },
-        timestamps: {
-            firstSeenAt: copyTimestamp(item.firstSeenAt),
-            seenAt: copyTimestamp(item.seenAt),
-            updatedAt: copyTimestamp(item.updatedAt),
-            disappearedAt: copyTimestamp(item.disappearedAt),
-            deactivatedAt: copyTimestamp(item.deactivatedAt),
-        },
-        metadata: item.metadata,
-        policy: item.policy,
-        historyRetention: item.historyRetention ?? null,
+    return {
+        source: item.rawText,
+        translation: item.translation,
+        request: { priority: item.priority, stream: item.metadata['stream'] === true },
+        result: item.presentation,
         history: item.history,
+        retention: item.historyRetention ?? null,
     };
-    return payload;
 }
 export function buildDrawCaptureTraceCopyPayload(trace: GuiDrawCaptureTrace | null = state.drawCaptureTrace): UnknownRecord {
     const source = trace;

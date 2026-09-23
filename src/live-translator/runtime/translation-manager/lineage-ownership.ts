@@ -12,6 +12,7 @@ export interface TranslationLineageCommitAuthority {
     readonly cacheable: boolean;
 }
 interface JobOwnershipIdentity {
+    readonly routeKey: string | symbol;
     readonly job: object;
     readonly id: string;
     readonly key: string;
@@ -27,6 +28,7 @@ interface JobOwnershipState {
     revoked: boolean;
 }
 interface TranslationLineageJobCell {
+    readonly routeKey: string | symbol;
     readonly id: string;
     readonly key: string;
     readonly sourceKey: string;
@@ -134,7 +136,7 @@ function isObject(value: unknown): value is object {
 function stringifyTerminalStatus(value: TerminalStatusStringCandidate): string {
     return String(value);
 }
-export function createTranslationLineageJob<T extends object>(draft: T): T & TranslationLineageJobProjection {
+export function createTranslationLineageJob<T extends object>(draft: T, operationRoute?: symbol): T & TranslationLineageJobProjection {
     const job = { ...draft } as T & TranslationLineageJobProjection;
     const id = readOwnNonemptyString(job, 'id');
     const key = readOwnNonemptyString(job, 'key');
@@ -145,7 +147,14 @@ export function createTranslationLineageJob<T extends object>(draft: T): T & Tra
             throw new Error('[TranslationService] Lineage projection fields must be unclaimed.');
         }
     }
-    const cell: TranslationLineageJobCell = { id, key, sourceKey, cacheable, ownership: null };
+    const cell: TranslationLineageJobCell = {
+        id,
+        key,
+        sourceKey,
+        cacheable,
+        routeKey: operationRoute ?? key,
+        ownership: null,
+    };
     Object.defineProperties(job, {
         id: {
             configurable: false,
@@ -225,8 +234,8 @@ function readOwnBoolean(target: object, field: 'cacheable'): boolean {
 }
 export function createTranslationLineageOwnershipRegistry(options: TranslationLineageOwnershipOptions): TranslationLineageOwnershipRegistry {
     const { activeJobs, jobsByKey, lineagesByKey, allocateLineageId } = options;
-    const lineages = new NativeMap<string, LineageOwnershipState>();
-    const routes = new NativeMap<string, JobOwnershipState>();
+    const lineages = new NativeMap<string | symbol, LineageOwnershipState>();
+    const routes = new NativeMap<string | symbol, JobOwnershipState>();
     const activeOwnership = new NativeSet<JobOwnershipState>();
     let storesValidated = false;
     let transitionOpen = false;
@@ -304,8 +313,8 @@ export function createTranslationLineageOwnershipRegistry(options: TranslationLi
             if (cell.ownership !== null) {
                 throw new Error('[TranslationService] A lineage job cannot be registered more than once.');
             }
-            const { id, key } = cell;
-            let lineage = mapGet(lineages, key) as LineageOwnershipState | undefined;
+            const { id, key, routeKey } = cell;
+            let lineage = mapGet(lineages, routeKey) as LineageOwnershipState | undefined;
             const newLineage = lineage === undefined;
             lineage ??= createLineage(key);
             const sequence = lineage.latestSequence + 1;
@@ -324,6 +333,7 @@ export function createTranslationLineageOwnershipRegistry(options: TranslationLi
                 job,
                 id,
                 key,
+                routeKey,
                 lineage,
                 sequence,
                 predecessorJobId: lineage.latestJobId,
@@ -336,17 +346,17 @@ export function createTranslationLineageOwnershipRegistry(options: TranslationLi
                 revoked: false,
             };
             if (newLineage) {
-                mapSet(lineages, key, lineage);
-                mapSet(lineagesByKey, key, lineage.view);
+                mapSet(lineages, routeKey, lineage);
+                mapSet(lineagesByKey, routeKey, lineage.view);
             }
             lineage.latestSequence = sequence;
             lineage.latestJobId = id;
             setAdd(lineage.jobs, ownership);
             setAdd(activeOwnership, ownership);
             cell.ownership = ownership;
-            mapSet(routes, key, ownership);
+            mapSet(routes, routeKey, ownership);
             setAdd(activeJobs, job);
-            mapSet(jobsByKey, key, job);
+            mapSet(jobsByKey, routeKey, job);
             ownership.published = true;
             ownership.attached = true;
             return lineage.view;
@@ -361,7 +371,7 @@ export function createTranslationLineageOwnershipRegistry(options: TranslationLi
     function getRoutedJob(key: unknown): unknown {
         return runExclusive(() => {
             const ownership = mapGet(routes, key) as JobOwnershipState | undefined;
-            if (ownership === undefined || ownership.identity.key !== key || !isJoinable(ownership))
+            if (ownership === undefined || ownership.identity.routeKey !== key || !isJoinable(ownership))
                 return null;
             return ownership.identity.job;
         });
@@ -404,7 +414,7 @@ export function createTranslationLineageOwnershipRegistry(options: TranslationLi
         });
         return latest;
     }
-    function setRoute(key: string, ownership: JobOwnershipState | null): void {
+    function setRoute(key: string | symbol, ownership: JobOwnershipState | null): void {
         if (ownership === null) {
             mapDelete(routes, key);
             mapDelete(jobsByKey, key);
@@ -415,11 +425,11 @@ export function createTranslationLineageOwnershipRegistry(options: TranslationLi
     }
     function relinquishOwnership(ownership: JobOwnershipState): boolean {
         const { identity } = ownership;
-        const route = mapGet(routes, identity.key);
+        const route = mapGet(routes, identity.routeKey);
         const changed = route === ownership;
         const fallback = changed ? findLatestJoinable(identity.lineage, ownership) : null;
         if (changed)
-            setRoute(identity.key, fallback);
+            setRoute(identity.routeKey, fallback);
         ownership.revoked = true;
         return changed;
     }
@@ -448,8 +458,8 @@ export function createTranslationLineageOwnershipRegistry(options: TranslationLi
         setDelete(lineage.jobs, ownership);
         ownership.attached = false;
         if (setSize(lineage.jobs) === 0) {
-            mapDelete(lineages, identity.key);
-            mapDelete(lineagesByKey, identity.key);
+            mapDelete(lineages, identity.routeKey);
+            mapDelete(lineagesByKey, identity.routeKey);
             lineage.commitOwner = null;
         }
         return wasActive;
@@ -462,13 +472,13 @@ export function createTranslationLineageOwnershipRegistry(options: TranslationLi
                 return false;
             const { identity } = ownership;
             const terminalStatus = normalizeTerminalStatus(identity.job, status);
-            const route = mapGet(routes, identity.key);
+            const route = mapGet(routes, identity.routeKey);
             const fallback = terminalStatus !== 'completed' && route === ownership
                 ? findLatestJoinable(identity.lineage, ownership)
                 : null;
             (identity.job as MutableJobCandidate).status = terminalStatus;
             if (route === ownership)
-                setRoute(identity.key, terminalStatus === 'completed' ? null : fallback);
+                setRoute(identity.routeKey, terminalStatus === 'completed' ? null : fallback);
             if (terminalStatus !== 'completed')
                 ownership.revoked = true;
             return removeOwnership(ownership);

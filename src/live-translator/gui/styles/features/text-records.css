@@ -63,7 +63,7 @@
 }
 
 .text-bubble:hover {
-    filter: var(--gui-hover-filter);
+    filter: none;
 }
 
 .text-record-spoiler-censored .text-bubble {
@@ -101,7 +101,6 @@
     color: var(--gui-on-solid);
     text-shadow: none;
 }
-
 .text-translation-rail-label {
     display: block;
     position: absolute;
@@ -125,55 +124,32 @@
     -moz-osx-font-smoothing: grayscale;
     backface-visibility: hidden;
 }
-
-.text-translation-rail-pending,
-.text-translation-rail-queued {
+.text-translation-rail-pending {
     background: var(--gui-translation-rail-queued-bg);
     color: var(--gui-translation-rail-queued-text);
-    text-shadow: none;
 }
-
-.text-translation-rail-translating {
-    background: var(--gui-translation-rail-translating-bg);
-    color: var(--gui-on-solid);
-    text-shadow: none;
-}
-
-.text-translation-rail-completed {
+.text-translation-rail-success {
     background: var(--gui-translation-rail-translated-bg);
 }
-
-.text-translation-rail-failed {
-    background: var(--gui-translation-rail-failed-bg);
-}
-
-.text-translation-rail-skipped {
-    background: var(--gui-translation-rail-skipped-bg);
-}
-
+.text-translation-rail-miss,
 .text-translation-rail-noop {
     background: var(--gui-translation-rail-skipped-bg);
 }
-
-.text-translation-rail-neutral {
-    background: var(--gui-translation-rail-idle-bg);
+.text-translation-rail-fail {
+    background: var(--gui-translation-rail-failed-bg);
 }
-
 .text-translation-rail-questionable {
     background: #facc15;
     color: #1c1917;
 }
-
 .text-translation-rail-complaint {
     background: #9333ea;
     color: #ffffff;
 }
-
-.translator-exchange-text {
-    margin: 0;
+.record-detail-text {
     white-space: pre-wrap;
     overflow-wrap: anywhere;
-    user-select: text;
+    margin: 0;
 }
 
 .text-line {
@@ -391,116 +367,55 @@
     font-family: Consolas, 'SFMono-Regular', Menlo, monospace;
 }
 
-.text-status-detected .text-bubble {
-    background: var(--gui-message-state-normal-bg);
-}
-
 .text-status-pending .text-bubble {
     background: var(--gui-message-state-pending-bg);
 }
-
-.text-status-translating .text-bubble {
-    background: var(--gui-message-state-translating-bg);
-}
-
-.text-status-completed .text-bubble {
+.text-status-success .text-bubble {
     background: var(--gui-message-state-translated-bg);
 }
-
-.text-status-skipped .text-bubble {
+.text-status-miss .text-bubble,
+.text-status-noop .text-bubble {
     background: var(--gui-message-state-skipped-bg);
 }
-
-.text-status-stale .text-bubble {
-    background: var(--gui-message-state-stale-bg);
-}
-
-.text-status-removed .text-bubble {
-    background: var(--gui-message-state-removed-bg);
-}
-
-.text-status-disappeared .text-bubble {
-    background: var(--gui-message-state-disappeared-bg);
-}
-
-.text-status-failed .text-bubble {
+.text-status-fail .text-bubble {
     background: var(--gui-message-state-failed-bg);
 }
-
-.text-status-pending .text-line.source,
-.text-status-translating .text-line.source,
-.text-status-completed .text-line.source,
-.text-status-skipped .text-line.source,
-.text-status-stale .text-line.source,
-.text-status-removed .text-line.source,
-.text-status-disappeared .text-line.source,
-.text-status-failed .text-line.source {
+.text-line.source {
     color: var(--gui-message-state-primary-text);
 }
-
-.text-status-pending .text-line.translation,
-.text-status-translating .text-line.translation,
-.text-status-completed .text-line.translation,
-.text-status-skipped .text-line.translation,
-.text-status-stale .text-line.translation,
-.text-status-removed .text-line.translation,
-.text-status-disappeared .text-line.translation,
-.text-status-failed .text-line.translation {
+.text-line.translation {
     color: var(--gui-message-state-secondary-text);
 }
 
-.text-hook-bitmap .text-bubble {
-    border-left-color: var(--gui-hook-bitmap);
+/* Semantic control has its own palette, independent of physical hooks/results. */
+:root {
+    --gui-control-window: var(--gui-hook-window);
+    --gui-control-sprite: var(--gui-hook-pixi);
+    --gui-control-game-message: var(--gui-hook-message);
+    --gui-control-none: #000000;
+    --gui-control-invalidated: #ff0000;
 }
-
-.text-hook-bitmap.text-detail-row {
-    border-left-color: var(--gui-hook-bitmap);
+.text-bubble[data-semantic-control='window'],
+.text-control-window.text-detail-row {
+    border-left-color: var(--gui-control-window);
 }
-
-.text-hook-sprite .text-bubble {
-    border-left-color: var(--gui-hook-sprite);
+.text-bubble[data-semantic-control='sprite'],
+.text-control-sprite.text-detail-row {
+    border-left-color: var(--gui-control-sprite);
 }
-
-.text-hook-sprite.text-detail-row {
-    border-left-color: var(--gui-hook-sprite);
+.text-bubble[data-semantic-control='game-message'],
+.text-control-game-message.text-detail-row {
+    border-left-color: var(--gui-control-game-message);
 }
-
-.text-hook-choice .text-bubble {
-    border-left-color: var(--gui-hook-choice);
+.text-bubble[data-semantic-control='none'],
+.text-control-none.text-detail-row {
+    border-left-color: var(--gui-control-none);
 }
-
-.text-hook-choice.text-detail-row {
-    border-left-color: var(--gui-hook-choice);
+.text-bubble[data-semantic-control='invalidated'],
+.text-control-invalidated.text-detail-row {
+    border-left-color: var(--gui-control-invalidated);
 }
-
-.text-hook-message .text-bubble {
-    border-left-color: var(--gui-hook-message);
-}
-
-.text-hook-message.text-detail-row {
-    border-left-color: var(--gui-hook-message);
-}
-
-.text-hook-pixi .text-bubble {
-    border-left-color: var(--gui-hook-pixi);
-}
-
-.text-hook-pixi.text-detail-row {
-    border-left-color: var(--gui-hook-pixi);
-}
-
-.text-hook-window .text-bubble {
-    border-left-color: var(--gui-hook-window);
-}
-
-.text-hook-window.text-detail-row {
-    border-left-color: var(--gui-hook-window);
-}
-
-.text-hook-unknown .text-bubble {
-    border-left-color: var(--gui-hook-unknown);
-}
-
-.text-hook-unknown.text-detail-row {
-    border-left-color: var(--gui-hook-unknown);
+.text-bubble[data-semantic-control='unknown'],
+.text-control-unknown.text-detail-row {
+    border-left-color: transparent;
 }

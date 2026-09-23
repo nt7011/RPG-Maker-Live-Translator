@@ -1,5 +1,6 @@
 import type { SemanticTextStore } from '../stores/semantic-text-store.js';
 import type { TextRecordsSnapshot } from './text-record-types.js';
+import type { ForesightView } from '../foresight/view.js';
 import { commitDescriptorTransaction, createOwnDataDescriptorShadowUpdate } from './descriptor-transaction.js';
 import { createOwnedDescriptorLease, type OwnedDescriptorLease } from './owned-descriptor-lease.js';
 interface Options {
@@ -7,8 +8,9 @@ interface Options {
     readonly generation: number;
     readonly store: Pick<SemanticTextStore, 'getSnapshot' | 'observe'>;
     readonly onScreenGameMessages: () => ReadonlySet<number>;
+    readonly foresight?: () => ForesightView | null;
 }
-export function createTextRecordsPublication({ scope, generation, store, onScreenGameMessages }: Options) {
+export function createTextRecordsPublication({ scope, generation, store, onScreenGameMessages, foresight }: Options) {
     const listeners = new Set<(snapshot: TextRecordsSnapshot) => void>();
     let observation: Readonly<{
         detach(): void;
@@ -21,15 +23,31 @@ export function createTextRecordsPublication({ scope, generation, store, onScree
     let disposed = false;
     function snapshot(): TextRecordsSnapshot {
         const pinned = disposed ? new Set<number>() : onScreenGameMessages();
+        let future: ForesightView | null = null;
+        try {
+            if (!disposed)
+                future = foresight?.() ?? null;
+        }
+        catch {
+        }
         return Object.freeze({
             generation,
             sequence: ++sequence,
             active: !disposed,
+            foresight: future,
             records: Object.freeze(disposed
                 ? []
-                : store
-                    .getSnapshot()
-                    .map((record) => Object.freeze({ ...record, onScreenGameMessage: pinned.has(record.textId) }))),
+                : store.getSnapshot().map((record) => Object.freeze({
+                    textId: record.textId,
+                    semanticRevision: record.semanticRevision,
+                    attempt: record.attempt,
+                    sourceText: record.sourceText,
+                    state: record.state,
+                    translation: record.translation,
+                    request: record.request,
+                    semanticControl: record.semanticControl,
+                    onScreenGameMessage: pinned.has(record.textId),
+                }))),
         });
     }
     function deliver(listener: (snapshot: TextRecordsSnapshot) => void, value: TextRecordsSnapshot): void {

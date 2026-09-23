@@ -1,4 +1,24 @@
 import { isGuiHtmlElement } from '../types.js';
+export function syncTextRecordDetailLayout(container: HTMLElement, detail: HTMLElement | null): void {
+    if (!detail)
+        return;
+    const records = Array.from(container.children).filter((node): node is HTMLElement => isGuiHtmlElement(node) && node.classList.contains('text-record'));
+    const activeIndex = records.findIndex((record) => record.dataset['recordKey'] === detail.dataset['recordKey']);
+    if (activeIndex < 0)
+        return;
+    const display = detail.style.display;
+    let insertIndex: number;
+    try {
+        detail.style.display = 'none';
+        insertIndex = getTextRecordDetailInsertIndex(container, activeIndex, records.length);
+    }
+    finally {
+        detail.style.display = display;
+    }
+    const reference = records[insertIndex]?.nextElementSibling ?? null;
+    if (reference !== detail)
+        container.insertBefore(detail, reference);
+}
 export function getTextRecordDetailInsertIndex(container: HTMLElement, activeIndex: number, recordCount: number): number {
     const flexRowEndIndex = getTextRecordFlexRowEndIndex(container, activeIndex);
     if (flexRowEndIndex >= activeIndex)

@@ -1,5 +1,5 @@
 import type { NativeCapture, NativeCaptureHost } from '../contract.js';
-import { contents, number, object, own, prototype } from '../shared/native.js';
+import { contents, number, object, own } from '../shared/native.js';
 export function captureMessageAllocation(host: NativeCaptureHost): NativeCapture {
     const pages = new WeakMap<object, {
         receiver: object;
@@ -7,7 +7,7 @@ export function captureMessageAllocation(host: NativeCaptureHost): NativeCapture
         x: number;
         y: number;
     }>();
-    host.method(prototype(host.scope, 'Window_Message'), 'newPage', (native) => function (this: unknown, ...args: unknown[]) {
+    host.method('message', 'newPage', (native) => function (this: unknown, ...args: unknown[]) {
         const state = object(args[0]);
         if (state !== null)
             pages.delete(state);
@@ -38,7 +38,9 @@ export function captureMessageAllocation(host: NativeCaptureHost): NativeCapture
             if (own(context.receiver, '_textState') !== context.textState)
                 return refuse('not-current-message-state');
             const width = context.width - page.x, height = context.height - page.y;
-            return width > 0 && height > 0 ? { x: page.x, y: page.y, width, height } : refuse('page-outside-bitmap');
+            return width > 0 && height > 0
+                ? { kind: 'block', rect: { x: page.x, y: page.y, width, height } }
+                : refuse('page-outside-bitmap');
         },
     };
 }

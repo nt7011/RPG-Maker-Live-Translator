@@ -1,3 +1,4 @@
+import { createNumericObservation, numericConstructionPriority, type NumericObservation, } from '../translation-manager/numeric-templates.js';
 import type { TextRecordRequest, TranslatorExchange } from '../text-record-types.js';
 import { copyErrorDescription } from '../cancellation.js';
 import { encodeTranslationText, decodeTranslationText, type EncodedTranslationText, } from '../translation-text-codec.js';
@@ -31,6 +32,7 @@ interface SettlementDelivery {
 }
 interface TranslationSettlementCell {
     readonly request: SemanticTextTranslationRequest;
+    readonly dispatchGroup: symbol;
     readonly encoded: EncodedTranslationText;
     readonly completion: Promise<SemanticTranslationSettlement>;
     readonly resolve: (settlement: SemanticTranslationSettlement) => void;
@@ -38,6 +40,10 @@ interface TranslationSettlementCell {
     correlation: TranslationCorrelation | null;
     translator: TranslatorExchange | null;
     managerHandle: TranslationRequestHandle | null;
+    numericObservation: NumericObservation | null;
+    constructionHandle: TranslationRequestHandle | null;
+    constructionDelivery: SettlementDelivery | null;
+    released: boolean;
     managerAccepted: boolean;
     terminal: boolean;
     controlSettled: boolean;
@@ -112,13 +118,18 @@ function reportNoop(accept: RuntimeDiagnosticsIngress['accept'], correlation: Tr
         reason: typeof reason === 'string' && reason.length > 0 ? reason : 'policy-noop',
     });
 }
-function reportAvailable(accept: RuntimeDiagnosticsIngress['accept'], correlation: TranslationCorrelation | null, encoded: EncodedTranslationText, output: string, immediate = false): SemanticTranslationSettlement {
+function reportAvailable(accept: RuntimeDiagnosticsIngress['accept'], correlation: TranslationCorrelation | null, encoded: EncodedTranslationText, output: string, sourceText: string, immediate = false): SemanticTranslationSettlement {
     const translation = decodeTranslationText(encoded, output);
     if (translation === null)
         return reportRejected(accept, correlation, 'invalid-formatting', 'decoding', new Error('Translation cannot restore source formatting.'), immediate ? 'input-change' : 'new-appearance');
     const settlement: SemanticTranslationSettlement = Object.freeze({ kind: 'available', translation });
     if (accept !== undefined && correlation !== null) {
-        accept({ type: 'translation.available', ...correlation, translation: translation.text });
+        accept({
+            type: 'translation.available',
+            ...correlation,
+            translation: translation.text,
+            fields: [{ name: 'unchanged', value: translation.text === sourceText }],
+        });
     }
     return settlement;
 }
@@ -135,10 +146,11 @@ async function deliverSettlement(promise: Promise<unknown>, delivery: Settlement
     delivery.complete = null;
     complete?.(value, failed);
 }
-function createCell(request: SemanticTextTranslationRequest): TranslationSettlementCell {
+function createCell(request: SemanticTextTranslationRequest, dispatchGroup: symbol): TranslationSettlementCell {
     const { promise: completion, resolve: resolveCompletion } = Promise.withResolvers<SemanticTranslationSettlement>();
     return {
         request,
+        dispatchGroup,
         encoded: encodeTranslationText(request.handle),
         completion,
         resolve: resolveCompletion,
@@ -146,6 +158,10 @@ function createCell(request: SemanticTextTranslationRequest): TranslationSettlem
         correlation: null,
         translator: null,
         managerHandle: null,
+        numericObservation: null,
+        constructionHandle: null,
+        constructionDelivery: null,
+        released: false,
         managerAccepted: false,
         terminal: false,
         controlSettled: false,
@@ -179,12 +195,75 @@ export function createSemanticTextTranslationHandoff(options: SemanticTextTransl
             cell.delivery.complete = null;
         cell.delivery = null;
         cell.managerHandle = null;
+        removeInactive(cell);
+        cell.resolve(settlement);
+    }
+    function removeInactive(cell: TranslationSettlementCell): void {
+        if (!cell.terminal || cell.constructionHandle !== null)
+            return;
         const textId = cell.request.handle.textId;
         const active = activeByTextId.get(textId);
         active?.delete(cell);
         if (active?.size === 0)
             activeByTextId.delete(textId);
-        cell.resolve(settlement);
+    }
+    function projectConstruction(cell: TranslationSettlementCell): void {
+        const handle = cell.constructionHandle;
+        if (handle === null)
+            return;
+        try {
+            const priority = numericConstructionPriority(readPriority(cell.request.handle));
+            if (handle.getPriority() !== priority)
+                handle.setPriority(priority, 'derived numeric construction demand');
+        }
+        catch {
+        }
+    }
+    function revokeConstruction(cell: TranslationSettlementCell, mode: 'supersede' | 'retire' | 'dispose'): void {
+        const handle = cell.constructionHandle;
+        if (handle === null)
+            return;
+        try {
+            const canceled = handle.cancel('numeric origin released', mode === 'dispose' ? { abortJob: true } : supersessionCancellationOptions);
+            if (!canceled) {
+                if (mode === 'supersede')
+                    projectConstruction(cell);
+                else if (mode === 'retire')
+                    handle.setPriority(numericConstructionPriority(100), 'retired numeric origin');
+            }
+        }
+        catch {
+        }
+        if (mode !== 'supersede') {
+            if (cell.constructionDelivery !== null)
+                cell.constructionDelivery.complete = null;
+            cell.constructionDelivery = null;
+            cell.constructionHandle = null;
+            removeInactive(cell);
+        }
+    }
+    function receiveConstruction(cell: TranslationSettlementCell, handle: TranslationRequestHandle): void {
+        cell.constructionHandle = handle;
+        addActive(cell);
+        const delivery: SettlementDelivery = {
+            complete: () => {
+                if (cell.constructionHandle === handle) {
+                    cell.constructionHandle = null;
+                    cell.constructionDelivery = null;
+                }
+                removeInactive(cell);
+            },
+        };
+        cell.constructionDelivery = delivery;
+        void deliverSettlement(handle.promise, delivery);
+        if (disposed)
+            revokeConstruction(cell, 'dispose');
+        else if (cell.released)
+            revokeConstruction(cell, 'retire');
+        else if (cell.controlSettled)
+            revokeConstruction(cell, 'supersede');
+        else
+            projectConstruction(cell);
     }
     function reportSuperseded(cell: TranslationSettlementCell, outcome: 'queued-subscriber-canceled' | 'running-subscriber-demoted' | 'terminal-noop', successor: SemanticTextRevisionHandle | null, previousPriority?: number): void {
         if (acceptDiagnosticFact === undefined)
@@ -209,6 +288,7 @@ export function createSemanticTextTranslationHandoff(options: SemanticTextTransl
         if (cell.controlSettled)
             return;
         cell.controlSettled = true;
+        revokeConstruction(cell, 'supersede');
         const handle = cell.managerHandle;
         if (!cell.managerAccepted && handle === null && !cell.terminal)
             return;
@@ -252,17 +332,25 @@ export function createSemanticTextTranslationHandoff(options: SemanticTextTransl
         });
     }
     function projectDemand(cell: TranslationSettlementCell): boolean {
+        projectConstruction(cell);
         if (cell.terminal || cell.managerHandle === null || !cell.managerAccepted)
             return false;
-        const priority = readPriority(cell.request.handle);
+        const handle = cell.managerHandle;
+        const desired = readPriority(cell.request.handle);
         try {
-            if (cell.managerHandle.getPriority() === priority)
+            const before = handle.getPriority();
+            if (before === desired)
                 return false;
-            const changed = cell.managerHandle.setPriority(priority, 'derived bitmap demand') === true;
-            if (changed) {
-                options.requestChanged?.(cell.request, { priority, stream: cell.managerHandle.stream });
-                if (cell.correlation)
+            const changed = handle.setPriority(desired, 'derived bitmap demand') === true;
+            const priority = handle.getPriority();
+            if (typeof priority !== 'number' || !Number.isFinite(priority) || priority < 0)
+                return changed;
+            if (priority !== before) {
+                options.requestChanged?.(cell.request, { priority, stream: handle.stream });
+                if (cell.correlation) {
                     cell.correlation = Object.freeze({ ...cell.correlation, requestPriority: priority });
+                    acceptDiagnosticFact?.({ type: 'translation.priority', ...cell.correlation });
+                }
             }
             return changed;
         }
@@ -279,7 +367,9 @@ export function createSemanticTextTranslationHandoff(options: SemanticTextTransl
                 projectDemand(cell);
         }
     }
-    function releaseCell(cell: TranslationSettlementCell): void {
+    function releaseCell(cell: TranslationSettlementCell, mode: 'retire' | 'dispose' = 'retire'): void {
+        cell.released = true;
+        revokeConstruction(cell, mode);
         const handle = cell.managerHandle;
         cell.managerHandle = null;
         cell.expectedCancellation = true;
@@ -287,7 +377,16 @@ export function createSemanticTextTranslationHandoff(options: SemanticTextTransl
         if (handle === null)
             return;
         try {
-            handle.cancel('semantic owner released', { abortJob: true });
+            if (mode === 'dispose')
+                handle.cancel('semantic owner released', { abortJob: true });
+            else if (!handle.cancel('semantic owner retired', supersessionCancellationOptions)) {
+                try {
+                    handle.setPriority(100, 'retired semantic demand');
+                }
+                finally {
+                    handle.cancel('semantic owner retired', { abortJob: false });
+                }
+            }
         }
         catch {
         }
@@ -308,15 +407,26 @@ export function createSemanticTextTranslationHandoff(options: SemanticTextTransl
             }
             let cell = settlements.get(request);
             if (cell === undefined) {
-                cell = createCell(request);
+                const previous = currentByTextId.get(request.handle.textId);
+                cell = createCell(request, previous?.dispatchGroup ?? Symbol('semantic text dispatch'));
+                const created = cell;
+                cell.numericObservation = createNumericObservation(cell.encoded, (handle) => {
+                    receiveConstruction(created, handle);
+                });
                 settlements.set(request, cell);
                 cellsBySemanticHandle.set(request.handle, cell);
                 currentByTextId.set(request.handle.textId, cell);
+                if (previous !== undefined && (!previous.terminal || previous.constructionHandle !== null)) {
+                    supersedeCell(previous, request.handle);
+                    if (newCells.includes(previous))
+                        finishCell(previous, canceled);
+                }
                 newCells.push(cell);
             }
             cells.push(cell);
         }
-        const supportedCells = newCells.filter((cell) => cell.encoded.supported);
+        const supportedCells = newCells.filter((cell) => cell.encoded.supported && !cell.terminal);
+        const submittedCells = new Set(supportedCells);
         const requestedPriorities = new Map<TranslationSettlementCell, number>();
         let managerAdmissions: readonly TranslationRequestBatchAdmission[];
         if (supportedCells.length === 0) {
@@ -331,6 +441,10 @@ export function createSemanticTextTranslationHandoff(options: SemanticTextTransl
                     return {
                         input: encoded.text,
                         options: {
+                            dispatchGroup: cell.dispatchGroup,
+                            ...(cell.numericObservation === null
+                                ? {}
+                                : { numericObservation: cell.numericObservation }),
                             onTranslatorExchange: (exchange: TranslatorExchange) => {
                                 if (cell.terminal || handoffIsDisposed())
                                     return;
@@ -351,11 +465,18 @@ export function createSemanticTextTranslationHandoff(options: SemanticTextTransl
         }
         let managerIndex = 0;
         for (const cell of newCells) {
-            const managerAdmission = cell.encoded.supported ? managerAdmissions[managerIndex++] : undefined;
+            const managerAdmission = submittedCells.has(cell) ? managerAdmissions[managerIndex++] : undefined;
             const managerHandle = managerAdmission?.kind === 'accepted' || managerAdmission?.kind === 'no-translation'
                 ? managerAdmission.handle
                 : null;
-            const priority = requestedPriorities.get(cell);
+            let priority = requestedPriorities.get(cell);
+            try {
+                const accepted = managerHandle?.getPriority();
+                if (typeof accepted === 'number' && Number.isFinite(accepted) && accepted >= 0)
+                    priority = accepted;
+            }
+            catch {
+            }
             const correlation = acceptDiagnosticFact === undefined
                 ? null
                 : Object.freeze({
@@ -376,7 +497,7 @@ export function createSemanticTextTranslationHandoff(options: SemanticTextTransl
             reportExchange(cell);
             let immediateSettlement: SemanticTranslationSettlement | null = null;
             if (handoffIsDisposed() || cell.terminal) {
-                releaseCell(cell);
+                releaseCell(cell, handoffIsDisposed() ? 'dispose' : 'retire');
                 immediateSettlement = canceled;
             }
             else if (!cell.encoded.supported) {
@@ -391,7 +512,7 @@ export function createSemanticTextTranslationHandoff(options: SemanticTextTransl
             else if (managerAdmission?.kind === 'accepted' &&
                 'immediateValue' in managerAdmission &&
                 typeof managerAdmission.immediateValue === 'string') {
-                immediateSettlement = reportAvailable(acceptDiagnosticFact, correlation, cell.encoded, managerAdmission.immediateValue, true);
+                immediateSettlement = reportAvailable(acceptDiagnosticFact, correlation, cell.encoded, managerAdmission.immediateValue, cell.request.handle.sourceText, true);
             }
             const admission = Object.freeze({
                 request: cell.request,
@@ -426,7 +547,7 @@ export function createSemanticTextTranslationHandoff(options: SemanticTextTransl
                                 ? canceled
                                 : reportRejected(acceptDiagnosticFact, cell.correlation, 'promise-rejected', 'provider', value)
                             : typeof value === 'string'
-                                ? reportAvailable(acceptDiagnosticFact, cell.correlation, cell.encoded, value)
+                                ? reportAvailable(acceptDiagnosticFact, cell.correlation, cell.encoded, value, cell.request.handle.sourceText)
                                 : reportRejected(acceptDiagnosticFact, cell.correlation, 'non-string', 'provider', new Error('Translator returned non-string output.'));
                         finishCell(cell, settlement);
                     },
@@ -465,10 +586,10 @@ export function createSemanticTextTranslationHandoff(options: SemanticTextTransl
             return;
         disposed = true;
         for (const cell of cellsBySemanticHandle.values())
-            releaseCell(cell);
+            releaseCell(cell, 'dispose');
         for (const active of activeByTextId.values())
             for (const cell of active)
-                releaseCell(cell);
+                releaseCell(cell, 'dispose');
         activeByTextId.clear();
         cellsBySemanticHandle.clear();
         currentByTextId.clear();

@@ -39,7 +39,7 @@
 
             <details id="resource-panel" class="panel collapsible-panel resource-panel" hidden>
                 <summary class="section-title compact">
-                    <h2>GPU memory &amp; limits</h2>
+                    <h2>Translator image memory</h2>
                     <div class="section-title-actions">
                         <span id="resource-summary" class="summary-status neutral">Waiting for resource data</span>
                         <button id="resource-probe-copy" type="button" class="copy-record-button" disabled>
@@ -47,14 +47,6 @@
                         </button>
                     </div>
                 </summary>
-                <p class="resource-note">
-                    Translator-owned logical image backing, including Canvas and transfers. Physical VRAM and game-owned
-                    allocations are not measured.
-                </p>
-                <p class="resource-note">
-                    Leak recording starts automatically. After translations stop, copy the report before restarting the
-                    game.
-                </p>
                 <div id="resource-details" class="resource-details"></div>
             </details>
 
@@ -73,26 +65,27 @@
                 </div>
             </details>
 
-            <details id="foresight-panel" class="panel collapsible-panel foresight-panel" open>
+            <details id="foresight-panel" class="panel collapsible-panel foresight-panel">
                 <summary class="section-title compact">
-                    <h2 title="Upcoming GameMessages">Foresight</h2>
+                    <h2>Foresight</h2>
                     <div class="section-title-actions">
-                        <span id="foresight-feed-health" class="runtime-feed-health warn" hidden></span>
-                        <span id="foresight-summary" class="summary-status neutral">0 actions</span>
+                        <span id="foresight-summary" class="summary-status neutral">Waiting for runtime</span>
                         <label class="foresight-filter-toggle">
                             <input
-                                id="foresight-message-filter-toggle"
+                                id="foresight-messages-only"
                                 type="checkbox"
-                                checked
                                 aria-controls="foresight-tree"
+                                checked
                             />
-                            <span>Messages</span>
+                            <span>GameMessages only</span>
                         </label>
-                        <button id="foresight-copy" type="button" class="copy-record-button" disabled>Copy</button>
+                        <button id="foresight-copy" type="button" class="copy-record-button" disabled>Copy view</button>
                     </div>
                 </summary>
+                <p id="foresight-metrics" class="foresight-metrics"></p>
+                <p id="foresight-limits" class="foresight-limits" hidden></p>
                 <div id="foresight-tree" class="foresight-tree-host">
-                    <div class="empty">No foresight scan recorded.</div>
+                    <div class="empty">Waiting for the current runtime feed.</div>
                 </div>
             </details>
 

@@ -1171,12 +1171,16 @@ export function createLmStudioProviderModule(common: TranslationProviderCommonMo
                     publishPartial(authoritativeMessage);
                 }
                 function appendMessageDelta(cleaned: string): void {
-                    if (cleaned)
-                        visibleMessage += cleaned;
-                    publishVisibleState();
+                    if (!cleaned)
+                        return;
+                    visibleMessage += cleaned;
+                    if (onDelta)
+                        publishVisibleState();
                 }
                 function finishVisibleMessage(): void {
                     appendMessageDelta(thinkStripper.finish());
+                    if (!onDelta)
+                        publishVisibleState();
                 }
                 function replaceWithTerminalMessage(message: string): void {
                     const sanitized = parseLmStudioTextOutput(message);
@@ -1206,14 +1210,13 @@ export function createLmStudioProviderModule(common: TranslationProviderCommonMo
                         defineProperty(error, 'retryAfter', { value: retryAfter });
                     }
                     const explicitRetryable = streamEvent.retryable;
-                    const retryable = typeof explicitRetryable === 'boolean'
-                        ? explicitRetryable
-                        : status === 429 ||
-                            (typeof status === 'number' &&
-                                Number.isInteger(status) &&
-                                status >= 500 &&
-                                status <= 599);
-                    defineProperty(error, 'retryable', { value: retryable });
+                    if (typeof explicitRetryable === 'boolean') {
+                        defineProperty(error, 'retryable', { value: explicitRetryable });
+                    }
+                    else if (status === 429 ||
+                        (typeof status === 'number' && Number.isInteger(status) && status >= 500 && status <= 599)) {
+                        defineProperty(error, 'retryable', { value: true });
+                    }
                     return error;
                 }
                 function processStreamEvents(events: unknown): boolean {

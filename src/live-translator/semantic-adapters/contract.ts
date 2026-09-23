@@ -23,9 +23,20 @@ export interface Rect {
     readonly width: number;
     readonly height: number;
 }
+export type NativeTextArea = {
+    readonly kind: 'line';
+    readonly left: number;
+    readonly right: number;
+} | {
+    readonly kind: 'block';
+    readonly rect: Rect;
+};
+export type SemanticFamily = 'window' | 'game-message' | 'sprite';
+export type NativeTarget = 'base' | 'message' | 'selectable' | 'help' | 'sprite';
+export type NativeOperation = 'drawText' | 'drawTextEx' | 'processCharacter' | 'flushTextState' | 'startMessage' | 'drawItem' | 'itemRectForText' | 'itemLineRect' | 'itemRectWithPadding' | 'refresh' | 'baseTextRect' | 'newPage';
 interface ObservationBase {
     readonly observation: TextObservationRef;
-    readonly family: 'window' | 'game-message';
+    readonly family: SemanticFamily;
 }
 export type NativeTextObservation = (ObservationBase & {
     readonly kind: 'source';
@@ -38,7 +49,7 @@ export type NativeTextObservation = (ObservationBase & {
         readonly text: string;
         readonly range: TextRange | null;
     }[];
-    readonly allocation: Rect | null;
+    readonly allocation: NativeTextArea | null;
 });
 export type SemanticClue = {
     readonly kind: 'ordered-members';
@@ -48,7 +59,7 @@ export type SemanticClue = {
     }[];
 } | {
     readonly kind: 'safe-area';
-    readonly rect: Rect;
+    readonly area: NativeTextArea;
 } | {
     readonly kind: 'normalized-source';
     readonly spans: readonly NativeSourceSpan[];
@@ -56,6 +67,7 @@ export type SemanticClue = {
 };
 export type SemanticClueProducer = (observation: NativeTextObservation) => readonly SemanticClue[];
 export interface SemanticAdapter {
+    readonly family: SemanticFamily;
     readonly observe: SemanticClueProducer;
     readonly captures: readonly NativeCaptureFactory[];
 }
@@ -66,6 +78,13 @@ export interface NativeBitmapDraw {
     readonly text: string;
     readonly width: number;
     readonly height: number;
+    readonly placement: {
+        readonly x: number;
+        readonly y: number;
+        readonly maxWidth: number;
+        readonly lineHeight: number;
+    };
+    readonly alignment: 'left' | 'center' | 'right';
 }
 export interface NativeAllocationContext extends NativeBitmapDraw {
     readonly receiver: object;
@@ -81,22 +100,24 @@ export interface NativeDrawDiagnostics {
 }
 export interface NativeCapture {
     readonly capture?: (command: NativeBitmapDraw, draw: BitmapDrawRef) => void;
-    readonly allocation?: (context: NativeAllocationContext, rejected?: (reason: string) => void) => Rect | null;
+    readonly allocation?: (context: NativeAllocationContext, rejected?: (reason: string) => void) => NativeTextArea | null;
 }
 export type NativeCaptureFactory = (host: NativeCaptureHost) => NativeCapture;
 export interface NativeCaptureHost {
-    readonly scope: object;
+    readonly roots: Readonly<Record<NativeTarget, object | null>>;
+    readonly accepts: (family: SemanticFamily) => boolean;
     readonly maxDraws: number;
     readonly enabled: () => boolean;
-    readonly method: (target: object | null, key: string, wrap: (native: NativeMethod) => NativeMethod) => void;
+    readonly method: (family: NativeTarget, key: NativeOperation, wrap: (native: NativeMethod) => NativeMethod) => void;
     readonly safely: (action: () => void) => void;
     readonly normalize: (text: unknown) => string | null;
     readonly matches: (a: string, b: string) => boolean;
     readonly observeSource: (native: object, text: string, family: NativeTextObservation['family']) => TextObservationRef | null;
     readonly observeSourceChange: (source: TextObservationRef) => void;
+    readonly observeFailure: (source: TextObservationRef) => void;
     readonly observeDraw: (source: TextObservationRef, surface: object, draws: Extract<NativeTextObservation, {
         kind: 'draw';
-    }>['draws'], allocation: Rect | null) => void;
-    readonly allocation: (context: NativeAllocationContext, rejected?: (reason: string) => void) => Rect | null;
+    }>['draws'], allocation: NativeTextArea | null) => void;
+    readonly allocation: (context: NativeAllocationContext, rejected?: (reason: string) => void) => NativeTextArea | null;
     readonly diagnostic?: (draw: BitmapDrawRef, source: TextObservationRef | null, method: string, reason: string, text: string, range: TextRange | null, nativeSource?: string, native?: NativeDrawDiagnostics) => void;
 }

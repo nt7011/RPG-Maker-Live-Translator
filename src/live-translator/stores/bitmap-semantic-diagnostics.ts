@@ -35,6 +35,7 @@ export function createBitmapSemanticDiagnostics() {
     const sources = new WeakMap<TextObservationRef, SourceEvidence>();
     const draws = new WeakMap<BitmapDrawRef, DrawEvidence>();
     const hooks: string[] = [];
+    const presentations = new WeakMap<BitmapTextAssociation, SemanticContextDecision>();
     function reject(token: TextObservationRef, decision: Omit<SemanticContextDecision, 'source'>): void {
         const source = sources.get(token);
         if (source === undefined || source.rejection !== undefined)
@@ -89,16 +90,16 @@ export function createBitmapSemanticDiagnostics() {
                 nativeSourceLength: nativeSource === undefined ? (prior?.nativeSourceLength ?? null) : nativeSource.length,
             });
         },
-        refuse(candidate: BitmapAssociationCandidate, decision: SemanticContextDecision): void {
-            for (const source of candidate.clue?.sources ?? [])
-                reject(source.observation, decision);
+        presentation(row: BitmapTextAssociation, decision: SemanticContextDecision | null): void {
+            if (decision === null)
+                presentations.delete(row);
+            else
+                presentations.set(row, decision);
         },
         collect() {
             const decisions = new Map<BitmapCommandAtom, SemanticContextDecision>();
             return {
-                reject(atoms: readonly BitmapCommandAtom[], decision: SemanticContextDecision): void {
-                    if (decision.source !== undefined)
-                        reject(decision.source.observation, decision);
+                note(atoms: readonly BitmapCommandAtom[], decision: SemanticContextDecision): void {
                     for (const atom of atoms)
                         if (!decisions.has(atom))
                             decisions.set(atom, decision);
@@ -139,9 +140,8 @@ export function createBitmapSemanticDiagnostics() {
                         ? witnesses.reduce((length, source) => length + source.nativeText.length, 0)
                         : (source?.length ?? missing?.nativeSourceLength ?? null);
                     const allocation = row.clue?.allocation ?? decision?.area ?? null;
-                    const refusal = source?.rejection?.stage === 'layout' || source?.rejection?.stage === 'presentation'
-                        ? source.rejection
-                        : undefined;
+                    const areaKind = row.clue?.allocation != null ? 'block' : row.horizontal !== undefined ? 'line' : null;
+                    const refusal = presentations.get(row);
                     const associationExpected = row.clue !== undefined ||
                         localDecision?.source !== undefined ||
                         evidence.some((item) => item.observation !== null || item.method !== 'Bitmap.drawText');
@@ -184,9 +184,14 @@ export function createBitmapSemanticDiagnostics() {
                             : (evidence.findLast((item) => item.range !== null)?.range?.end ?? null),
                         bitmapSize: [size.width, size.height].join('x'),
                         allocation: allocation === null
-                            ? null
+                            ? row.horizontal === undefined
+                                ? null
+                                : [row.horizontal.left, row.horizontal.right].join(',')
                             : [allocation.x, allocation.y, allocation.width, allocation.height].join(','),
-                        areaReason: decision?.reason ?? (allocation === null ? (native?.allocationReason ?? null) : null),
+                        areaKind,
+                        areaReason: areaKind === null
+                            ? (decision?.reason ?? native?.allocationReason ?? 'no-admitted-area')
+                            : null,
                         nativeOwner: native?.owner ?? null,
                         textOperation: native?.operation ?? null,
                         presentationStage: refusal?.stage ?? null,

@@ -237,7 +237,7 @@ export function createTranslationManagerSchedulerPolicyModule(constants: unknown
                     jobMatchesReservedLane(job, lane));
             }).length;
         }
-        function captureSchedulerSnapshot(enabledLanes: unknown, includeQueue = true): TranslationManagerSchedulerStateSnapshot {
+        function captureSchedulerSnapshot(enabledLanes: unknown, queueEvidence: 'all' | 'blocking' | 'none' = 'all'): TranslationManagerSchedulerStateSnapshot {
             const capacity = getSafeProviderCapacity(getProviderCapacity()) as number;
             const activeCount = getSafeActiveCount(getActiveCount()) as number;
             const selectedLanes = isTruthy(enabledLanes)
@@ -245,7 +245,8 @@ export function createTranslationManagerSchedulerPolicyModule(constants: unknown
                 : lanes.filter((lane: unknown) => capacity >= ((lane as TranslationManagerReservedLaneCandidate).enabledAtCapacity as number));
             const activeLanes = Object.freeze(runtime.Array.from(selectedLanes) as unknown as TranslationManagerReservedLaneCandidate[]);
             const jobs = Object.freeze(runtime.Array.from(getJobs()) as unknown as unknown[]);
-            const queuedJobs = Object.freeze(includeQueue || activeLanes.some((lane) => lane.blocksNormalDispatch === true)
+            const queuedJobs = Object.freeze(queueEvidence === 'all' ||
+                (queueEvidence === 'blocking' && activeLanes.some((lane) => lane.blocksNormalDispatch === true))
                 ? (runtime.Array.from(getQueuedJobs()) as unknown as unknown[])
                 : []);
             return Object.freeze({
@@ -393,7 +394,7 @@ export function createTranslationManagerSchedulerPolicyModule(constants: unknown
             }).blocked;
         }
         function getReservedLaneDispatchState(lane: unknown): unknown {
-            const snapshot = captureSchedulerSnapshot(lane ? [lane] : [], false);
+            const snapshot = captureSchedulerSnapshot(lane ? [lane] : [], 'none');
             const laneSource = lane as TranslationManagerReservedLaneCandidate;
             const running = lane ? countLaneRunningFromSnapshot(snapshot, laneSource) : 0;
             const maxConcurrent = lane ? getLaneConcurrencyLimit(snapshot, laneSource) : 0;
@@ -407,7 +408,7 @@ export function createTranslationManagerSchedulerPolicyModule(constants: unknown
             });
         }
         function getNormalDispatchState(enabledLanes: unknown): unknown {
-            return deriveNormalDispatchState(captureSchedulerSnapshot(enabledLanes, false));
+            return deriveNormalDispatchState(captureSchedulerSnapshot(enabledLanes, 'blocking'));
         }
         function getQueueDispatchState(enabledLanes: unknown): unknown {
             const snapshot = captureSchedulerSnapshot(enabledLanes);

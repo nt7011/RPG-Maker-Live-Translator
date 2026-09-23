@@ -41,6 +41,6 @@ export function getTextRecordDetailKey(sectionId: string, recordKey: string, dup
 export function getTextRecordDetailDomKey(recordKey: string): string {
     return ['text-detail', recordKey || ''].join('|');
 }
-export function getForesightTextRecords(): GuiTextRecord[] {
+export function getDiagnosticTextRecords(): GuiTextRecord[] {
     return state.diagnosticRecords;
 }

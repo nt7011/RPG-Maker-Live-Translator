@@ -1,4 +1,5 @@
 import { bitmapLineTextX, type BitmapLineFrame } from './bitmap-line-geometry.js';
+import type { PixelBounds } from '../gpu/bitmap-pixel-device.js';
 import { characters, createStyledText, hasWholeGraphemeStyles, type StyledText, type TextPaint, } from './styled-text.js';
 export interface BitmapSourceCharacterIndex {
     readonly ends: readonly number[];
@@ -85,34 +86,130 @@ export interface BitmapTextMetrics {
     readonly descent: number;
 }
 export type BitmapTextMeasure = (text: string, paint: TextPaint) => BitmapTextMetrics;
+export const bitmapGlyphMargin = 1;
+export interface BitmapTextLayoutResult {
+    readonly draws: readonly BitmapTextDraw[];
+    readonly regions: readonly PixelBounds[];
+}
 export function validTextMetrics(metrics: BitmapTextMetrics): boolean {
     return ([metrics.width, metrics.left, metrics.right, metrics.ascent, metrics.descent].every(Number.isFinite) &&
         metrics.width >= 0);
 }
-export function layoutBitmapText(source: StyledText, frame: BitmapLineFrame, measure: BitmapTextMeasure): readonly BitmapTextDraw[] | null {
-    if (!hasWholeGraphemeStyles(source))
+export function bitmapSourceRepaintRegion(layout: BitmapTextLayout, metrics: BitmapTextMetrics): PixelBounds | null {
+    const { placement, paint, alignment } = layout;
+    if (!validTextMetrics(metrics) ||
+        ![placement.x, placement.y, placement.maxWidth, placement.lineHeight].every(Number.isFinite) ||
+        placement.maxWidth <= 0 ||
+        metrics.ascent + metrics.descent <= 0)
         return null;
-    const measured = source.runs.map((run, index) => {
-        const text = source.text.slice(source.runs[index - 1]?.end ?? 0, run.end);
-        return { text, paint: run.paint, metrics: measure(text, run.paint) };
-    });
-    if (measured.some((run) => !validTextMetrics(run.metrics)))
+    const advance = Math.min(metrics.width, placement.maxWidth);
+    const scale = metrics.width === 0 ? 1 : advance / metrics.width;
+    const anchor = bitmapLineTextX({ x: placement.x, y: placement.y, width: placement.maxWidth, lineHeight: placement.lineHeight, alignment }, advance);
+    const left = Math.min(anchor, anchor - metrics.left * scale) - bitmapGlyphMargin;
+    const right = Math.max(anchor + advance, anchor + metrics.right * scale) + bitmapGlyphMargin;
+    const baseline = bitmapTextBaseline(placement, paint);
+    const top = Math.min(placement.y, placement.y + placement.lineHeight, baseline - metrics.ascent - bitmapGlyphMargin);
+    const bottom = Math.max(placement.y, placement.y + placement.lineHeight, baseline + metrics.descent + bitmapGlyphMargin);
+    return Object.freeze({ x: left, y: top, width: right - left, height: bottom - top });
+}
+export interface BitmapMeasuredLine {
+    readonly runs: readonly {
+        readonly text: string;
+        readonly paint: TextPaint;
+        readonly metrics: BitmapTextMetrics;
+    }[];
+    readonly advance: number;
+    readonly ink: PixelBounds | null;
+}
+function glyphRegion(metrics: BitmapTextMetrics, placement: BitmapTextPlacement, paint: TextPaint, scale: number): PixelBounds | null {
+    if (metrics.left + metrics.right <= 0 || metrics.ascent + metrics.descent <= 0)
         return null;
-    const width = measured.reduce((sum, run) => sum + run.metrics.width, 0);
-    const scale = width === 0 ? 1 : Math.min(1, frame.width / width);
-    let x = bitmapLineTextX(frame, width * scale);
-    return measured.map((run) => {
-        const layout: BitmapTextLayout = {
-            paint: run.paint,
-            alignment: 'left',
-            placement: {
-                x,
-                y: frame.y,
-                lineHeight: frame.lineHeight,
-                maxWidth: run.metrics.width === 0 ? frame.width : run.metrics.width * scale,
-            },
+    const baseline = bitmapTextBaseline(placement, paint);
+    return {
+        x: placement.x - metrics.left * scale - bitmapGlyphMargin,
+        y: baseline - metrics.ascent - bitmapGlyphMargin,
+        width: (metrics.left + metrics.right) * scale + 2 * bitmapGlyphMargin,
+        height: metrics.ascent + metrics.descent + 2 * bitmapGlyphMargin,
+    };
+}
+export function measureBitmapLine(source: StyledText, start: number, end: number, lineHeight: number, measure: BitmapTextMeasure): BitmapMeasuredLine | null {
+    const runs: {
+        text: string;
+        paint: TextPaint;
+        metrics: BitmapTextMetrics;
+    }[] = [];
+    let advance = 0;
+    let ink: PixelBounds | null = null;
+    for (const [index, run] of source.runs.entries()) {
+        const from = Math.max(start, source.runs[index - 1]?.end ?? 0), to = Math.min(end, run.end);
+        if (from >= to)
+            continue;
+        const text = source.text.slice(from, to), metrics = measure(text, run.paint);
+        if (!validTextMetrics(metrics))
+            return null;
+        const region = glyphRegion(metrics, { x: advance, y: 0, lineHeight, maxWidth: 1 }, run.paint, 1);
+        if (region !== null) {
+            if (ink === null)
+                ink = region;
+            else {
+                const x = Math.min(ink.x, region.x), y = Math.min(ink.y, region.y);
+                ink = {
+                    x,
+                    y,
+                    width: Math.max(ink.x + ink.width, region.x + region.width) - x,
+                    height: Math.max(ink.y + ink.height, region.y + region.height) - y,
+                };
+            }
+        }
+        advance += metrics.width;
+        runs.push({ text, paint: run.paint, metrics });
+    }
+    return { runs, advance, ink };
+}
+export function placeBitmapLine(line: BitmapMeasuredLine, origin: BitmapTextPlacement, scale = 1): BitmapTextLayoutResult {
+    const draws: BitmapTextDraw[] = [], regions: PixelBounds[] = [];
+    let x = origin.x;
+    for (const run of line.runs) {
+        const placement = {
+            ...origin,
+            x,
+            maxWidth: run.metrics.width === 0 ? origin.maxWidth : run.metrics.width * scale,
         };
+        const region = glyphRegion(run.metrics, placement, run.paint, scale);
+        if (region !== null)
+            regions.push(region);
+        draws.push({ text: run.text, layout: { paint: run.paint, alignment: 'left', placement } });
         x += run.metrics.width * scale;
-        return { text: run.text, layout };
-    });
+    }
+    return { draws, regions };
+}
+export function layoutBitmapText(source: StyledText, frame: BitmapLineFrame, measure: BitmapTextMeasure): BitmapTextLayoutResult | null {
+    if (!hasWholeGraphemeStyles(source) ||
+        ![frame.x, frame.y, frame.width, frame.lineHeight].every(Number.isFinite) ||
+        frame.width < 0)
+        return null;
+    const line = measureBitmapLine(source, 0, source.text.length, frame.lineHeight, measure);
+    if (line === null)
+        return null;
+    const left = Math.ceil(frame.x), right = Math.floor(frame.x + frame.width), width = right - left;
+    if (line.ink !== null && width <= 0)
+        return null;
+    const inkLeft = Math.min(0, (line.ink?.x ?? 0) + bitmapGlyphMargin);
+    const inkRight = Math.max(line.advance, line.ink === null ? 0 : line.ink.x + line.ink.width - bitmapGlyphMargin);
+    const extent = inkRight - inkLeft;
+    const scale = extent === 0 ? 1 : Math.min(1, Math.max(0, width) / extent);
+    const placed = placeBitmapLine(line, {
+        x: bitmapLineTextX({ ...frame, x: left, width }, extent * scale) - inkLeft * scale,
+        y: frame.y,
+        maxWidth: Math.max(0, width),
+        lineHeight: frame.lineHeight,
+    }, scale);
+    return {
+        draws: placed.draws,
+        regions: placed.regions.flatMap((region) => {
+            const x = Math.max(left, region.x);
+            const end = Math.min(right, region.x + region.width);
+            return end > x ? [{ ...region, x, width: end - x }] : [];
+        }),
+    };
 }

@@ -1,4 +1,4 @@
-import { FORESIGHT_ACTION_DISPLAY_LIMIT, INACTIVE_TEXT_DISPLAY_LIMIT, UPDATE_PAGE_URL, VERSION_CHECK_INTERVAL_MS, VERSION_CHECK_MAX_BYTES, VERSION_CHECK_MAX_REDIRECTS, VERSION_CHECK_TIMEOUT_MS, VERSION_CHECK_URL, state, } from './state.js';
+import { INACTIVE_TEXT_DISPLAY_LIMIT, UPDATE_PAGE_URL, VERSION_CHECK_INTERVAL_MS, VERSION_CHECK_MAX_BYTES, VERSION_CHECK_MAX_REDIRECTS, VERSION_CHECK_TIMEOUT_MS, VERSION_CHECK_URL, state, } from './state.js';
 import type { GuiConfiguredPolicy, GuiEffectivePolicy, GuiDiagnosticsLimits, GuiPolicySnapshot, GuiRuntimeContextPolicy, GuiRuntimeState, GuiViewState, UnknownRecord, } from './types.js';
 import { GUI_PROJECTION_LIMITS, readGuiProjectionPolicy, resolveGuiProjectionLimits, type GuiProjectionLimits, type GuiProjectionPolicy, } from '../projection.js';
 import { assignGuiOwnDataRecord, copyGuiOwnDataRecord, createGuiOwnDataRecord, defineGuiOwnDataProperty, falsyFallback, isGuiArray, isUnknownRecord, propertyValue, stringValue, } from './types.js';
@@ -44,8 +44,6 @@ export function isGuiUpdateStatusVisible(status: unknown): boolean {
 export function readGuiDiagnosticsLimits(diagnostics: unknown): GuiDiagnosticsLimits {
     const source = normalizeGuiPolicyObject(propertyValue(diagnostics, 'limits')) ?? createGuiOwnDataRecord();
     return {
-        foresightScans: positiveGuiPolicyInteger(source['foresightScans'], 5),
-        foresightMessages: positiveGuiPolicyInteger(source['foresightMessages'], 5),
         archivedItems: positiveGuiPolicyInteger(source['archivedItems'], 40),
         detachedItems: positiveGuiPolicyInteger(source['detachedItems'], 40),
         pastJobs: positiveGuiPolicyInteger(source['pastJobs'], 20),
@@ -67,7 +65,6 @@ export function createDefaultGuiPolicyConstants() {
         versionCheckTimeoutMs: VERSION_CHECK_TIMEOUT_MS,
         versionCheckMaxBytes: VERSION_CHECK_MAX_BYTES,
         versionCheckMaxRedirects: VERSION_CHECK_MAX_REDIRECTS,
-        foresightActionDisplayLimit: FORESIGHT_ACTION_DISPLAY_LIMIT,
         inactiveTextDisplayLimit: INACTIVE_TEXT_DISPLAY_LIMIT,
     };
 }
@@ -92,7 +89,6 @@ export function createGuiConfiguredPolicy(input: unknown = createGuiOwnDataRecor
     const sourceInput = normalizeGuiPolicyObject(input) ?? createGuiOwnDataRecord();
     const settings = normalizeGuiPolicyObject(sourceInput['settings']) ?? createGuiOwnDataRecord();
     const gui = normalizeGuiPolicyObject(settings['gui']) ?? createGuiOwnDataRecord();
-    const targets = normalizeGuiPolicyObject(settings['targets']) ?? createGuiOwnDataRecord();
     const diagnostics = normalizeGuiPolicyObject(settings['diagnostics']) ?? createGuiOwnDataRecord();
     const trace = normalizeGuiPolicyObject(diagnostics['drawCaptureTrace']) ?? createGuiOwnDataRecord();
     const lifecycleInput = normalizeGuiPolicyObject(sourceInput['lifecycle']) ?? createGuiOwnDataRecord();
@@ -134,11 +130,6 @@ export function createGuiConfiguredPolicy(input: unknown = createGuiOwnDataRecor
             limit: positiveGuiPolicyInteger(trace['limit'], null),
             targetTexts: normalizeGuiPolicyStringList(trace['targetTexts']),
         },
-        foresight: {
-            enabled: targets['enableForesight'] !== false,
-            showSpoilers: gui['showForesightSpoilers'] === true,
-            actionDisplayLimit: constants.foresightActionDisplayLimit,
-        },
         textRecords: {
             inactiveDisplayLimit: constants.inactiveTextDisplayLimit,
         },
@@ -176,15 +167,11 @@ export function createGuiRuntimeState(): GuiRuntimeState {
         translationDiagnostics,
         provider: translationDiagnostics?.provider ?? null,
         drawCaptureTrace: state.drawCaptureTrace ?? null,
-        foresight: state.foresight ?? null,
         providerLabel: falsyFallback(state.provider, '-'),
     };
 }
 export function createGuiViewState(): GuiViewState {
     return {
-        foresight: {
-            messagesOnly: state.foresightMessagesOnly,
-        },
         textRecords: {
             selectedDetailKey: state.selectedTextRecordKey,
         },
@@ -198,15 +185,13 @@ export function deriveGuiEffectivePolicy(configured: GuiConfiguredPolicy, runtim
     const diagnosticsSurface = runtime.hooks.diagnosticsSurface ||
         runtime.textRecords.diagnosticsSurface ||
         translationDiagnosticsSurface ||
-        runtime.drawCaptureTrace !== null ||
-        runtime.foresight?.diagnosticsSurface === true;
+        runtime.drawCaptureTrace !== null;
     const detailsEnabled = true;
     const trace = runtime.drawCaptureTrace;
     const traceEvents = isGuiArray(trace?.events) ? trace.events : [];
     const traceRuntimeEnabled = trace?.enabled !== false;
     const tracePanelVisible = runtime.drawCaptureTrace !== null;
     const traceEnabled = tracePanelVisible && traceRuntimeEnabled;
-    const foresightControlsEnabled = configured.foresight.enabled && runtime.foresight?.diagnosticsSurface === true;
     return {
         runtimeContext: deriveGuiRuntimeContextPolicy(runtime.context),
         updates: {
@@ -239,21 +224,10 @@ export function deriveGuiEffectivePolicy(configured: GuiConfiguredPolicy, runtim
             disabledReason: getGuiDrawCaptureDisabledReason(traceRuntimeEnabled),
             eventDisplayLimit: 28,
         },
-        foresight: {
-            configuredEnabled: configured.foresight.enabled,
-            controlsEnabled: foresightControlsEnabled,
-            visible: foresightControlsEnabled,
-            messagesOnly: foresightControlsEnabled && view.foresight.messagesOnly,
-            showSpoilers: configured.foresight.showSpoilers,
-            actionDisplayLimit: configured.foresight.actionDisplayLimit,
-            disabledReason: deriveGuiForesightDisabledReason(configured.foresight.enabled),
-            messageFilterTitle: deriveGuiForesightMessageFilterTitle(configured.foresight.enabled, view.foresight.messagesOnly),
-        },
         textRecords: {
             detailsEnabled,
             historyVisible: runtime.textRecords.diagnosticsSurface,
             inactiveDisplayLimit: configured.textRecords.inactiveDisplayLimit,
-            showForesightSpoilers: configured.foresight.showSpoilers,
             selectedDetailKey: view.textRecords.selectedDetailKey,
         },
     };
@@ -283,16 +257,6 @@ export function getGuiDrawCaptureDisabledReason(traceRuntimeEnabled: boolean): s
     if (!traceRuntimeEnabled)
         return 'Draw capture trace disabled by the runtime.';
     return '';
-}
-export function deriveGuiForesightDisabledReason(configuredEnabled: boolean): string {
-    if (!configuredEnabled)
-        return 'Foresight disabled in settings.jsonc';
-    return '';
-}
-export function deriveGuiForesightMessageFilterTitle(configuredEnabled: boolean, messagesOnly: boolean): string {
-    if (!configuredEnabled)
-        return 'Foresight disabled in settings.jsonc';
-    return messagesOnly ? 'Show all foresight actions' : 'Only show game messages and message-bearing paths';
 }
 export function createGuiPolicySnapshot(): GuiPolicySnapshot {
     const configuredPolicy = createGuiConfiguredPolicy(createGuiPolicyInput());
@@ -342,9 +306,6 @@ export function getGuiDiagnosticsSnapshotRequest(policySnapshot: GuiPolicySnapsh
 }
 export function getGuiDrawCapturePolicy(policySnapshot: GuiPolicySnapshot | null = null): GuiEffectivePolicy['drawCaptureTrace'] {
     return getGuiEffectivePolicy(policySnapshot).drawCaptureTrace;
-}
-export function getGuiForesightPolicy(policySnapshot: GuiPolicySnapshot | null = null): GuiEffectivePolicy['foresight'] {
-    return getGuiEffectivePolicy(policySnapshot).foresight;
 }
 export function getGuiTextRecordPolicy(policySnapshot: GuiPolicySnapshot | null = null): GuiEffectivePolicy['textRecords'] {
     return getGuiEffectivePolicy(policySnapshot).textRecords;

@@ -4,7 +4,7 @@ import { state } from '../state.js';
 import type { GuiHookResult, GuiHookSummary, GuiRuntimeFeedName, GuiTextRecord, GuiTextSummary, UnknownRecord, } from '../types.js';
 import { createGuiOwnDataRecord, defineGuiOwnDataProperty } from '../types.js';
 import { GUI_PROJECTION_LIMITS, resolveGuiProjectionLimits, serializeGuiValueOutcome, type GuiProjectionLimits, } from '../../projection.js';
-import { normalizeDrawCaptureTraceSnapshot, normalizeForesightSnapshot, normalizeTranslationDiagnosticsSnapshot, } from './diagnostics.js';
+import { normalizeDrawCaptureTraceSnapshot, normalizeTranslationDiagnosticsSnapshot } from './diagnostics.js';
 import { createCurrentRuntimeFeedHealth, createFailedRuntimeFeedHealth, createUnavailableRuntimeFeedHealth, RUNTIME_FEED_LABELS, RUNTIME_FEED_NAMES, } from './feed-health.js';
 import { normalizeHookFeedResult, normalizeTextCoreStatus, summarizeHookResults } from './records.js';
 const applyRuntimeFeedFunction = Reflect.apply;
@@ -122,21 +122,11 @@ export function refreshRuntimeFeed(gameWindow?: unknown): boolean {
     }, (staged) => {
         state.drawCaptureTrace = staged;
     });
-    const hasForesightFeed = refreshRuntimeSurface('foresight', generation, () => {
-        const snapshot = readForesightDiagnosticsSnapshot(runtimeWindow);
-        if (!isRuntimeFeedRecord(snapshot))
-            return RUNTIME_FEED_UNAVAILABLE;
-        const admitted = admitRuntimeFeedSnapshot(snapshot, 'foresight diagnostics', projectionLimits);
-        return normalizeForesightSnapshot(admitted.snapshot) ?? RUNTIME_FEED_UNAVAILABLE;
-    }, (staged) => {
-        state.foresight = staged;
-    });
     refreshGuiPolicySnapshot();
     return ((state.runtimeFeedHealth.hooks.status === 'current' && state.hookResults.length > 0) ||
         hasTextFeed ||
         hasTranslationFeed ||
-        hasDrawCaptureFeed ||
-        hasForesightFeed);
+        hasDrawCaptureFeed);
 }
 function refreshRuntimeSurface<Result>(name: GuiRuntimeFeedName, generation: number, stage: () => Result | typeof RUNTIME_FEED_UNAVAILABLE, commit: (staged: Result) => void): boolean {
     let staged: Result | typeof RUNTIME_FEED_UNAVAILABLE;
@@ -385,7 +375,4 @@ export function readTranslationDiagnosticsSnapshot(gameWindow: unknown, options:
     if (current !== undefined)
         return current;
     return readRuntimeFeedProperty(gameWindow, 'LiveTranslatorTranslationDiagnosticsSnapshot');
-}
-export function readForesightDiagnosticsSnapshot(gameWindow: unknown): unknown {
-    return readRuntimeSnapshotApi(gameWindow, 'LiveTranslatorForesightDiagnostics', 'LiveTranslatorForesightDiagnosticsSnapshot');
 }

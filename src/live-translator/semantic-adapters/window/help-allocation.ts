@@ -1,7 +1,7 @@
 import type { NativeCapture, NativeCaptureHost } from '../contract.js';
-import { contents, nativePrototypes, object, own, prototype, rectangle } from '../shared/native.js';
+import { contents, object, rectangle } from '../shared/native.js';
 export function captureHelpAllocation(host: NativeCaptureHost): NativeCapture {
-    const help = prototype(host.scope, 'Window_Help');
+    const help = host.roots.help;
     if (help === null)
         return {};
     interface Body {
@@ -12,46 +12,41 @@ export function captureHelpAllocation(host: NativeCaptureHost): NativeCapture {
         depth: number;
     }
     const frames: Body[] = [];
-    for (const target of nativePrototypes(host.scope, 'Window_Help')) {
-        if (typeof own(target, 'refresh') === 'function')
-            host.method(target, 'refresh', (native) => function (this: unknown, ...args: unknown[]) {
-                const receiver = object(this);
-                if (receiver === null)
-                    return Reflect.apply(native, this, args);
-                let bitmap: object | null = null;
-                host.safely(() => {
-                    bitmap = contents(receiver);
-                });
-                frames.push({ receiver, bitmap, rect: undefined, observedRect: false, depth: 0 });
-                try {
-                    return Reflect.apply(native, this, args);
-                }
-                finally {
-                    frames.pop();
-                }
-            });
-        if (target !== help && typeof own(target, 'baseTextRect') !== 'function')
-            continue;
-        host.method(target, 'baseTextRect', (native) => function (this: unknown, ...args: unknown[]) {
-            const frame = frames.at(-1);
-            if (frame === undefined || frame.receiver !== this)
-                return Reflect.apply(native, this, args);
-            frame.depth++;
-            if (frame.depth === 1) {
-                frame.rect = undefined;
-                frame.observedRect = true;
-            }
-            try {
-                const result = Reflect.apply(native, this, args);
-                if (frame.depth === 1)
-                    frame.rect = result;
-                return result;
-            }
-            finally {
-                frame.depth--;
-            }
+    host.method('help', 'refresh', (native) => function (this: unknown, ...args: unknown[]) {
+        const receiver = object(this);
+        if (receiver === null)
+            return Reflect.apply(native, this, args);
+        let bitmap: object | null = null;
+        host.safely(() => {
+            bitmap = contents(receiver);
         });
-    }
+        frames.push({ receiver, bitmap, rect: undefined, observedRect: false, depth: 0 });
+        try {
+            return Reflect.apply(native, this, args);
+        }
+        finally {
+            frames.pop();
+        }
+    });
+    host.method('help', 'baseTextRect', (native) => function (this: unknown, ...args: unknown[]) {
+        const frame = frames.at(-1);
+        if (frame === undefined || frame.receiver !== this)
+            return Reflect.apply(native, this, args);
+        frame.depth++;
+        if (frame.depth === 1) {
+            frame.rect = undefined;
+            frame.observedRect = true;
+        }
+        try {
+            const result = Reflect.apply(native, this, args);
+            if (frame.depth === 1)
+                frame.rect = result;
+            return result;
+        }
+        finally {
+            frame.depth--;
+        }
+    });
     return {
         allocation(context, rejected) {
             const refuse = (reason: string): null => {
@@ -79,7 +74,7 @@ export function captureHelpAllocation(host: NativeCaptureHost): NativeCapture {
             const bottom = Math.min(context.height, rect.y + rect.height);
             if (x < rect.x || y < rect.y || x < 0 || y < 0 || right <= x || bottom <= y)
                 return refuse('text-outside-body');
-            return { x, y, width: right - x, height: bottom - y };
+            return { kind: 'block', rect: { x, y, width: right - x, height: bottom - y } };
         },
     };
 }

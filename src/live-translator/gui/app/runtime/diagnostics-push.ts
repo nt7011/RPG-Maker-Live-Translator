@@ -1,58 +1,48 @@
+import { readRecordPresentation, type RecordPresentation } from '../text-records/presentation.js';
 import { renderLagIncidentsPanel } from './lag-incidents-panel.js';
 import { renderResourcePanel } from './resource-panel.js';
 import { readLagIncidents } from './lag-incidents-feed.js';
-import { createTextRecordRowRenderKey, renderTextRecordSections } from '../text-records/lists.js';
-import { getTextRecordKey } from '../text-records/identity.js';
+import { renderTextRecordSections } from '../text-records/lists.js';
 import { getSelectedTextRecordKey } from '../text-records/view-model.js';
 import { refreshGuiPolicySnapshot } from '../policy.js';
 import { renderDrawCaptureTracePanel } from './rejected-bitmap-text-panel.js';
 import { state } from '../state.js';
-import type { GuiResourceSnapshot, GuiDrawCaptureEvent, GuiDrawCaptureTrace, GuiHistoryEvent, GuiTextHistoryCacheEntry, GuiTextHistoryRetention, GuiTextRecord, GuiSemanticTranslationState, UnknownRecord, } from '../types.js';
+import type { GuiResourceSnapshot, GuiDrawCaptureEvent, GuiDrawCaptureTrace, GuiHistoryEvent, GuiTextHistoryCacheEntry, GuiTextHistoryRetention, GuiTextRecord, UnknownRecord, } from '../types.js';
 import { createGuiOwnDataRecord, isGuiArray } from '../types.js';
 export const GUI_DIAGNOSTICS_SINK_PROPERTY = 'LiveTranslatorGuiDiagnosticsSink';
 export interface GuiDiagnosticsPushSink {
     readonly accept: (message: unknown) => void;
 }
-function renderDiagnosticsFeed(): void {
+type GuiDiagnosticsPanel = 'textRecords' | 'drawCapture' | 'resources' | 'lagIncidents';
+type GuiDiagnosticsRepaint = (panels: ReadonlySet<GuiDiagnosticsPanel>) => void;
+function renderDiagnosticsFeed(panels: ReadonlySet<GuiDiagnosticsPanel>): void {
     const policy = refreshGuiPolicySnapshot();
-    renderTextRecordSections(policy);
-    renderDrawCaptureTracePanel(policy);
-    renderResourcePanel();
-    renderLagIncidentsPanel();
+    if (panels.has('textRecords'))
+        renderTextRecordSections(policy);
+    if (panels.has('drawCapture'))
+        renderDrawCaptureTracePanel(policy);
+    if (panels.has('resources'))
+        renderResourcePanel();
+    if (panels.has('lagIncidents'))
+        renderLagIncidentsPanel();
 }
-type ItemKind = 'bitmap-text' | 'runtime';
-type ItemStatus = 'observed' | 'translating' | 'translated' | 'noop' | 'drawn' | 'invalidated' | 'released' | 'failed';
-type EventLevel = 'info' | 'warn' | 'error';
-type DiagnosticScalar = string | number | boolean | null;
 interface CurrentItem {
     readonly id: string;
-    readonly kind: ItemKind;
+    readonly kind: 'bitmap-text' | 'runtime';
     readonly coreGeneration: number | null;
     readonly textId: number | null;
     readonly revision: number | null;
     readonly attempt: number | null;
-    readonly failure: readonly UnknownRecord[];
-    readonly semanticContext: readonly UnknownRecord[];
-    readonly translator: readonly UnknownRecord[];
-    readonly physicalTextId: number | null;
-    readonly physicalRevision: number | null;
-    readonly bitmapId: number | null;
-    readonly surfaceId: number | null;
-    readonly bitmapMutationSequence: number | null;
-    readonly surfaceMutationSequence: number | null;
-    readonly requestPriority: number | null;
-    readonly requestStream: boolean | null;
-    readonly requestId: string;
-    readonly jobId: string;
     readonly sourceText: string;
     readonly translation: string | null;
-    readonly translationState: GuiSemanticTranslationState | null;
-    readonly policyReason: string | null;
-    readonly status: ItemStatus;
-    readonly latestMessage: string;
+    readonly requestPriority: number | null;
+    readonly requestStream: boolean | null;
+    readonly active: boolean;
     readonly firstObservedAt: number;
     readonly updatedAt: number;
+    readonly view: RecordPresentation;
 }
+type DiagnosticScalar = string | number | boolean | null;
 interface Retention {
     readonly complete: boolean;
     readonly dropped: number;
@@ -98,172 +88,61 @@ function boundedArrayLength(value: unknown, limit: number): number | null {
     const length = ownDataValue(value, 'length');
     return nonNegativeSafeInteger(length) && length <= limit ? length : null;
 }
-function isItemStatus(value: unknown): value is ItemStatus {
-    return (value === 'observed' ||
-        value === 'translating' ||
-        value === 'translated' ||
-        value === 'noop' ||
-        value === 'drawn' ||
-        value === 'invalidated' ||
-        value === 'released' ||
-        value === 'failed');
-}
-function isEventLevel(value: unknown): value is EventLevel {
-    return value === 'info' || value === 'warn' || value === 'error';
-}
-function isEventType(value: unknown): value is string {
-    return (value === 'record.observed' ||
-        value === 'record.changed' ||
-        value === 'semantic.context' ||
-        value === 'lifecycle.ignored' ||
-        value === 'translation.requested' ||
-        value === 'translation.available' ||
-        value === 'translation.exchange' ||
-        value === 'translation.noop' ||
-        value === 'translation.rejected' ||
-        value === 'translation.superseded' ||
-        value === 'presentation.drawn' ||
-        value === 'presentation.rejected' ||
-        value === 'presentation.invalidated' ||
-        value === 'record.released' ||
-        value === 'failure' ||
-        value === 'runtime.event');
-}
 function isDiagnosticScalar(value: unknown): value is DiagnosticScalar {
     return (value === null ||
         typeof value === 'string' ||
         (typeof value === 'number' && Number.isFinite(value)) ||
         typeof value === 'boolean');
 }
-function readFields(fields: unknown): UnknownRecord[] | null {
-    const fieldCount = boundedArrayLength(fields, FIELD_INPUT_LIMIT);
-    if (fieldCount === null)
-        return null;
-    const copiedFields: UnknownRecord[] = [];
-    for (let index = 0; index < fieldCount; index += 1) {
-        const field = ownDataValue(fields, index);
-        const name = ownDataValue(field, 'name');
-        const scalar = ownDataValue(field, 'value');
-        if (typeof name !== 'string' || name.length === 0 || name.length > ID_LIMIT || !isDiagnosticScalar(scalar)) {
-            return null;
-        }
-        const copiedField = createGuiOwnDataRecord();
-        copiedField['name'] = name;
-        copiedField['value'] = scalar;
-        copiedFields.push(copiedField);
-    }
-    return copiedFields;
-}
 function readCurrent(value: unknown): CurrentItem | null {
-    const id = ownDataValue(value, 'id');
-    const kind = ownDataValue(value, 'kind');
-    const coreGeneration = ownDataValue(value, 'coreGeneration');
-    const textId = ownDataValue(value, 'textId');
-    const itemRevision = ownDataValue(value, 'revision');
-    const attempt = ownDataValue(value, 'attempt');
-    const failure = readFields(ownDataValue(value, 'failure'));
-    const semanticContext = readFields(ownDataValue(value, 'semanticContext'));
-    const translator = readFields(ownDataValue(value, 'translator'));
-    const physicalTextId = ownDataValue(value, 'physicalTextId');
-    const physicalRevision = ownDataValue(value, 'physicalRevision');
-    const bitmapId = ownDataValue(value, 'bitmapId');
-    const surfaceId = ownDataValue(value, 'surfaceId');
-    const bitmapMutationSequence = ownDataValue(value, 'bitmapMutationSequence');
-    const surfaceMutationSequence = ownDataValue(value, 'surfaceMutationSequence');
-    const requestPriority = ownDataValue(value, 'requestPriority');
-    const requestStream = ownDataValue(value, 'requestStream');
-    const requestId = ownDataValue(value, 'requestId');
-    const jobId = ownDataValue(value, 'jobId');
-    const sourceText = ownDataValue(value, 'sourceText');
-    const translation = ownDataValue(value, 'translation');
-    const translationState = ownDataValue(value, 'translationState');
-    const policyReason = ownDataValue(value, 'policyReason');
-    const status = ownDataValue(value, 'status');
-    const latestMessage = ownDataValue(value, 'latestMessage');
-    const firstObservedAt = ownDataValue(value, 'firstObservedAt');
-    const updatedAt = ownDataValue(value, 'updatedAt');
+    const id = ownDataValue(value, 'id'), kind = ownDataValue(value, 'kind');
+    const coreGeneration = ownDataValue(value, 'coreGeneration'), textId = ownDataValue(value, 'textId');
+    const revision = ownDataValue(value, 'revision'), attempt = ownDataValue(value, 'attempt');
+    const sourceText = ownDataValue(value, 'sourceText'), translation = ownDataValue(value, 'translation');
+    const requestPriority = ownDataValue(value, 'requestPriority'), requestStream = ownDataValue(value, 'requestStream');
+    const active = ownDataValue(value, 'active'), firstObservedAt = ownDataValue(value, 'firstObservedAt'), updatedAt = ownDataValue(value, 'updatedAt');
+    const view = readRecordPresentation(ownDataValue(value, 'view'));
     if (typeof id !== 'string' ||
-        id.length === 0 ||
+        !id ||
         id.length > ID_LIMIT ||
         (kind !== 'bitmap-text' && kind !== 'runtime') ||
         !nullablePositiveSafeInteger(coreGeneration) ||
         !nullablePositiveSafeInteger(textId) ||
-        !nullablePositiveSafeInteger(itemRevision) ||
+        !nullablePositiveSafeInteger(revision) ||
         !nullablePositiveSafeInteger(attempt) ||
-        failure === null ||
-        semanticContext === null ||
-        translator === null ||
-        !nullablePositiveSafeInteger(physicalTextId) ||
-        !nullablePositiveSafeInteger(physicalRevision) ||
-        !nullablePositiveSafeInteger(bitmapId) ||
-        !nullablePositiveSafeInteger(surfaceId) ||
-        !nullablePositiveSafeInteger(bitmapMutationSequence) ||
-        !nullablePositiveSafeInteger(surfaceMutationSequence) ||
+        typeof sourceText !== 'string' ||
+        (translation !== null && typeof translation !== 'string') ||
         (requestPriority !== null &&
             (typeof requestPriority !== 'number' || !Number.isFinite(requestPriority) || requestPriority < 0)) ||
         (requestStream !== null && typeof requestStream !== 'boolean') ||
-        typeof requestId !== 'string' ||
-        typeof jobId !== 'string' ||
-        typeof sourceText !== 'string' ||
-        (translation !== null && typeof translation !== 'string') ||
-        (translationState !== null &&
-            translationState !== 'observed' &&
-            translationState !== 'translating' &&
-            translationState !== 'available' &&
-            translationState !== 'no-translation' &&
-            translationState !== 'failed') ||
-        (policyReason !== null && typeof policyReason !== 'string') ||
-        !isItemStatus(status) ||
-        typeof latestMessage !== 'string' ||
+        typeof active !== 'boolean' ||
         !finiteTimestamp(firstObservedAt) ||
         !finiteTimestamp(updatedAt) ||
-        updatedAt < firstObservedAt) {
+        updatedAt < firstObservedAt ||
+        view === null)
         return null;
-    }
-    if ((kind === 'runtime' &&
-        (id !== 'runtime' ||
-            coreGeneration !== null ||
-            textId !== null ||
-            itemRevision !== null ||
-            attempt !== null ||
-            physicalTextId !== null ||
-            physicalRevision !== null)) ||
-        (kind === 'bitmap-text' &&
-            (!positiveSafeInteger(coreGeneration) ||
-                !positiveSafeInteger(textId) ||
-                id !== `${String(coreGeneration)}:${String(textId)}` ||
-                !positiveSafeInteger(itemRevision) ||
-                (physicalTextId === null) !== (physicalRevision === null)))) {
+    if (kind === 'runtime'
+        ? id !== 'runtime' || coreGeneration !== null || textId !== null || revision !== null || attempt !== null
+        : !positiveSafeInteger(coreGeneration) ||
+            !positiveSafeInteger(textId) ||
+            !positiveSafeInteger(revision) ||
+            id !== `${String(coreGeneration)}:${String(textId)}`)
         return null;
-    }
     return {
         id,
         kind,
         coreGeneration,
         textId,
-        revision: itemRevision,
+        revision,
         attempt,
-        failure,
-        semanticContext,
-        translator,
-        physicalTextId,
-        physicalRevision,
-        bitmapId,
-        surfaceId,
-        bitmapMutationSequence,
-        surfaceMutationSequence,
-        requestPriority,
-        requestStream,
-        requestId,
-        jobId,
         sourceText,
         translation,
-        translationState,
-        policyReason,
-        status,
-        latestMessage,
+        requestPriority,
+        requestStream,
+        active,
         firstObservedAt,
         updatedAt,
+        view,
     };
 }
 function createGuiTextRecord(current: CurrentItem): GuiTextRecord {
@@ -292,107 +171,74 @@ function createGuiTextRecord(current: CurrentItem): GuiTextRecord {
     target.metadata['kind'] = current.kind;
     target.metadata['coreGeneration'] = current.coreGeneration;
     target.metadata['textId'] = current.textId;
+    target.presentation = current.view;
     target.history = [];
     return target;
 }
 function updateCurrent(record: GuiTextRecord | null, current: CurrentItem): GuiTextRecord {
     const target = record ?? createGuiTextRecord(current);
-    const metadata = target.metadata;
-    metadata['revision'] = current.revision;
-    metadata['attempt'] = current.attempt;
-    metadata['failure'] = current.failure;
-    metadata['semanticContext'] = current.semanticContext;
-    metadata['translator'] = current.translator;
-    target.windowType = '';
-    target.methodName = '';
-    for (const field of current.semanticContext) {
-        if (typeof field['value'] !== 'string')
-            continue;
-        if (field['name'] === 'nativeOwner')
-            target.windowType = field['value'];
-        if (field['name'] === 'textOperation')
-            target.methodName = field['value'];
-    }
-    metadata['physicalTextId'] = current.physicalTextId;
-    metadata['physicalRevision'] = current.physicalRevision;
-    metadata['bitmapId'] = current.bitmapId;
-    metadata['surfaceId'] = current.surfaceId;
-    metadata['bitmapMutationSequence'] = current.bitmapMutationSequence;
-    metadata['surfaceMutationSequence'] = current.surfaceMutationSequence;
-    metadata['requestId'] = current.requestId;
+    target.metadata['revision'] = current.revision;
+    target.metadata['attempt'] = current.attempt;
+    target.metadata['stream'] = current.requestStream;
     target.priority = current.requestPriority;
-    metadata['stream'] = current.requestStream;
-    metadata['jobId'] = current.jobId;
-    metadata['latestMessage'] = current.latestMessage;
-    const source = current.sourceText;
-    const translation = current.translation;
-    const status = current.status;
-    target.original = current.kind === 'runtime' ? current.latestMessage : source;
-    target.rawText = source;
-    target.convertedText = source;
-    target.visibleText = source;
-    target.translationSource = source;
-    target.normalizedSource = source;
-    target.status = status;
-    target.translation = translation;
-    target.translationState = current.translationState;
-    target.policyReason = current.policyReason;
-    target.translationReceived = translation ?? '';
-    target.translationDrawn = status === 'drawn' ? (translation ?? '') : '';
-    target.seenAt = current.updatedAt;
+    target.presentation = current.view;
+    target.original = current.sourceText;
+    target.rawText = current.sourceText;
+    target.visibleText = current.sourceText;
+    target.convertedText = current.sourceText;
+    target.translationSource = current.sourceText;
+    target.normalizedSource = current.sourceText;
+    target.translation = current.translation;
+    target.translationState = null;
+    target.policyReason = null;
+    target.translationReceived = current.translation ?? '';
+    target.translationDrawn = '';
+    target.status = current.view.result;
     target.updatedAt = current.updatedAt;
-    target.active = status !== 'released';
+    target.seenAt = current.updatedAt;
+    target.active = current.active;
     return target;
 }
+function currentSummaryChanged(record: GuiTextRecord | null, current: CurrentItem): boolean {
+    const view = record?.presentation;
+    if (!record ||
+        !view ||
+        record.metadata['revision'] !== current.revision ||
+        record.metadata['attempt'] !== current.attempt ||
+        record.rawText !== current.sourceText ||
+        record.translation !== current.translation ||
+        record.priority !== current.requestPriority ||
+        record.metadata['stream'] !== current.requestStream ||
+        view.result !== current.view.result ||
+        view.label !== current.view.label ||
+        view.explanation !== current.view.explanation ||
+        view.semanticControl !== current.view.semanticControl ||
+        view.warnings.length !== current.view.warnings.length)
+        return true;
+    return view.warnings.some((warning, index) => {
+        const next = current.view.warnings[index];
+        return warning.label !== next?.label || warning.text !== next.text || warning.tone !== next.tone;
+    });
+}
 function readEvent(value: unknown, current: CurrentItem): GuiHistoryEvent | null {
-    const sequence = ownDataValue(value, 'sequence');
-    const itemId = ownDataValue(value, 'itemId');
-    const eventRevision = ownDataValue(value, 'revision');
-    const attempt = ownDataValue(value, 'attempt');
-    const physicalTextId = ownDataValue(value, 'physicalTextId');
-    const physicalRevision = ownDataValue(value, 'physicalRevision');
-    const at = ownDataValue(value, 'at');
-    const type = ownDataValue(value, 'type');
-    const level = ownDataValue(value, 'level');
-    const message = ownDataValue(value, 'message');
-    const fields = ownDataValue(value, 'fields');
-    const omittedFieldCount = ownDataValue(value, 'omittedFieldCount');
-    if (!positiveSafeInteger(sequence) ||
-        itemId !== current.id ||
-        !nullablePositiveSafeInteger(eventRevision) ||
-        !nullablePositiveSafeInteger(attempt) ||
-        (current.kind === 'runtime' && attempt !== null) ||
-        !nullablePositiveSafeInteger(physicalTextId) ||
-        !nullablePositiveSafeInteger(physicalRevision) ||
-        (physicalTextId === null) !== (physicalRevision === null) ||
+    const seq = ownDataValue(value, 'sequence'), id = ownDataValue(value, 'itemId'), at = ownDataValue(value, 'at');
+    const label = ownDataValue(value, 'label'), text = ownDataValue(value, 'text');
+    if (!positiveSafeInteger(seq) ||
+        id !== current.id ||
         !finiteTimestamp(at) ||
-        !isEventType(type) ||
-        !isEventLevel(level) ||
-        typeof message !== 'string' ||
-        !nonNegativeSafeInteger(omittedFieldCount)) {
+        typeof label !== 'string' ||
+        typeof text !== 'string')
         return null;
-    }
-    const copiedFields = readFields(fields);
-    if (copiedFields === null)
-        return null;
-    const details = createGuiOwnDataRecord();
-    details['level'] = level;
-    details['revision'] = eventRevision;
-    details['attempt'] = attempt;
-    details['physicalTextId'] = physicalTextId;
-    details['physicalRevision'] = physicalRevision;
-    details['fields'] = copiedFields;
-    details['omittedFieldCount'] = omittedFieldCount;
     return {
+        seq,
         at,
-        seq: sequence,
         id: current.id,
-        surfaceId: current.surfaceId === null ? '' : String(current.surfaceId),
-        adapterId: current.kind === 'bitmap-text' ? 'bitmap' : 'runtime',
-        type,
-        status: level,
-        message,
-        details,
+        surfaceId: '',
+        adapterId: '',
+        type: label,
+        status: '',
+        message: text,
+        details: {},
         record: null,
     };
 }
@@ -673,21 +519,28 @@ function readResources(value: unknown): GuiResourceSnapshot | null | undefined {
         probe: typeof probe === 'string' ? probe : null,
     };
 }
-export function createGuiDiagnosticsPushReceiver(repaint: () => void): GuiDiagnosticsPushSink {
+export function createGuiDiagnosticsPushReceiver(repaint: GuiDiagnosticsRepaint): GuiDiagnosticsPushSink {
     if (typeof repaint !== 'function')
         throw new TypeError('GUI diagnostics repaint must be callable.');
     let repaintPending = false;
-    function repaintLater(): void {
+    let pendingPanels = new Set<GuiDiagnosticsPanel>();
+    function repaintLater(...panels: GuiDiagnosticsPanel[]): void {
+        for (const panel of panels)
+            pendingPanels.add(panel);
         if (repaintPending)
             return;
         repaintPending = true;
         try {
             requestAnimationFrame(() => {
                 repaintPending = false;
+                const dirtyPanels = pendingPanels;
+                pendingPanels = new Set<GuiDiagnosticsPanel>();
                 try {
-                    repaint();
+                    repaint(dirtyPanels);
                 }
                 catch {
+                    for (const panel of dirtyPanels)
+                        pendingPanels.add(panel);
                 }
             });
         }
@@ -695,7 +548,7 @@ export function createGuiDiagnosticsPushReceiver(repaint: () => void): GuiDiagno
             repaintPending = false;
         }
     }
-    function replace(message: unknown, nextRevision: number): boolean {
+    function replace(message: unknown, nextRevision: number, previousRevision: number | null): boolean {
         const items = ownDataValue(message, 'items');
         const itemCount = boundedArrayLength(items, ITEM_INPUT_LIMIT);
         const trace = readBitmapTextRejectionTrace(ownDataValue(message, 'bitmapTextRejections'));
@@ -712,6 +565,8 @@ export function createGuiDiagnosticsPushReceiver(repaint: () => void): GuiDiagno
             records.push(item.record);
             histories.set(item.record.id, item.cache);
         }
+        if (state.diagnosticsFeedRevision !== previousRevision)
+            return false;
         state.diagnosticRecords = records;
         state.textHistoryById = histories;
         state.drawCaptureTrace = trace;
@@ -721,12 +576,14 @@ export function createGuiDiagnosticsPushReceiver(repaint: () => void): GuiDiagno
         state.diagnosticsFeedRevision = nextRevision;
         return true;
     }
-    function appendBitmapTextRejection(message: unknown, nextRevision: number): boolean {
+    function appendBitmapTextRejection(message: unknown, nextRevision: number, previousRevision: number): boolean {
         const trace = state.drawCaptureTrace;
         const event = readBitmapTextRejectionEvent(ownDataValue(message, 'event'));
         const retained = readBitmapTextRejectionRetention(ownDataValue(message, 'retention'));
         const summary = readBitmapTextRejectionSummary(ownDataValue(message, 'summary'));
         if (trace === null || event === null || retained === null || summary === null)
+            return false;
+        if (state.diagnosticsFeedRevision !== previousRevision)
             return false;
         if (!positiveSafeInteger(event.seq) || event.seq !== trace.sequence + 1)
             return false;
@@ -742,21 +599,21 @@ export function createGuiDiagnosticsPushReceiver(repaint: () => void): GuiDiagno
         state.diagnosticsFeedRevision = nextRevision;
         return true;
     }
-    function clearBitmapTextRejections(message: unknown, nextRevision: number): boolean {
+    function clearBitmapTextRejections(message: unknown, nextRevision: number, previousRevision: number): boolean {
         const trace = readBitmapTextRejectionTrace(ownDataValue(message, 'trace'));
-        if (trace === null)
+        if (trace === null || state.diagnosticsFeedRevision !== previousRevision)
             return false;
         state.drawCaptureTrace = trace;
         state.diagnosticsFeedRevision = nextRevision;
         return true;
     }
-    function upsert(message: unknown, nextRevision: number): boolean {
+    function upsert(message: unknown, nextRevision: number, previousRevision: number): boolean {
         const current = readCurrent(ownDataValue(message, 'item'));
         const retained = readRetention(ownDataValue(message, 'retention'));
         if (current === null || retained === null)
             return false;
         const event = readEvent(ownDataValue(message, 'event'), current);
-        if (event === null)
+        if (event === null || state.diagnosticsFeedRevision !== previousRevision)
             return false;
         const cache = state.textHistoryById.get(current.id) ?? null;
         if (cache !== null && cache.record === undefined)
@@ -767,7 +624,7 @@ export function createGuiDiagnosticsPushReceiver(repaint: () => void): GuiDiagno
         if (previousSequence !== null && previousSequence !== undefined && (event.seq as number) <= previousSequence) {
             return false;
         }
-        const previousRow = cache?.record ? createTextRecordRowRenderKey(cache.record) : null;
+        const summaryChanged = currentSummaryChanged(cache?.record ?? null, current);
         const record = updateCurrent(cache?.record ?? null, current);
         record.history.push(event);
         if (record.history.length > retained.limit)
@@ -777,18 +634,13 @@ export function createGuiDiagnosticsPushReceiver(repaint: () => void): GuiDiagno
             state.diagnosticRecords.push(record);
         state.textHistoryById.set(record.id, nextCache);
         state.diagnosticsFeedRevision = nextRevision;
-        const nextRow = createTextRecordRowRenderKey(record);
-        if (previousRow === null ||
-            !previousRow.complete ||
-            !nextRow.complete ||
-            previousRow.key !== nextRow.key ||
-            getSelectedTextRecordKey() === getTextRecordKey(record))
-            repaintLater();
+        if (summaryChanged || getSelectedTextRecordKey() === current.id)
+            repaintLater('textRecords');
         return true;
     }
-    function updateProgress(message: unknown, nextRevision: number): void {
+    function updateProgress(message: unknown, nextRevision: number, previousRevision: number): void {
         const current = readCurrent(ownDataValue(message, 'item'));
-        if (current === null)
+        if (current === null || state.diagnosticsFeedRevision !== previousRevision)
             return;
         const cache = state.textHistoryById.get(current.id);
         const record = cache?.record;
@@ -799,16 +651,15 @@ export function createGuiDiagnosticsPushReceiver(repaint: () => void): GuiDiagno
             current.textId !== record.metadata['textId'] ||
             current.sourceText !== record.rawText ||
             current.translation !== record.translation ||
-            current.translationState !== record.translationState ||
-            current.status !== record.status ||
-            current.policyReason !== record.policyReason)
+            current.view.result !== record.presentation?.result)
             return;
+        const summaryChanged = currentSummaryChanged(record, current);
         updateCurrent(record, current);
         state.diagnosticsFeedRevision = nextRevision;
-        if (getSelectedTextRecordKey() === getTextRecordKey(record))
-            repaintLater();
+        if (summaryChanged || getSelectedTextRecordKey() === current.id)
+            repaintLater('textRecords');
     }
-    function remove(message: unknown, nextRevision: number): boolean {
+    function remove(message: unknown, nextRevision: number, previousRevision: number): boolean {
         const id = ownDataValue(message, 'id');
         if (typeof id !== 'string' ||
             id.length === 0 ||
@@ -816,6 +667,8 @@ export function createGuiDiagnosticsPushReceiver(repaint: () => void): GuiDiagno
             ownDataValue(message, 'reason') !== 'evicted') {
             return false;
         }
+        if (state.diagnosticsFeedRevision !== previousRevision)
+            return false;
         const index = state.diagnosticRecords.findIndex((item) => item.id === id);
         if (index < 0)
             return false;
@@ -829,45 +682,49 @@ export function createGuiDiagnosticsPushReceiver(repaint: () => void): GuiDiagno
             const nextRevision = ownDataValue(message, 'revision');
             if (!nonNegativeSafeInteger(nextRevision))
                 return;
-            const previous = state.diagnosticsFeedRevision;
             const kind = ownDataValue(message, 'kind');
+            const previous = state.diagnosticsFeedRevision;
             if (kind === 'replace') {
-                if ((previous === null || nextRevision > previous) && replace(message, nextRevision))
-                    repaintLater();
+                if ((previous === null || nextRevision > previous) && replace(message, nextRevision, previous))
+                    repaintLater('textRecords', 'drawCapture', 'resources', 'lagIncidents');
                 return;
             }
             if (previous === null || previous === Number.MAX_SAFE_INTEGER || nextRevision !== previous + 1)
                 return;
             if (kind === 'lag-incidents') {
                 const next = readLagIncidents(ownDataValue(message, 'lagIncidents'), state.lagIncidents, true);
-                if (next == null)
+                if (next == null || state.diagnosticsFeedRevision !== previous)
                     return;
                 state.lagIncidents = next;
                 state.diagnosticsFeedRevision = nextRevision;
-                repaintLater();
+                repaintLater('lagIncidents');
                 return;
             }
             if (kind === 'resources') {
                 const resources = readResources(ownDataValue(message, 'resources'));
-                if (resources == null)
+                if (resources == null || state.diagnosticsFeedRevision !== previous)
                     return;
                 state.resources = resources;
                 state.diagnosticsFeedRevision = nextRevision;
-                repaintLater();
+                repaintLater('resources');
                 return;
             }
             if (kind === 'upsert') {
-                upsert(message, nextRevision);
+                upsert(message, nextRevision, previous);
                 return;
             }
             if (kind === 'current') {
-                updateProgress(message, nextRevision);
+                updateProgress(message, nextRevision, previous);
                 return;
             }
-            if ((kind === 'remove' && remove(message, nextRevision)) ||
-                (kind === 'bitmap-text-rejected' && appendBitmapTextRejection(message, nextRevision)) ||
-                (kind === 'bitmap-text-rejections-cleared' && clearBitmapTextRejections(message, nextRevision))) {
-                repaintLater();
+            if (kind === 'remove' && remove(message, nextRevision, previous)) {
+                repaintLater('textRecords');
+                return;
+            }
+            if ((kind === 'bitmap-text-rejected' && appendBitmapTextRejection(message, nextRevision, previous)) ||
+                (kind === 'bitmap-text-rejections-cleared' &&
+                    clearBitmapTextRejections(message, nextRevision, previous))) {
+                repaintLater('drawCapture');
             }
         }
         catch {
@@ -877,7 +734,7 @@ export function createGuiDiagnosticsPushReceiver(repaint: () => void): GuiDiagno
     Object.defineProperty(sink, 'accept', { enumerable: true, value: accept });
     return Object.freeze(sink);
 }
-export function publishGuiDiagnosticsSink(scope: object = globalThis, repaint: () => void = renderDiagnosticsFeed): GuiDiagnosticsPushSink {
+export function publishGuiDiagnosticsSink(scope: object = globalThis, repaint: GuiDiagnosticsRepaint = renderDiagnosticsFeed): GuiDiagnosticsPushSink {
     const sink = createGuiDiagnosticsPushReceiver(repaint);
     Object.defineProperty(scope, GUI_DIAGNOSTICS_SINK_PROPERTY, {
         configurable: true,

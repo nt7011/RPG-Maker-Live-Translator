@@ -11,27 +11,8 @@ export function number(value: unknown): number | null {
 export function object(value: unknown): object | null {
     return typeof value === 'object' && value !== null ? value : null;
 }
-export function prototype(scope: object, name: string): object | null {
-    const constructor = own(scope, name);
-    return typeof constructor === 'function' ? object(own(constructor, 'prototype')) : null;
-}
-export function nativePrototypes(scope: object, name: string): ReadonlySet<object> {
-    const base = prototype(scope, name);
-    const targets = new Set<object>();
-    if (base === null)
-        return targets;
-    targets.add(base);
-    for (const key of Object.getOwnPropertyNames(scope)) {
-        const candidate = prototype(scope, key);
-        if (candidate === null || !Object.prototype.isPrototypeOf.call(base, candidate))
-            continue;
-        let current: object | null = candidate;
-        while (current !== null && current !== base) {
-            targets.add(current);
-            current = object(Object.getPrototypeOf(current));
-        }
-    }
-    return targets;
+export function instanceOf(receiver: object, root: object | null): boolean {
+    return root !== null && Object.prototype.isPrototypeOf.call(root, receiver);
 }
 export function contents(receiver: object): object | null {
     const direct = object(own(receiver, 'contents'));

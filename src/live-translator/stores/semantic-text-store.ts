@@ -1,4 +1,4 @@
-import type { TextRecordRequest, TranslatorExchange, SemanticTranslationFailure, SemanticTextRecordSnapshot, } from '../runtime/text-record-types.js';
+import type { TextRecordRequest, SemanticControl, TranslatorExchange, SemanticTranslationFailure, SemanticTextRecordSnapshot, } from '../runtime/text-record-types.js';
 export type { SemanticTranslationFailure, SemanticTextRecordSnapshot } from '../runtime/text-record-types.js';
 import { copyTextTemplate, copyTextTranslation, matchesTextTemplate, type TextTemplate, type TextTranslation, } from './styled-text.js';
 export interface SemanticTextRevisionHandle extends TextTemplate {
@@ -64,6 +64,7 @@ export type SemanticTranslationSettlementResult = {
     readonly reason: 'not-current' | 'not-translating' | 'invalid-settlement';
 };
 export interface SemanticTextStore {
+    readonly setControl: (handle: SemanticTextRevisionHandle, control: SemanticControl) => boolean;
     readonly setTranslatorExchange: (attempt: SemanticTranslationAttempt, exchange: TranslatorExchange) => void;
     readonly setRequest: (attempt: SemanticTranslationAttempt, request: TextRecordRequest) => void;
     readonly getSnapshot: () => readonly SemanticTextRecordSnapshot[];
@@ -80,6 +81,7 @@ export interface SemanticTextStore {
     readonly dispose: () => readonly SemanticTextRevisionHandle[];
 }
 interface SemanticTextRecord {
+    readonly semanticControl: SemanticControl;
     readonly handle: SemanticTextRevisionHandle;
     readonly translation: SemanticTranslationSnapshot;
     readonly attempt: SemanticTranslationAttempt | null;
@@ -133,9 +135,10 @@ export function createSemanticTextStore(): SemanticTextStore {
         }
     }
     function getSnapshot(): readonly SemanticTextRecordSnapshot[] {
-        return Object.freeze(Array.from(records.values(), ({ handle, translation, attempt, request, translator }) => Object.freeze({
+        return Object.freeze(Array.from(records.values(), ({ handle, translation, attempt, request, translator, semanticControl }) => Object.freeze({
             request,
             translator,
+            semanticControl,
             textId: handle.textId,
             semanticRevision: handle.semanticRevision,
             attempt: attempt?.sequence ?? null,
@@ -255,6 +258,7 @@ export function createSemanticTextStore(): SemanticTextStore {
                 });
                 writeProposedRecord(Object.freeze({
                     handle,
+                    semanticControl: 'none',
                     translation: freezeTranslationSnapshot({ state: 'observed' }),
                     attempt: null,
                     episode: null,
@@ -381,6 +385,15 @@ export function createSemanticTextStore(): SemanticTextStore {
         return revoked;
     }
     return Object.freeze({
+        setControl: (handle: SemanticTextRevisionHandle, control: SemanticControl): boolean => {
+            const record = records.get(handle);
+            if (!record || record.semanticControl === control)
+                return false;
+            records.set(handle, Object.freeze({ ...record, semanticControl: control }));
+            stateVersion += 1;
+            notify();
+            return true;
+        },
         setTranslatorExchange: (attempt: SemanticTranslationAttempt, exchange: TranslatorExchange): void => {
             const record = records.get(attempt.handle);
             if (record?.attempt !== attempt)

@@ -71,6 +71,9 @@ export interface TranslationManagerJobPolicyPlan {
     readonly timeoutMs: unknown;
 }
 export interface TranslationManagerJobsController {
+    canDispatchJob(job: unknown): boolean;
+    claimJobDispatch(job: unknown): boolean;
+    releaseJobDispatch(job: unknown): void;
     prepareJobPolicy(job: unknown, admissionToken?: unknown, priorityTransition?: SubscriberPriorityTransition): TranslationManagerJobPolicyPlan;
     commitJobPolicy(plan: unknown): boolean;
     discardJobPolicy(plan: unknown): boolean;
@@ -344,6 +347,9 @@ const createTranslationManagerJobsController = function createController(scope: 
         return getSchedulerPolicy().getReservedPriorityLaneSnapshot();
     }
     return {
+        canDispatchJob: subscriberOwnership.canDispatchJob,
+        claimJobDispatch: subscriberOwnership.claimJobDispatch,
+        releaseJobDispatch: subscriberOwnership.releaseJobDispatch,
         prepareJobPolicy,
         commitJobPolicy,
         discardJobPolicy,

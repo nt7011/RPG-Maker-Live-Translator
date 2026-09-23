@@ -230,12 +230,11 @@ export function createLlamaCppProtocolModule(common: TranslationProviderCommonMo
             const choice: unknown = parsedValue && Array.isArray(parsedCandidate.choices)
                 ? (parsedCandidate.choices as unknown[])[0]
                 : null;
+            const finishReason = (choice as FalsySensitiveValue) && (choice as ChoiceCandidate).finish_reason;
             events.push({
                 done: false,
                 content: readMessageContent((choice as FalsySensitiveValue) && (choice as ChoiceCandidate).delta),
-                finishReason: (choice as FalsySensitiveValue) && (choice as ChoiceCandidate).finish_reason
-                    ? String((choice as ChoiceCandidate).finish_reason)
-                    : '',
+                finishReason: typeof finishReason === 'string' ? finishReason : '',
             });
             return false;
         }

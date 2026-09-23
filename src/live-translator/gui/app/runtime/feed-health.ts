@@ -1,14 +1,13 @@
 import { createGuiOwnDataRecord, defineGuiOwnDataProperty, type GuiRuntimeFeedHealth, type GuiRuntimeFeedHealthMap, type GuiRuntimeFeedName, type UnknownRecord, } from '../types.js';
 const applyRuntimeFeedHealthFunction = Reflect.apply;
 const freezeRuntimeFeedHealthValue = Object.freeze;
-export const RUNTIME_FEED_NAMES: readonly GuiRuntimeFeedName[] = applyRuntimeFeedHealthFunction(freezeRuntimeFeedHealthValue, Object, [['settings', 'hooks', 'textRecords', 'translation', 'drawCapture', 'foresight']]) as readonly GuiRuntimeFeedName[];
+export const RUNTIME_FEED_NAMES: readonly GuiRuntimeFeedName[] = applyRuntimeFeedHealthFunction(freezeRuntimeFeedHealthValue, Object, [['settings', 'hooks', 'textRecords', 'translation', 'drawCapture']]) as readonly GuiRuntimeFeedName[];
 export const RUNTIME_FEED_LABELS: Readonly<Record<GuiRuntimeFeedName, string>> = {
     settings: 'Runtime settings',
     hooks: 'Hooks',
     textRecords: 'Text records',
     translation: 'Translation',
     drawCapture: 'Draw capture',
-    foresight: 'Foresight',
 };
 export function createInitialRuntimeFeedHealth(): GuiRuntimeFeedHealthMap {
     const health = createGuiOwnDataRecord();
@@ -17,7 +16,6 @@ export function createInitialRuntimeFeedHealth(): GuiRuntimeFeedHealthMap {
     defineGuiOwnDataProperty(health, 'textRecords', createUnavailableRuntimeFeedHealth(0, null, 'not observed'));
     defineGuiOwnDataProperty(health, 'translation', createUnavailableRuntimeFeedHealth(0, null, 'not observed'));
     defineGuiOwnDataProperty(health, 'drawCapture', createUnavailableRuntimeFeedHealth(0, null, 'not observed'));
-    defineGuiOwnDataProperty(health, 'foresight', createUnavailableRuntimeFeedHealth(0, null, 'not observed'));
     return health as unknown as GuiRuntimeFeedHealthMap;
 }
 export function createCurrentRuntimeFeedHealth(generation: number): GuiRuntimeFeedHealth {

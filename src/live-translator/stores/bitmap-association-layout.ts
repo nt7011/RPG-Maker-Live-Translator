@@ -1,28 +1,28 @@
-import { sameBitmapLineFrame, type BitmapLineFrame } from './bitmap-line-geometry.js';
-import { bindTextTranslation, createStyledText, sameTextPaint, type StyledText, type TextPaint, type TextTranslation, } from './styled-text.js';
-import { bitmapTextSpacing, indexBitmapSourceCharacters, layoutBitmapText, supportsBitmapCharacterText, type BitmapTextDraw, type BitmapTextMeasure, type BitmapTextMetrics, type BitmapSourceCharacterIndex, } from './bitmap-text-layout.js';
+import { hasCurrentSpriteRows } from './bitmap-semantic-candidates.js';
+import { anchorBitmapHorizontalRoom, sameBitmapLineFrame, sameBitmapRow, type BitmapLineFrame, } from './bitmap-line-geometry.js';
+import { sameTextPaint, type StyledText, type TextPaint, type TextTranslation } from './styled-text.js';
+import { bitmapTextSpacing, layoutBitmapText, type BitmapTextDraw, type BitmapTextMeasure, type BitmapTextMetrics, type BitmapTextLayoutResult, type BitmapSourceCharacterIndex, } from './bitmap-text-layout.js';
 import { layoutBitmapBlock } from './bitmap-block-layout.js';
-import { createBitmapTextReveal, bitmapTextRevealEnd, type BitmapTextReveal } from './bitmap-text-reveal.js';
+import { bitmapTextRevealEnd } from './bitmap-text-reveal.js';
+import { prepareBitmapTargetText, bitmapTargetPrefix, type BitmapTargetText } from './bitmap-target-text.js';
 import type { BitmapCommandAtom } from './bitmap-command-rows.js';
-import type { BitmapTextAssociation, BitmapAssociationCandidate } from './bitmap-text-associations.js';
+import { type BitmapTextAssociation, type BitmapAssociationCandidate } from './bitmap-text-associations.js';
 import type { PixelBounds } from '../gpu/bitmap-pixel-device.js';
 export interface BitmapAssociationLayout {
-    readonly translation: TextTranslation;
+    readonly target: BitmapTargetText;
     readonly text: StyledText;
-    readonly targetCharacterLayout: boolean;
-    readonly reveal: BitmapTextReveal | null;
-    readonly bindingEnds: readonly number[];
-    readonly bindingComplete: boolean;
-    readonly paintEnds: readonly number[];
-    readonly palette: readonly TextPaint[];
     readonly singleRowSpacing: boolean;
     readonly reading: readonly BitmapCommandAtom[];
     readonly frame: BitmapLineFrame;
+    readonly horizontal: BitmapTextAssociation['horizontal'] | null;
     readonly allocation: PixelBounds | null;
     readonly rangeEnd: number | null;
+    readonly block: boolean;
+    readonly multiline: boolean;
     readonly draws: readonly BitmapTextDraw[];
+    readonly fallback: BitmapTextLayoutResult | null;
     readonly visibleText: string;
-    readonly targetRegions: readonly PixelBounds[] | null;
+    readonly targetRegions: readonly PixelBounds[];
     readonly measurement: {
         readonly text: string;
         readonly paint: TextPaint;
@@ -44,18 +44,15 @@ function covered(ends: readonly number[], end: number): number {
     }
     return lo;
 }
-function styledPrefix(source: StyledText, end: number): StyledText {
-    if (end === source.text.length)
-        return source;
-    return createStyledText(source.runs.flatMap((run, index) => {
-        const from = source.runs[index - 1]?.end ?? 0;
-        return from >= end ? [] : [{ text: source.text.slice(from, Math.min(end, run.end)), paint: run.paint }];
-    }));
-}
-export function supportsBitmapAssociation(candidate: BitmapAssociationCandidate, index: BitmapSourceCharacterIndex | null, rejected?: (reason: string) => void): boolean {
+export function supportsBitmapAssociationLayout(candidate: BitmapAssociationCandidate, index: BitmapSourceCharacterIndex | null, rejected?: (reason: string) => void): boolean {
     const clue = candidate.clue;
     if (clue === undefined)
         return true;
+    if (clue.allocation !== null &&
+        clue.sources.some((source) => source.family === 'sprite' && !hasCurrentSpriteRows(source, clue.members))) {
+        rejected?.('sprite-block:incomplete-current-rows');
+        return false;
+    }
     if (!candidate.atoms.some((atom) => atom.effect !== null)) {
         rejected?.('no-captured-text-effect');
         return false;
@@ -86,45 +83,27 @@ function boundary(index: BitmapSourceCharacterIndex, offset: number): boolean {
     return offset === 0 || index.ends[covered(index.ends, offset) - 1] === offset;
 }
 export function layoutBitmapAssociation(association: BitmapTextAssociation, translation: TextTranslation, measure: BitmapTextMeasure, previous: BitmapAssociationLayout | null, sourceIndex: BitmapSourceCharacterIndex | null, rejected?: (reason: string) => void): BitmapAssociationLayout | null {
-    const clue = association.clue, area = clue?.allocation ?? null, rangeEnd = clue?.rangeEnd ?? null;
+    if (!supportsBitmapAssociationLayout(association, sourceIndex, rejected))
+        return null;
+    const clue = association.clue, horizontal = association.horizontal ?? null, rangeEnd = clue?.rangeEnd ?? null;
+    if (horizontal !== null &&
+        (!Number.isFinite(horizontal.left) || !Number.isFinite(horizontal.right) || horizontal.right <= horizontal.left)) {
+        rejected?.('horizontal-room-unavailable');
+        return null;
+    }
+    let area = clue?.allocation ?? null;
+    if (area !== null && horizontal !== null) {
+        const x = Math.max(area.x, horizontal.left);
+        area = { ...area, x, width: Math.min(area.x + area.width, horizontal.right) - x };
+    }
     if (clue !== undefined && area === null && association.groups.length !== 1) {
         rejected?.('separate-bitmap-groups-require-usable-area');
         return null;
     }
     const singleRowSpacing = clue !== undefined && area === null;
-    const painted = previous !== null &&
-        previous.translation === translation &&
-        previous.singleRowSpacing === singleRowSpacing &&
-        previous.palette.length === association.source.runs.length &&
-        (previous.bindingComplete || previous.rangeEnd === rangeEnd) &&
-        previous.paintEnds.every((end, index) => index === previous.paintEnds.length - 1 || end === association.source.runs[index]?.end) &&
-        previous.palette.every((paint, index) => {
-            const native = association.source.runs[index];
-            return native !== undefined && sameTextPaint(paint, native.paint);
-        });
-    const bindingEnds = previous?.translation === translation
-        ? previous.bindingEnds
-        : indexBitmapSourceCharacters(translation.text).drawableEnds;
-    const binding = clue?.template != null && sourceIndex !== null
-        ? { template: clue.template, sourceEnds: sourceIndex.drawableEnds, targetEnds: bindingEnds }
-        : undefined;
-    const reveal = previous?.translation === translation
-        ? previous.reveal
-        : clue?.template != null && sourceIndex !== null
-            ? createBitmapTextReveal(clue.template, translation, sourceIndex)
-            : null;
-    let text: StyledText;
-    let bindingComplete: boolean;
-    if (painted) {
-        text = previous.text;
-        bindingComplete = previous.bindingComplete;
-    }
-    else {
-        const bound = bindTextTranslation(translation, association.source, binding);
-        text = bound;
-        bindingComplete = bound.text === translation.text;
-    }
-    const targetCharacterLayout = painted ? previous.targetCharacterLayout : supportsBitmapCharacterText(text.text);
+    const target = prepareBitmapTargetText(association.source, translation, rangeEnd, clue?.template != null && sourceIndex !== null ? { template: clue.template, index: sourceIndex } : null, previous?.target ?? null);
+    const painted = previous !== null && previous.target === target && previous.singleRowSpacing === singleRowSpacing;
+    const { text, reveal, targetCharacterLayout } = target;
     let end = text.text.length, finished = true;
     if (clue?.complete === true) {
         if (sourceIndex === null ||
@@ -148,15 +127,19 @@ export function layoutBitmapAssociation(association: BitmapTextAssociation, tran
     else if (clue !== undefined)
         finished =
             rangeEnd !== null && rangeEnd >= (sourceIndex?.drawableEnds.at(-1) ?? association.source.text.length);
+    const multiline = clue?.complete === true || finished;
     if (previous !== null &&
         painted &&
         previous.rangeEnd === rangeEnd &&
+        previous.multiline === multiline &&
         sameBitmapLineFrame(previous.frame, association.frame) &&
+        previous.horizontal?.left === horizontal?.left &&
+        previous.horizontal?.right === horizontal?.right &&
         sameArea(previous.allocation, area) &&
         previous.reading.length === association.reading.length &&
         previous.reading.every((atom, index) => atom === association.reading[index]))
         return previous;
-    const prefix = styledPrefix(text, end);
+    const prefix = bitmapTargetPrefix(text, end);
     const visible = singleRowSpacing ? bitmapTextSpacing(prefix) : prefix;
     let measurement = painted ? previous.measurement : null;
     const currentMeasure: BitmapTextMeasure = (value, paint) => {
@@ -169,45 +152,70 @@ export function layoutBitmapAssociation(association: BitmapTextAssociation, tran
     const block = area !== null;
     const retainedBlock = block &&
         painted &&
+        previous.block &&
+        previous.multiline === multiline &&
         previous.visibleText === visible.text &&
         sameArea(previous.allocation, area) &&
         previous.frame.y === association.frame.y &&
         previous.frame.alignment === association.frame.alignment &&
         previous.frame.lineHeight === association.frame.lineHeight;
-    const measuredBlock = block && !retainedBlock ? layoutBitmapBlock(visible, association.frame, area, currentMeasure, rejected) : null;
-    const draws = retainedBlock
-        ? previous.draws
+    const measuredBlock = area !== null && !retainedBlock
+        ? layoutBitmapBlock(visible, association.frame, area, currentMeasure, rejected)
+        : null;
+    const line = block
+        ? null
+        : layoutBitmapText(visible, horizontal === null
+            ? association.frame
+            : {
+                ...association.frame,
+                x: horizontal.left,
+                width: horizontal.right - horizontal.left,
+            }, currentMeasure);
+    const nativeRow = association.reading.length > 0 &&
+        association.reading.every((atom) => sameBitmapRow(atom.layout.placement, association.frame));
+    const left = Math.max(association.frame.x, area?.x ?? horizontal?.left ?? -Infinity);
+    const right = Math.min(association.frame.x + association.frame.width, area === null ? (horizontal?.right ?? Infinity) : area.x + area.width);
+    const room = anchorBitmapHorizontalRoom(association.frame, left, right);
+    const fitted = nativeRow && (block || horizontal !== null) && room.right > room.left
+        ? layoutBitmapText(bitmapTextSpacing(prefix), { ...association.frame, x: room.left, width: room.right - room.left }, currentMeasure)
+        : null;
+    const usableFit = fitted !== null &&
+        (area === null ||
+            fitted.regions.every((region) => Math.max(0, region.y) >= area.y && region.y + region.height <= area.y + area.height))
+        ? fitted
+        : null;
+    let preferred = retainedBlock
+        ? { draws: previous.draws, regions: previous.targetRegions }
         : block
-            ? (measuredBlock?.draws ?? null)
-            : layoutBitmapText(visible, association.frame, currentMeasure);
-    const targetRegions = retainedBlock ? previous.targetRegions : (measuredBlock?.regions ?? null);
+            ? measuredBlock
+            : line;
+    if (block &&
+        !multiline &&
+        preferred?.draws.some((draw) => draw.layout.placement.y !== preferred?.draws[0]?.layout.placement.y)) {
+        rejected?.('partial-source-cannot-authorize-multiline-layout');
+        preferred = null;
+    }
+    const draws = preferred?.draws ?? usableFit?.draws ?? null;
+    const targetRegions = preferred?.regions ?? usableFit?.regions ?? [];
+    const fallback = preferred === null ? null : usableFit;
     if (draws === null) {
         if (!block)
             rejected?.('single-row-layout-unavailable');
         return null;
     }
-    if (block &&
-        clue?.complete !== true &&
-        !finished &&
-        draws.some((draw) => draw.layout.placement.y !== draws[0]?.layout.placement.y)) {
-        rejected?.('partial-source-cannot-authorize-multiline-layout');
-        return null;
-    }
     return {
-        translation,
+        target,
         text,
-        targetCharacterLayout,
-        reveal,
-        bindingEnds,
-        bindingComplete,
-        paintEnds: association.source.runs.map((run) => run.end),
-        palette: association.source.runs.map((run) => run.paint),
         singleRowSpacing,
         reading: association.reading,
         frame: association.frame,
+        horizontal,
         allocation: area,
         rangeEnd,
+        block: block && preferred !== null,
+        multiline,
         draws,
+        fallback,
         visibleText: visible.text,
         targetRegions,
         measurement,

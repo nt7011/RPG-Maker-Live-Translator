@@ -2,7 +2,7 @@
     "provider": "llamafile",
     "settings": {
         // Prompts: [cc]...[/cc] applies when the source has protected ¤ markers;
-        // [fail]...[/fail] applies after a marker-count mismatch in the same job.
+        // [fail]...[/fail] applies after marker damage, or any earlier failure of a numeric template.
         // Use [[ for a literal [. Sections cannot nest. Keep optional spaces inside sections.
         // To use LM Studio locally, set "provider" above to "lmstudio".
         // Start its server at the address and port below and load exactly one LLM for "model": "auto".

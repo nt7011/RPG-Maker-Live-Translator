@@ -1,4 +1,5 @@
 import { captureLogRedactor, redactRecordSink, type LogRedactor } from '../runtime/log-redaction-port.js';
+import { readForesightView } from '../foresight/read-view.js';
 type PropertyBag = Record<PropertyKey, unknown>;
 type RuntimeMethod = (...args: never[]) => unknown;
 interface MethodBinding {
@@ -67,6 +68,42 @@ function detach(binding: MethodBinding | null): void {
     catch {
     }
 }
+function redactCurrentRecords(sink: (snapshot: unknown) => void, redactor: LogRedactor | undefined) {
+    if (redactor === undefined)
+        return sink;
+    return (snapshot: unknown): void => {
+        const base = {
+            generation: ownDataValue(snapshot, 'generation'),
+            sequence: ownDataValue(snapshot, 'sequence'),
+            active: ownDataValue(snapshot, 'active'),
+            records: ownDataValue(snapshot, 'records'),
+        };
+        let future: unknown = null;
+        try {
+            const view = readForesightView(ownDataValue(snapshot, 'foresight'));
+            if (view !== null)
+                future = {
+                    ...view,
+                    graph: {
+                        ...view.graph,
+                        nodes: view.graph.nodes.map((node) => ({
+                            ...node,
+                            texts: node.texts.map((text) => ({
+                                ...text,
+                                preview: redactor.text(text.preview),
+                                translation: text.translation === null ? null : redactor.text(text.translation),
+                            })),
+                        })),
+                    },
+                };
+        }
+        catch {
+        }
+        redactRecordSink((value: typeof base) => {
+            sink({ ...value, foresight: future });
+        }, redactor, ['records.*.state', 'records.*.semanticControl', 'records.*.failure.stage', 'records.*.failure.recovery'])(base);
+    };
+}
 export function createGuiWindowAttachment(scope: PropertyBag, redactor: LogRedactor | undefined = captureLogRedactor(scope)) {
     const service = ownDataValue(scope, 'LiveTranslatorDiagnostics');
     const attachGui = captureMethod(service, 'attachGui');
@@ -107,19 +144,20 @@ export function createGuiWindowAttachment(scope: PropertyBag, redactor: LogRedac
             return false;
         feed.attached = true;
         let lease: unknown;
+        const receive = (snapshot: unknown): void => {
+            if (active !== owner)
+                return;
+            try {
+                Reflect.apply(accept.method, accept.receiver, [snapshot]);
+            }
+            catch {
+            }
+        };
         try {
             lease = Reflect.apply(subscribe.method, subscribe.receiver, [
-                redactRecordSink((snapshot: unknown) => {
-                    if (active !== owner)
-                        return;
-                    try {
-                        Reflect.apply(accept.method, accept.receiver, [snapshot]);
-                    }
-                    catch {
-                    }
-                }, redactor, kind === 'records'
-                    ? ['records.*.state', 'records.*.failure.stage', 'records.*.failure.recovery']
-                    : ['provider.state', 'provider.connection', 'provider.kind']),
+                kind === 'records'
+                    ? redactCurrentRecords(receive, redactor)
+                    : redactRecordSink(receive, redactor, ['provider.state', 'provider.connection', 'provider.kind']),
             ]);
         }
         catch {

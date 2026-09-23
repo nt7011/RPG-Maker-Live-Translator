@@ -20,14 +20,42 @@ export function fetchRemoteTextWithNode(rawUrl: string | URL, redirectCount: num
             return;
         }
         let finished = false;
-        function finish(error: unknown, value?: string): void {
+        let request: unknown = null;
+        let response: unknown = null;
+        let deadline: ReturnType<typeof setTimeout> | null = null;
+        function destroyStream(stream: unknown): void {
+            if (!stream)
+                return;
+            try {
+                callNodeMethod(stream, 'destroy');
+            }
+            catch {
+            }
+        }
+        function sendRequest(): void {
+            if (finished)
+                destroyStream(request);
+            else
+                callNodeMethod(request, 'end');
+        }
+        function finish(error: unknown, value: string | URL = ''): void {
             if (finished)
                 return;
             finished = true;
+            if (deadline !== null)
+                clearTimeout(deadline);
+            deadline = null;
+            if (error || value instanceof URL) {
+                destroyStream(response);
+                destroyStream(request);
+            }
             if (error)
                 reject(Error.isError(error) ? error : new Error(stringValue(error)));
+            else if (value instanceof URL) {
+                resolve(fetchRemoteTextWithNode(value.href, redirectCount + 1));
+            }
             else
-                resolve(value ?? '');
+                resolve(value);
         }
         const requestOptions: UnknownRecord = {
             method: 'GET',
@@ -38,62 +66,69 @@ export function fetchRemoteTextWithNode(rawUrl: string | URL, redirectCount: num
                 Pragma: 'no-cache',
             },
         };
-        const request = requestHttps(url, requestOptions, (response) => {
-            const status = readNodeStatusCode(response);
-            const redirectLocation = readNodeHeader(response, 'location');
-            if (isRedirectStatus(status) && redirectLocation) {
-                callNodeMethod(response, 'resume');
-                if (redirectCount >= updatePolicy.maxRedirects) {
-                    finish(new Error('too many update check redirects'));
-                    return;
-                }
-                let nextUrl;
-                try {
-                    nextUrl = new URL(stringValue(redirectLocation), url.href);
-                    validateVersionCheckUrl(nextUrl);
-                }
-                catch (error: unknown) {
-                    finish(error);
-                    return;
-                }
-                fetchRemoteTextWithNode(nextUrl.href, redirectCount + 1).then((value) => {
-                    finish(null, value);
-                }, (error: unknown) => {
+        deadline = setTimeout(() => {
+            finish(new Error('update check timed out'));
+        }, updatePolicy.timeoutMs);
+        try {
+            request = requestHttps(url, requestOptions, (incomingResponse) => {
+                onNodeEvent(incomingResponse, 'error', (error: unknown) => {
                     finish(error);
                 });
-                return;
-            }
-            if (status < 200 || status >= 300) {
-                callNodeMethod(response, 'resume');
-                finish(new Error(`HTTP ${String(status)}`));
-                return;
-            }
-            const chunks: string[] = [];
-            let total = 0;
-            callNodeMethod(response, 'setEncoding', 'utf8');
-            onNodeEvent(response, 'data', (chunk: unknown) => {
-                total += getTextByteLength(chunk);
-                if (total > updatePolicy.maxBytes) {
-                    callNodeMethod(response, 'destroy');
-                    finish(new Error('version response too large'));
+                if (finished) {
+                    destroyStream(incomingResponse);
                     return;
                 }
-                chunks.push(stringValue(chunk));
+                response = incomingResponse;
+                const status = readNodeStatusCode(response);
+                const redirectLocation = readNodeHeader(response, 'location');
+                if (isRedirectStatus(status) && redirectLocation) {
+                    if (redirectCount >= updatePolicy.maxRedirects) {
+                        finish(new Error('too many update check redirects'));
+                        return;
+                    }
+                    try {
+                        const nextUrl = new URL(stringValue(redirectLocation), url.href);
+                        validateVersionCheckUrl(nextUrl);
+                        finish(null, nextUrl);
+                    }
+                    catch (error: unknown) {
+                        finish(error);
+                    }
+                    return;
+                }
+                if (status < 200 || status >= 300) {
+                    finish(new Error(`HTTP ${String(status)}`));
+                    return;
+                }
+                const chunks: string[] = [];
+                let total = 0;
+                callNodeMethod(response, 'setEncoding', 'utf8');
+                onNodeEvent(response, 'data', (chunk: unknown) => {
+                    if (finished)
+                        return;
+                    total += getTextByteLength(chunk);
+                    if (total > updatePolicy.maxBytes) {
+                        finish(new Error('version response too large'));
+                        return;
+                    }
+                    chunks.push(stringValue(chunk));
+                });
+                onNodeEvent(response, 'end', () => {
+                    if (!finished)
+                        finish(null, chunks.join(''));
+                });
             });
-            onNodeEvent(response, 'end', () => {
-                finish(null, chunks.join(''));
+            onNodeEvent(request, 'timeout', () => {
+                finish(new Error('update check timed out'));
             });
-            onNodeEvent(response, 'error', (error: unknown) => {
+            onNodeEvent(request, 'error', (error: unknown) => {
                 finish(error);
             });
-        });
-        onNodeEvent(request, 'timeout', () => {
-            callNodeMethod(request, 'destroy', new Error('update check timed out'));
-        });
-        onNodeEvent(request, 'error', (error: unknown) => {
+            sendRequest();
+        }
+        catch (error: unknown) {
             finish(error);
-        });
-        callNodeMethod(request, 'end');
+        }
     });
 }
 export async function fetchRemoteTextWithBrowser(rawUrl: string | URL): Promise<string> {

@@ -187,8 +187,12 @@ export function createLlamafileProcessModule(common: TranslationProviderCommonMo
                 assertRunning();
                 baseUrl = `http://${HOST}:${String(port)}`;
                 args = createServerArguments(targetPath, draftPath, port, modelAlias, apiKey, profile.id);
-                const command = node.platform === 'win32' ? executablePath : '/bin/sh';
+                let command = node.platform === 'win32' ? executablePath : '/bin/sh';
                 const launchArgs = node.platform === 'win32' ? [...args] : [executablePath, ...args];
+                if (node.platform === 'darwin') {
+                    command = '/usr/bin/xcrun';
+                    launchArgs.unshift('--sdk', 'macosx', '/bin/sh');
+                }
                 const cacheDirectory = node.path.dirname(executablePath);
                 child = node.spawn(command, launchArgs, {
                     cwd: cacheDirectory,

@@ -161,8 +161,8 @@ export function createBitmapContentStore(options: {
     };
 }) {
     interface Binding {
-        readonly source: WeakRef<HTMLCanvasElement>;
         readonly content: BitmapContent;
+        readonly source: WeakRef<HTMLCanvasElement>;
         readonly release: () => void;
     }
     const bindings = new WeakMap<HTMLCanvasElement, Binding>();
@@ -270,11 +270,20 @@ export function createBitmapContentStore(options: {
         bind(source, root, release);
         return bindings.get(source)?.content ?? null;
     }
-    function invalidate(source: HTMLCanvasElement): void {
+    function detach(source: HTMLCanvasElement): (() => void) | null {
         epochs.set(source, (epochs.get(source) ?? 0) + 1);
         const binding = bindings.get(source);
-        if (binding !== undefined)
-            releaseBinding(binding);
+        if (binding === undefined)
+            return null;
+        bindings.delete(source);
+        associations.delete(binding);
+        return () => {
+            options.lifetime.forget(binding.source);
+            binding.release();
+        };
+    }
+    function invalidate(source: HTMLCanvasElement): void {
+        detach(source)?.();
     }
     function beforeWrite(receipt: BitmapCanvasWrite): void {
         if (isDisposed())
@@ -355,6 +364,7 @@ export function createBitmapContentStore(options: {
         peek: (source: HTMLCanvasElement) => bindings.get(source)?.content ?? null,
         has: (source: HTMLCanvasElement) => bindings.has(source),
         invalidate,
+        detach,
         beforeWrite,
         afterWrite,
         dispose,

@@ -13,9 +13,9 @@ function observe(observation: NativeTextObservation): readonly SemanticClue[] {
     members.sort((a, b) => a.range.start - b.range.start);
     const clues: SemanticClue[] = members.length > 0 ? [{ kind: 'ordered-members', members }] : [];
     if (observation.allocation !== null)
-        clues.push({ kind: 'safe-area', rect: observation.allocation });
+        clues.push({ kind: 'safe-area', area: observation.allocation });
     return clues;
 }
 export function gameMessageAdapter(): SemanticAdapter {
-    return { observe, captures: [captureNativeText, captureMessageAllocation] };
+    return { family: 'game-message', observe, captures: [captureNativeText, captureMessageAllocation] };
 }

@@ -1,5 +1,6 @@
 import { windowAdapter } from '../../semantic-adapters/window.js';
 import { gameMessageAdapter } from '../../semantic-adapters/game-message.js';
+import { spriteAdapter } from '../../semantic-adapters/sprite.js';
 import type { SemanticAdapter } from '../../semantic-adapters/contract.js';
 function own(value: unknown, key: string): unknown {
     if (typeof value !== 'object' || value === null)
@@ -14,5 +15,7 @@ export function createSemanticAdapters(settings: unknown): readonly SemanticAdap
         adapters.push(windowAdapter());
     if (own(flags, 'gameMessage') === true)
         adapters.push(gameMessageAdapter());
+    if (own(flags, 'sprite') === true)
+        adapters.push(spriteAdapter());
     return Object.freeze(adapters);
 }

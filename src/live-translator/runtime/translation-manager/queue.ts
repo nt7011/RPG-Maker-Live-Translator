@@ -116,7 +116,7 @@ function createRealmQueueControllerFactory(runtimeScope: object): TranslationMan
         const source = scope as TranslationManagerQueueScopeCandidate;
         const { logger, provider, capacityRefreshMs, requestTimeoutMs, queuedJobs } = source;
         const { forgetJob } = source.controllerFacades.lineages;
-        const { getEnabledReservedPriorityLanes, jobMatchesReservedLane, jobMatchesAnyReservedLane, getReservedLaneDispatchState, getNormalDispatchState, getQueueDispatchState, } = source.controllerFacades.jobs;
+        const { canDispatchJob, getEnabledReservedPriorityLanes, jobMatchesReservedLane, jobMatchesAnyReservedLane, getReservedLaneDispatchState, getNormalDispatchState, getQueueDispatchState, } = source.controllerFacades.jobs;
         const { startJob } = source.controllerFacades.runner;
         const pendingPrunes = new Set<TranslationManagerQueuePruneJournal>();
         const pendingDispatches = new Set<TranslationManagerQueueDispatchLease>();
@@ -505,7 +505,8 @@ function createRealmQueueControllerFactory(runtimeScope: object): TranslationMan
                 let version: number;
                 do {
                     version = queuedJobs.version;
-                    job = queuedJobs.peek(typeof predicate === 'function' ? (predicate as (job: unknown) => boolean) : undefined, minimumPriority);
+                    job = queuedJobs.peek((candidate) => canDispatchJob(candidate) &&
+                        (typeof predicate !== 'function' || (predicate as (job: unknown) => boolean)(candidate)), minimumPriority);
                 } while (version !== queuedJobs.version);
             }
             catch (error) {
@@ -605,7 +606,20 @@ function createRealmQueueControllerFactory(runtimeScope: object): TranslationMan
                 (source.activeCount as number) >= (source.providerCapacity as number))
                 return false;
             const lanes = getEnabledReservedPriorityLanes();
-            return (getQueueDispatchState(lanes) as TranslationManagerQueueDispatchStateCandidate).canDispatch === true;
+            if ((getQueueDispatchState(lanes) as TranslationManagerQueueDispatchStateCandidate).canDispatch !== true)
+                return false;
+            return (queuedJobs.peek((job) => {
+                if (!canDispatchJob(job))
+                    return false;
+                for (const lane of lanes as Iterable<unknown>)
+                    if (jobMatchesReservedLane(job, lane) &&
+                        (getReservedLaneDispatchState(lane) as TranslationManagerQueueDispatchStateCandidate)
+                            .canDispatch)
+                        return true;
+                return (!jobMatchesAnyReservedLane(job, lanes) &&
+                    (getNormalDispatchState(lanes) as TranslationManagerQueueDispatchStateCandidate).canDispatch ===
+                        true);
+            }) !== undefined);
         }
         async function pump(): Promise<void> {
             if (source.isDisposed?.())

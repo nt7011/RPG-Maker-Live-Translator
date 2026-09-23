@@ -1,3 +1,4 @@
+import type { NumericTemplateOperation } from './numeric-templates.js';
 import type { PendingTranslationQueue } from './pending-queue.js';
 import { createTranslationLineageJob, type TranslationLineageJobProjection } from './lineage-ownership.js';
 import type { TranslationManagerControllerFacades } from './controller-facades.js';
@@ -19,6 +20,8 @@ interface TranslationManagerRequestHandoffRuntimeScopeCandidate {
     readonly Date: RuntimeDateCandidate;
 }
 interface TranslationManagerRequestCandidate {
+    readonly dispatchGroup?: unknown;
+    readonly numericTemplate?: NumericTemplateOperation | undefined;
     readonly normalized: unknown;
     readonly priority: unknown;
     readonly streamRequested: unknown;
@@ -52,6 +55,7 @@ interface TranslationManagerRequestHandoffScopeCandidate {
     queueSequence: number;
 }
 interface TranslationManagerPreparedJob extends TranslationLineageJobProjection {
+    readonly numericTemplate: NumericTemplateOperation | undefined;
     readonly id: string;
     readonly key: unknown;
     readonly sourceKey: unknown;
@@ -149,6 +153,8 @@ function createRealmHandoffControllerFactory(runtimeScope: object): TranslationM
             const candidate = request as TranslationManagerRequestCandidate;
             return Object.freeze({
                 normalized: candidate.normalized,
+                numericTemplate: candidate.numericTemplate,
+                dispatchGroup: candidate.dispatchGroup,
                 priority: candidate.priority,
                 streamRequested: candidate.streamRequested,
                 stream: candidate.stream === true,
@@ -168,11 +174,11 @@ function createRealmHandoffControllerFactory(runtimeScope: object): TranslationM
             const candidate = job as TranslationManagerJobCandidate;
             return candidate.status === 'running' && candidate.stream !== true && request.stream;
         }
-        function requestRouteKey(request: TranslationManagerRequestSnapshot): string {
+        function requestRouteKey(request: TranslationManagerRequestSnapshot): string | symbol {
             if (typeof request.normalized !== 'string') {
                 throw new TypeError('[TranslationService] A normalized request key must be a string.');
             }
-            return request.normalized;
+            return request.numericTemplate?.route ?? request.normalized;
         }
         function isRouteStillValid(transaction: HandoffTransaction, afterRegistration = false): boolean {
             const routed = getRoutedJob(requestRouteKey(transaction.request));
@@ -193,15 +199,17 @@ function createRealmHandoffControllerFactory(runtimeScope: object): TranslationM
             return (status === 'queued' || status === 'running') && !isStreamUpgrade(expected, transaction.request);
         }
         function createJob(request: TranslationManagerRequestSnapshot): TranslationManagerPreparedJob {
-            const providerText = applySubstitutePlaintextBeforeTranslationRules(request.normalized, substitutePlaintextBeforeTranslationRules);
+            const providerText = request.numericTemplate
+                ? request.normalized
+                : applySubstitutePlaintextBeforeTranslationRules(request.normalized, substitutePlaintextBeforeTranslationRules);
             const providerInputChanged = providerText !== request.normalized;
-            const routeKey = requestRouteKey(request);
             let requestValue: unknown;
             const job = createTranslationLineageJob<TranslationManagerPreparedJobDraft>({
                 id: `job:${++source.requestSequence as unknown as JobSequenceTemplateCandidate}`,
-                key: routeKey,
+                key: request.normalized,
                 sourceKey: request.normalized,
-                cacheable: true,
+                cacheable: request.numericTemplate === undefined,
+                numericTemplate: request.numericTemplate,
                 text: providerText,
                 providerInputChanged,
                 status: 'queued',
@@ -216,7 +224,7 @@ function createRealmHandoffControllerFactory(runtimeScope: object): TranslationM
                 timeoutMs: ((requestValue = request.timeoutMs) as boolean) ? requestValue : requestTimeoutMs,
                 hook: ((requestValue = request.hook) as boolean) ? requestValue : '',
                 source: ((requestValue = request.source) as boolean) ? requestValue : '',
-                sourceHint: 'provider',
+                sourceHint: request.numericTemplate ? 'numeric-template' : 'provider',
                 metadata: ((requestValue = request.metadata) as boolean) ? requestValue : {},
                 attempt: 0,
                 retryCount: 0,
@@ -227,7 +235,7 @@ function createRealmHandoffControllerFactory(runtimeScope: object): TranslationM
                 lastPartialLength: 0,
                 lastDeltaEventAt: 0,
                 lastError: null,
-            });
+            }, request.numericTemplate?.route);
             Object.defineProperty(job, 'subscribers', {
                 configurable: false,
                 enumerable: true,
@@ -252,6 +260,7 @@ function createRealmHandoffControllerFactory(runtimeScope: object): TranslationM
             let requestValue: unknown;
             const sourceHintValue = job.sourceHint;
             return subscriberOwnership.prepareSubscriber({
+                dispatchGroup: request.dispatchGroup,
                 id: `sub:${++source.subscriberSequence as unknown as SubscriberSequenceTemplateCandidate}`,
                 job,
                 priority: request.priority,

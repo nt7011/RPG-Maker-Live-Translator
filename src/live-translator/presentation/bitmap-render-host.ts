@@ -22,7 +22,7 @@ export interface BitmapScreenSample {
     readonly frame: PixelBounds;
     readonly vertices: readonly number[];
     readonly alpha: number;
-    readonly clip: PixelBounds;
+    readonly clip: PixelBounds | null;
 }
 export interface BitmapRenderBacking {
     readonly kind: 'bitmap-render-backing';
@@ -303,12 +303,12 @@ export function createBitmapRenderHost(options: {
                 if (queued && clip === undefined)
                     clip = screenClip();
                 if (element)
-                    observe(element, queued ? null : 'unsupported-render-geometry', queued && clip != null
+                    observe(element, queued ? null : 'unsupported-render-geometry', queued
                         ? {
                             frame: queued.use.frame,
                             vertices: [...queued.use.vertices],
                             alpha: queued.use.alpha,
-                            clip,
+                            clip: clip ?? null,
                         }
                         : null);
                 if (queued && (!Array.isArray(textures) || textures[slot] === queued.texture.baseTexture))

@@ -1,3 +1,5 @@
+import { captureRuntimeDiagnosticsIngress, type RuntimeDiagnosticField } from '../diagnostics-ingress.js';
+import { createNumericTemplateController, type NumericTemplateController } from './numeric-templates.js';
 import { createPendingTranslationQueue, type PendingTranslationQueue } from './pending-queue.js';
 import type { CancellationClassification, CancellationModule } from '../cancellation.js';
 import { captureTranslationProviderAvailabilityFailure, captureTranslationProviderRuntimeStatus, type TranslationProviderRuntimeStatus, } from '../translation-providers/runtime-status.js';
@@ -224,6 +226,7 @@ interface TranslationDiagnosticsCandidate {
     readonly dispose: RuntimeFunction;
 }
 interface OngoingTranslationJobCandidate {
+    readonly key: unknown;
     readonly id: unknown;
     readonly status: unknown;
     readonly createdAt: unknown;
@@ -309,6 +312,7 @@ interface TranslationManagerServiceScope extends TranslationManagerSharedModule 
     getEnabledReservedPriorityLanes: RuntimeFunction;
     request: RuntimeFunction;
     requestBatch: RuntimeFunction;
+    numericTemplates?: NumericTemplateController;
     lookup: RuntimeFunction;
     cancelByRecordId: RuntimeFunction;
     setPriorityByRecordId: RuntimeFunction;
@@ -480,7 +484,7 @@ export function createTranslationManagerModuleFromDependencies(dependencies: unk
             const candidate = job as OngoingTranslationJobCandidate;
             return Object.freeze({
                 id: candidate.id,
-                key: routeKey,
+                key: typeof routeKey === 'symbol' ? candidate.key : routeKey,
                 status: candidate.status,
                 createdAt: candidate.createdAt,
                 queuedAt: candidate.queuedAt,
@@ -1408,6 +1412,7 @@ export function createTranslationManagerModuleFromDependencies(dependencies: unk
                 return createServiceDisposalReceipt();
             disposalInProgress = true;
             try {
+                scope.numericTemplates?.dispose();
                 stopProviderAvailabilityProbe();
                 if (!diagnosticsDisposalSettled) {
                     try {
@@ -1434,6 +1439,26 @@ export function createTranslationManagerModuleFromDependencies(dependencies: unk
                 settledDisposalReceipt = receipt;
             return receipt;
         }
+        const numericDiagnosticSink = captureRuntimeDiagnosticsIngress(runtimeScope).accept;
+        scope.numericTemplates = createNumericTemplateController({
+            sessionScope: runtimeScope,
+            enabled: !isCacheOnlyProvider,
+            handoff: (request) => getController('handoff').handoffProviderRequest(request),
+            classifyCancellation: (error) => shared.classifyCancellation(error),
+            report: (fields) => {
+                if (!numericDiagnosticSink)
+                    return;
+                const copied: RuntimeDiagnosticField[] = [];
+                for (const [name, value] of Object.entries(fields)) {
+                    if (value === null ||
+                        typeof value === 'string' ||
+                        typeof value === 'number' ||
+                        typeof value === 'boolean')
+                        copied.push({ name, value });
+                }
+                numericDiagnosticSink({ type: 'runtime.event', message: 'numeric-template', fields: copied });
+            },
+        });
         const lifetimeOwner: TranslationServiceLifetimeOwner = {
             dispose: disposeTranslationService,
         };

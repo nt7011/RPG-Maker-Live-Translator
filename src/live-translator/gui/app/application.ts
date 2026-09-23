@@ -1,7 +1,8 @@
 import { renderProviderHeader } from './panels/provider-header.js';
 import { renderLagIncidentsPanel } from './runtime/lag-incidents-panel.js';
 import { renderResourcePanel } from './runtime/resource-panel.js';
-import { copyDrawCaptureTrace, copyTextTroubleshootingLog, copyResourceProbe } from './copy/actions.js';
+import { copyDrawCaptureTrace, copyTextTroubleshootingLog, copyResourceProbe, copyForesightDiagnostics, } from './copy/actions.js';
+import { bindForesightPanel, renderForesightPanel } from './runtime/foresight-panel.js';
 import { addLog, bindFoldedPanelSummaryControls, clearLog, getGameWindow, initNode, initRefs, refreshConfigSummary, refreshRuntimeContext, syncPanelDisclosureIndicators, updateHeartbeat, } from './core.js';
 import { refreshGuiPolicySnapshot } from './policy.js';
 import { clearDrawCaptureTrace } from './runtime/diagnostics-control.js';
@@ -9,8 +10,14 @@ import { renderDrawCaptureTracePanel } from './runtime/rejected-bitmap-text-pane
 import { refs } from './state.js';
 import { renderTextRecordSections } from './text-records/lists.js';
 import { bindVersionUpdateAction, startUpdateChecker, stopUpdateChecker } from './version/controller.js';
-const UNSUPPORTED_PANEL_IDS = Object.freeze(['foresight-panel', 'hook-installation-panel']);
+const UNSUPPORTED_PANEL_IDS = Object.freeze(['hook-installation-panel']);
 function bindEvents(): void {
+    bindForesightPanel();
+    refs['foresight-copy']?.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        copyForesightDiagnostics(refs['foresight-copy']);
+    });
     refs['clear-log']?.addEventListener('click', clearLog);
     refs['resource-probe-copy']?.addEventListener('click', (event) => {
         event.preventDefault();
@@ -48,6 +55,7 @@ export function renderInitialGuiState(): void {
     renderResourcePanel();
     renderLagIncidentsPanel();
     renderProviderHeader();
+    renderForesightPanel();
     updateHeartbeat();
 }
 export function logGuiLoaded(message: string): void {

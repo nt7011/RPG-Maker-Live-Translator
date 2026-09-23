@@ -68,7 +68,7 @@ export function publishPromiseHandleFacade<Carrier extends object>(carrier: Carr
             configurable: false,
         },
         catch: {
-            value: createPromiseForwarder(capabilities.catch, capabilities.promise),
+            value: (...args: unknown[]): unknown => applyPromiseHandleFunction(capabilities.then, capabilities.promise, [undefined, args[0]]),
             writable: false,
             enumerable: true,
             configurable: false,

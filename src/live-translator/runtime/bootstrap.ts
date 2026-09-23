@@ -514,6 +514,30 @@ export function startRuntime(dependencies: RuntimeBootstrapDependencies, { scope
         owner.deferred.resolve(cacheState);
         lastCacheReceipt = owner.deferred.promise;
     }
+    function reportBitmapCoreFailure(failure: unknown): void {
+        if (!generationActive || disposed || disposing)
+            return;
+        generationActive = false;
+        compositionReady = false;
+        bootstrapError = describeError(failure) || 'bitmap core failed';
+        lastStartupReceipt = null;
+        cacheState = createCacheReadiness({ ...cacheState, retryable: false });
+        lastCacheReceipt = createResolvedPromise(cacheState);
+        if (!composing) {
+            disposing = true;
+            cancelHydrationForDisposal();
+            authorSnapshot();
+            recovery = recoverOwnedGenerationResources(true) ? 'clean' : 'pending';
+            disposing = false;
+        }
+        authorSnapshot();
+        safeLog('error', '[BitmapCore Failure]', failure);
+    }
+    function requireActiveGeneration(): void {
+        if (!generationActive) {
+            throw new Error(bootstrapError || 'bootstrap generation is no longer active');
+        }
+    }
     function dispose(): boolean {
         if (disposed)
             return true;
@@ -547,19 +571,25 @@ export function startRuntime(dependencies: RuntimeBootstrapDependencies, { scope
         releaseBootstrapGenerationClaim(globalScope, generationClaim);
         return true;
     }
-    function quarantineBootstrapPublication(error: unknown): void {
+    function failBootstrapPublication(error: unknown, rollbackUncertain: boolean): void {
         composing = false;
         generationActive = false;
         bootstrapError = describeError(error);
-        recovery = 'pending';
+        recovery = rollbackUncertain ? 'pending' : 'clean';
         cacheState = createCacheReadiness({
             status: 'failed',
             attempt: hydrationAttempt,
             retryable: false,
-            error: 'bootstrap publication could not prove a clean rollback',
+            error: rollbackUncertain
+                ? 'bootstrap publication could not prove a clean rollback'
+                : 'bootstrap publication failed before composition',
         });
         lastCacheReceipt = createResolvedPromise(cacheState);
         authorSnapshot();
+        if (!rollbackUncertain) {
+            generationClaim.active = false;
+            releaseBootstrapGenerationClaim(globalScope, generationClaim);
+        }
         compositionOwner.resolve(undefined);
     }
     const bootstrapController = freezeExact({
@@ -590,8 +620,8 @@ export function startRuntime(dependencies: RuntimeBootstrapDependencies, { scope
         ]);
     }
     catch (error) {
-        quarantineBootstrapPublication(error);
-        return startInitialization();
+        failBootstrapPublication(error, false);
+        throw error;
     }
     const initialPublicationRecovery: PublicationRecovery = {
         updates: initialPublication,
@@ -601,8 +631,7 @@ export function startRuntime(dependencies: RuntimeBootstrapDependencies, { scope
         appendExactArrayValue(publicationTransactions, initialPublicationRecovery);
     }
     catch (error) {
-        generationClaim.active = false;
-        releaseBootstrapGenerationClaim(globalScope, generationClaim);
+        failBootstrapPublication(error, false);
         throw error;
     }
     let initialPublicationResult: ReturnType<typeof commitDescriptorTransaction>;
@@ -611,7 +640,7 @@ export function startRuntime(dependencies: RuntimeBootstrapDependencies, { scope
     }
     catch (error) {
         initialPublicationRecovery.status = 'rollback-incomplete';
-        quarantineBootstrapPublication(error);
+        failBootstrapPublication(error, true);
         return startInitialization();
     }
     if (!initialPublicationResult.committed) {
@@ -619,12 +648,12 @@ export function startRuntime(dependencies: RuntimeBootstrapDependencies, { scope
             ? 'clean-rollback'
             : 'rollback-incomplete';
         if (!initialPublicationResult.rollbackComplete) {
-            quarantineBootstrapPublication(new Error('[LiveTranslator] bootstrap generation publication rollback was incomplete.'));
+            failBootstrapPublication(new Error('[LiveTranslator] bootstrap generation publication rollback was incomplete.'), true);
             return startInitialization();
         }
-        generationClaim.active = false;
-        releaseBootstrapGenerationClaim(globalScope, generationClaim);
-        throw new Error('[LiveTranslator] bootstrap generation publication failed cleanly.');
+        const error = new Error('[LiveTranslator] bootstrap generation publication failed cleanly.');
+        failBootstrapPublication(error, false);
+        throw error;
     }
     initialPublicationRecovery.status = 'committed';
     phase = 'composing';
@@ -678,12 +707,11 @@ export function startRuntime(dependencies: RuntimeBootstrapDependencies, { scope
         const installBitmapCore = requireMethod(dependencies, 'installBitmapCore', 'bitmap-core installer');
         const bitmapCoreOptions: BitmapCoreOptions = {
             scope: globalScope,
+            logger,
             coreGeneration: generation,
             diagnostics,
             translationService: cacheContext.translationService,
-            reportFailure: (failure): void => {
-                safeLog('error', '[BitmapCore Failure]', failure);
-            },
+            reportFailure: reportBitmapCoreFailure,
             claimLifetimeOwner: bitmapCoreLifetimeClaim.claim,
         };
         try {
@@ -693,7 +721,9 @@ export function startRuntime(dependencies: RuntimeBootstrapDependencies, { scope
             bitmapCoreLifetimeClaim.open = false;
         }
         requireTransferredCleanupLease(bitmapCoreLifetimeClaim, 'bitmap-core installer');
+        requireActiveGeneration();
         const flushDiskCache = cacheContext.flushDiskCache;
+        requireActiveGeneration();
         const runtimeCacheFacade = freezeExact({
             flushDiskCache: typeof flushDiskCache === 'function'
                 ? function flushPublishedDiskCache(...arguments_: unknown[]): unknown {
@@ -713,6 +743,7 @@ export function startRuntime(dependencies: RuntimeBootstrapDependencies, { scope
                 value: runtimeCacheFacade,
             }),
         ]);
+        requireActiveGeneration();
         const cachePublicationRecovery: PublicationRecovery = {
             updates: cachePublication,
             status: 'attempting',
@@ -738,6 +769,7 @@ export function startRuntime(dependencies: RuntimeBootstrapDependencies, { scope
         }
         cachePublicationRecovery.status = 'committed';
         runtimeCachePublication = 'published';
+        requireActiveGeneration();
         authorSnapshot();
         composing = false;
         compositionReady = true;
@@ -748,7 +780,7 @@ export function startRuntime(dependencies: RuntimeBootstrapDependencies, { scope
     catch (error) {
         composing = false;
         disposing = true;
-        bootstrapError = describeError(error);
+        bootstrapError = bootstrapError || describeError(error);
         cacheState = createCacheReadiness({
             status: 'failed',
             attempt: hydrationAttempt,

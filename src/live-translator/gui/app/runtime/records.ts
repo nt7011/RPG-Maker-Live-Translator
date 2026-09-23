@@ -1,3 +1,4 @@
+import { readRecordPresentation } from '../text-records/presentation.js';
 import type { GuiTextStatusClass } from '../formatters.js';
 import { getGuiEffectivePolicy, getGuiPolicySnapshot } from '../policy.js';
 import { state } from '../state.js';
@@ -372,13 +373,14 @@ export function normalizeActiveTextRecord(record: unknown): GuiTextRecord {
             : source['translatedText']
                 ? stringValue(source['translatedText'])
                 : '',
+        presentation: readRecordPresentation(source['presentation']),
         translationState: null,
         policyReason: null,
         translationReceived: source['translationReceived'] ? stringValue(source['translationReceived']) : '',
         translationDrawn: source['translationDrawn'] ? stringValue(source['translationDrawn']) : '',
-        firstSeenAt: falsyFallback(source['firstSeenAt'], falsyFallback(source['seenAt'], falsyFallback(source['lastSeenAt'], falsyFallback(source['timestamp'], null)))),
-        seenAt: falsyFallback(source['lastSeenAt'], falsyFallback(source['seenAt'], falsyFallback(source['timestamp'], null))),
-        updatedAt: falsyFallback(source['updatedAt'], falsyFallback(source['lastSeenAt'], falsyFallback(source['seenAt'], falsyFallback(source['timestamp'], null)))),
+        firstSeenAt: source['firstSeenAt'] ?? source['seenAt'] ?? source['lastSeenAt'] ?? source['timestamp'] ?? null,
+        seenAt: source['lastSeenAt'] ?? source['seenAt'] ?? source['timestamp'] ?? null,
+        updatedAt: source['updatedAt'] ?? source['lastSeenAt'] ?? source['seenAt'] ?? source['timestamp'] ?? null,
         windowType: source['windowType'] ? stringValue(source['windowType']) : '',
         ownerType: source['ownerType'] ? stringValue(source['ownerType']) : '',
         methodName: source['methodName'] ? stringValue(source['methodName']) : '',
@@ -388,8 +390,8 @@ export function normalizeActiveTextRecord(record: unknown): GuiTextRecord {
         bounds: isUnknownRecord(source['bounds']) ? copyGuiOwnDataRecord(source['bounds']) : null,
         onScreen: normalizeRuntimeVisibility(source['onScreen'], true),
         screenState: source['screenState'] ? stringValue(source['screenState']) : '',
-        disappearedAt: falsyFallback(source['disappearedAt'], null),
-        deactivatedAt: falsyFallback(source['deactivatedAt'], falsyFallback(source['disappearedAt'], null)),
+        disappearedAt: source['disappearedAt'] ?? null,
+        deactivatedAt: source['deactivatedAt'] ?? source['disappearedAt'] ?? null,
         lifecycleState: source['lifecycleState'] ? stringValue(source['lifecycleState']) : '',
         priority: source['priority'],
         backgrounded: source['backgrounded'] === true,
@@ -454,9 +456,6 @@ export function normalizeTextRecordPolicy(source: unknown, history: GuiHistoryEv
     const policyKeys = applyRuntimeRecordFunction(listRuntimeRecordKeys, Object, [policy]);
     return policyKeys.length ? policy : createGuiOwnDataRecord();
 }
-export function getTextRecordRuntimePolicy(item: GuiTextRecord | null | undefined): GuiTextPolicy {
-    return clonePolicyObject(item ? propertyValue(item, 'policy') : null);
-}
 export function clonePolicyObject(value: unknown): GuiTextPolicy {
     return copyGuiOwnDataRecord(value);
 }
@@ -473,8 +472,8 @@ export function collectTextRecordPolicyEvents(history: unknown): GuiPolicyEvent[
         if (!keys.length)
             continue;
         defineGuiOwnDataProperty(normalized, outputIndex, {
-            at: falsyFallback(propertyValue(entry, 'at'), null),
-            seq: falsyFallback(propertyValue(entry, 'seq'), null),
+            at: propertyValue(entry, 'at') ?? null,
+            seq: propertyValue(entry, 'seq') ?? null,
             type: stringValue(falsyFallback(propertyValue(entry, 'type'), 'event')),
             message: stringValue(falsyFallback(propertyValue(entry, 'message'), '')),
             policy,
@@ -504,8 +503,8 @@ export function normalizeHistoryEvent(record: unknown): GuiHistoryEvent {
     const source = isUnknownRecord(record) ? record : createGuiOwnDataRecord();
     const nestedRecord = isUnknownRecord(source['record']) ? source['record'] : createGuiOwnDataRecord();
     return {
-        at: falsyFallback(source['at'], falsyFallback(source['timestamp'], null)),
-        seq: falsyFallback(source['seq'], null),
+        at: source['at'] ?? source['timestamp'] ?? null,
+        seq: source['seq'] ?? null,
         id: source['id']
             ? stringValue(source['id'])
             : source['itemId']
@@ -535,7 +534,7 @@ export function normalizeRecordHistory(source: unknown): GuiHistoryEvent[] {
     for (let index = 0; index < source.length; index += 1) {
         const entry = normalizeHistoryEvent(source[index]);
         const seq = entry.seq ?? entry.details['seq'] ?? '';
-        const key = `${stringValue(falsyFallback(entry.at, ''))}|${stringValue(falsyFallback(seq, ''))}|${entry.id}|${entry.type}|${entry.message}|${runtimeHistoryDetailKey(entry.details)}`;
+        const key = `${stringValue(entry.at ?? '')}|${stringValue(seq)}|${entry.id}|${entry.type}|${entry.message}|${runtimeHistoryDetailKey(entry.details)}`;
         if (applyRuntimeRecordFunction(runtimeRecordObjectHasOwn, Object, [seen, key]))
             continue;
         defineGuiOwnDataProperty(seen, key, true);

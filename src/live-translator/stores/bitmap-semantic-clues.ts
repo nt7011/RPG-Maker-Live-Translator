@@ -1,4 +1,5 @@
-import type { NativeTextObservation, NativeSourceSpan, SemanticClue, TextRange, Rect, BitmapDrawRef, TextObservationRef, BitmapSurfaceRef, SemanticClueProducer, } from '../semantic-adapters/contract.js';
+import type { SemanticControl } from '../runtime/text-record-types.js';
+import type { NativeTextObservation, NativeSourceSpan, SemanticClue, TextRange, Rect, NativeTextArea, BitmapDrawRef, TextObservationRef, BitmapSurfaceRef, SemanticClueProducer, } from '../semantic-adapters/contract.js';
 import { copyTextTemplate, sameTextIgnoringWhitespace, type TextTemplate } from './styled-text.js';
 import { BITMAP_LIMITS } from './bitmap-limits.js';
 import { indexBitmapSourceCharacters, type BitmapSourceCharacterIndex } from './bitmap-text-layout.js';
@@ -69,6 +70,35 @@ function rectangle(value: unknown): Rect | null {
         ? Object.freeze({ x, y, width, height })
         : null;
 }
+function textArea(value: unknown): NativeTextArea | null {
+    const line = fields(value, ['kind', 'left', 'right']);
+    if (line?.['kind'] === 'line') {
+        const left = line['left'], right = line['right'];
+        return typeof left === 'number' &&
+            typeof right === 'number' &&
+            Number.isFinite(left) &&
+            Number.isFinite(right) &&
+            right > left
+            ? Object.freeze({ kind: 'line', left, right })
+            : null;
+    }
+    const block = fields(value, ['kind', 'rect']);
+    const rect = block?.['kind'] === 'block' ? rectangle(block['rect']) : null;
+    return rect === null ? null : Object.freeze({ kind: 'block', rect });
+}
+function withinTextArea(area: NativeTextArea, observed: NativeTextArea | null): boolean {
+    if (observed === null)
+        return false;
+    const left = observed.kind === 'line' ? observed.left : observed.rect.x;
+    const right = observed.kind === 'line' ? observed.right : observed.rect.x + observed.rect.width;
+    if (area.kind === 'line')
+        return area.left >= left && area.right <= right;
+    return (observed.kind === 'block' &&
+        area.rect.x >= left &&
+        area.rect.x + area.rect.width <= right &&
+        area.rect.y >= observed.rect.y &&
+        area.rect.y + area.rect.height <= observed.rect.y + observed.rect.height);
+}
 function plainSource(text: string): boolean {
     if (text.length === 0)
         return false;
@@ -124,10 +154,12 @@ export function admitSemanticClues(observation: NativeTextObservation, sourceTex
             if (observation.kind !== 'draw') {
                 return rejected('safe-area-without-draw');
             }
-            const data = fields(value, ['kind', 'rect']);
-            const rect = rectangle(data?.['rect']);
-            if (rect !== null)
-                accepted.push(Object.freeze({ kind, rect }));
+            const data = fields(value, ['kind', 'area']);
+            const area = textArea(data?.['area']);
+            if (area !== null &&
+                withinTextArea(area, observation.allocation) &&
+                !(observation.family === 'sprite' && area.kind === 'block' && !/[\r\n\u2028\u2029]/u.test(sourceText)))
+                accepted.push(Object.freeze({ kind, area }));
             else
                 return rejected('invalid-safe-area');
         }
@@ -181,6 +213,7 @@ interface Producer {
     readonly adapter: SemanticClueProducer;
     enabled: boolean;
 }
+export type BitmapSourceContradiction = 'contradicted-by-bitmap-evidence' | 'conflicting-bitmap-source-advances' | 'source-order-contradicts-bitmap-order' | 'source-range-unavailable' | 'source-range-overlap-or-text-mismatch' | 'unpainted-source-prefix' | 'unpainted-source-content-between-draws' | 'non-text-write-breaks-association';
 export interface BitmapSemanticSource {
     readonly observation: TextObservationRef;
     readonly nativeText: string;
@@ -204,13 +237,13 @@ interface DrawContribution {
     readonly source: SourceRecord;
     readonly producer: Producer;
     readonly range: TextRange | null;
-    readonly area: Rect | null;
+    readonly area: NativeTextArea | null;
     readonly surface: BitmapSurfaceRef;
 }
 export interface BitmapSemanticProvenance {
     readonly source: BitmapSemanticSource;
     readonly range: TextRange | null;
-    readonly area: Rect | null;
+    readonly area: NativeTextArea | null;
     readonly surface: BitmapSurfaceRef;
 }
 function matchingSourceRange(source: BitmapSemanticSource, native: TextRange): TextRange | null {
@@ -296,7 +329,7 @@ export function createBitmapSemanticClues(options: {
             ? source
             : null;
     }
-    function rejectSource(observation: TextObservationRef, reason = 'contradicted-by-bitmap-evidence'): void {
+    function invalidateSource(observation: TextObservationRef, reason: BitmapSourceContradiction = 'contradicted-by-bitmap-evidence'): void {
         const source = sources.get(observation);
         if (source === undefined || source.rejected)
             return;
@@ -306,6 +339,18 @@ export function createBitmapSemanticClues(options: {
         options.changed();
     }
     return {
+        sourceControl: (observation: TextObservationRef): SemanticControl => {
+            const source = sources.get(observation);
+            return source?.rejected
+                ? 'invalidated'
+                : source && producers.some((producer) => producer.enabled)
+                    ? source.family
+                    : 'none';
+        },
+        drawInvalidated: (draw: BitmapDrawRef): boolean => {
+            const origin = copies.get(draw)?.origin ?? draw;
+            return (draws.get(origin) ?? []).some((relation) => relation.source.rejected);
+        },
         enabled: () => producers.some((producer) => producer.enabled),
         activeCount: () => producers.filter((producer) => producer.enabled).length,
         sourceActive: (observation: TextObservationRef): boolean => {
@@ -424,7 +469,7 @@ export function createBitmapSemanticClues(options: {
         },
         observeDraw(observation: TextObservationRef, surface: object, entries: Extract<NativeTextObservation, {
             kind: 'draw';
-        }>['draws'], allocation: Rect | null): void {
+        }>['draws'], allocation: NativeTextArea | null): void {
             const source = sources.get(observation);
             if (source === undefined || entries.length === 0 || entries.length > BITMAP_LIMITS.evidence)
                 return;
@@ -437,7 +482,7 @@ export function createBitmapSemanticClues(options: {
                         !sameTextIgnoringWhitespace(source.nativeText.slice(native.start, native.end), entry.text) ||
                         !sameTextIgnoringWhitespace(source.text.slice(matching.start, matching.end), entry.text));
                 }))
-                rejectSource(observation);
+                invalidateSource(observation);
             const surfaceRef = surfaces.getOrInsertComputed(surface, () => Object.freeze({}) as BitmapSurfaceRef);
             const snapshot = Object.freeze({
                 kind: 'draw' as const,
@@ -449,7 +494,7 @@ export function createBitmapSemanticClues(options: {
                     text: entry.text,
                     range: entry.range === null ? null : Object.freeze({ ...entry.range }),
                 }))),
-                allocation: allocation === null ? null : Object.freeze({ ...allocation }),
+                allocation: allocation === null ? null : textArea(allocation),
             });
             const batch = route(snapshot, source);
             const indexed = batch.map(({ producer, clues }) => {
@@ -461,7 +506,7 @@ export function createBitmapSemanticClues(options: {
                         ranges.getOrInsertComputed(member.draw, () => []).push(member.range);
                     }
                 }
-                const areas = clues.filter((clue) => clue.kind === 'safe-area').map((clue) => clue.rect);
+                const areas = clues.filter((clue) => clue.kind === 'safe-area').map((clue) => clue.area);
                 return { producer, ranges, area: intersectSemanticAreas(areas) };
             });
             for (const entry of snapshot.draws) {
@@ -502,7 +547,7 @@ export function createBitmapSemanticClues(options: {
                 return null;
             return (source.characters ??= indexBitmapSourceCharacters(source.text, source.template.controls?.filter(({ kind }) => kind === 'pause').map(({ offset }) => offset)));
         },
-        rejectSource,
+        invalidateSource,
         pendingSources(): readonly BitmapSemanticSource[] {
             for (const token of pending.keys())
                 if (completeSource(token) === null)
@@ -535,11 +580,22 @@ export function createBitmapSemanticClues(options: {
         },
     };
 }
-export function intersectSemanticAreas(areas: readonly Rect[]): Rect | null {
+export function intersectBitmapAllocations(areas: readonly Rect[]): Rect | null {
     if (areas.length === 0)
         return null;
     const x = Math.max(...areas.map((area) => area.x)), y = Math.max(...areas.map((area) => area.y));
     const width = Math.min(...areas.map((area) => area.x + area.width)) - x;
     const height = Math.min(...areas.map((area) => area.y + area.height)) - y;
     return width > 0 && height > 0 ? Object.freeze({ x, y, width, height }) : null;
+}
+export function intersectSemanticAreas(areas: readonly NativeTextArea[]): NativeTextArea | null {
+    if (areas.length === 0)
+        return null;
+    if (areas.some((area) => area.kind === 'line')) {
+        const left = Math.max(...areas.map((area) => (area.kind === 'line' ? area.left : area.rect.x)));
+        const right = Math.min(...areas.map((area) => (area.kind === 'line' ? area.right : area.rect.x + area.rect.width)));
+        return right > left ? Object.freeze({ kind: 'line', left, right }) : null;
+    }
+    const rect = intersectBitmapAllocations(areas.flatMap((area) => (area.kind === 'block' ? [area.rect] : [])));
+    return rect === null ? null : Object.freeze({ kind: 'block', rect });
 }

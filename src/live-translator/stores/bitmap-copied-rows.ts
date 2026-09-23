@@ -2,7 +2,6 @@ import type { BitmapCanvasWrite } from '../observer-hooks/bitmap/bitmap-command-
 import type { CanvasRectangle } from '../observer-hooks/canvas/canvas-appearance-operation.js';
 import type { BitmapCommandAtom, BitmapTextBarriers } from './bitmap-command-rows.js';
 import { boundsIntersect } from './bitmap-command-rows.js';
-import { resolveBitmapSourceGeometry } from './bitmap-line-geometry.js';
 import type { BitmapPixelDevice, PixelEffect } from '../gpu/bitmap-pixel-device.js';
 import { BITMAP_LIMITS } from './bitmap-limits.js';
 export interface BitmapCopiedRows {
@@ -33,7 +32,7 @@ export function prepareBitmapCopiedRows(options: {
     readonly receipt: BitmapCanvasWrite;
     readonly atoms: readonly BitmapCommandAtom[];
     readonly barriers: BitmapTextBarriers;
-    readonly device: Pick<BitmapPixelDevice, 'copyEffect' | 'releaseEffect' | 'measure'>;
+    readonly device: Pick<BitmapPixelDevice, 'copyEffect' | 'releaseEffect'>;
     readonly admit: (count: number) => boolean;
     readonly reject: (reason: string, atoms: readonly BitmapCommandAtom[]) => void;
 }): BitmapCopiedRows | null {
@@ -111,12 +110,33 @@ export function prepareBitmapCopiedRows(options: {
                 }),
             });
             const bounds = rowBounds(atom);
+            const nativeRepaint = atom.repaint;
+            const repaintX = Math.max(from.x, nativeRepaint?.x ?? from.x), repaintY = Math.max(from.y, nativeRepaint?.y ?? from.y);
+            const repaintRight = Math.min(from.x + from.width, (nativeRepaint?.x ?? 0) + (nativeRepaint?.width ?? 0)), repaintBottom = Math.min(from.y + from.height, (nativeRepaint?.y ?? 0) + (nativeRepaint?.height ?? 0));
+            const repaint = nativeRepaint == null || repaintRight <= repaintX || repaintBottom <= repaintY
+                ? null
+                : Object.freeze({
+                    x: repaintX - from.x,
+                    y: repaintY - from.y,
+                    width: repaintRight - repaintX,
+                    height: repaintBottom - repaintY,
+                });
             copies.push(Object.freeze({
                 ...atom,
                 effect,
                 layout,
+                repaint,
                 bounds: Object.freeze({ ...bounds, x: bounds.x - from.x, y: bounds.y - from.y }),
-                geometry: resolveBitmapSourceGeometry(layout, device.measure(atom.text, layout.paint).width),
+                geometry: atom.geometry === null
+                    ? null
+                    : Object.freeze({
+                        ...atom.geometry,
+                        left: atom.geometry.left - from.x,
+                        right: atom.geometry.right - from.x,
+                        textLeft: atom.geometry.textLeft - from.x,
+                        textRight: atom.geometry.textRight - from.x,
+                        y: atom.geometry.y - from.y,
+                    }),
             }));
         }
         const barriers = options.barriers === null

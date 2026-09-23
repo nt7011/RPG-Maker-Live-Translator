@@ -7,7 +7,7 @@ import { getTextRecordDetailDomKey } from '../text-records/identity.js';
 import { createTextRecordDetailRenderKey, createTextRecordRenderContext, createTextRecordRowRenderKey, createTextRecordRows, findActiveTextRecordIndex, getPrioritizedTextRecords, } from '../text-records/lists.js';
 import { createTextRecordStableRenderKey } from '../text-records/render-key.js';
 import type { TextRecordRenderKey } from '../text-records/render-key.js';
-import type { GuiDrawCaptureTrace, GuiForesightSnapshot, GuiTranslationDiagnosticsSnapshot, GuiTranslationStatusSnapshot, GuiPolicySnapshot, GuiTextRecord, UnknownRecord, } from '../types.js';
+import type { GuiDrawCaptureTrace, GuiTranslationDiagnosticsSnapshot, GuiTranslationStatusSnapshot, GuiPolicySnapshot, GuiTextRecord, UnknownRecord, } from '../types.js';
 import { falsyFallback } from '../types.js';
 export type RuntimePanelName = keyof typeof state.renderedPanelKeys;
 type TextRecordRenderContext = ReturnType<typeof createTextRecordRenderContext>;
@@ -50,7 +50,6 @@ export function createRuntimePanelRenderKeys(policySnapshot: GuiPolicySnapshot =
         policy: {
             detailsEnabled: effectivePolicy.textRecords.detailsEnabled,
             inactiveDisplayLimit: effectivePolicy.textRecords.inactiveDisplayLimit,
-            showForesightSpoilers: effectivePolicy.textRecords.showForesightSpoilers,
             selectedDetailKey: effectivePolicy.textRecords.selectedDetailKey,
         },
         records: diagnosticRecords.value,
@@ -60,10 +59,8 @@ export function createRuntimePanelRenderKeys(policySnapshot: GuiPolicySnapshot =
         status: createRuntimePanelRenderKey({
             translationDiagnostics: createTranslationDiagnosticsPanelKeySource(state.translationDiagnostics),
             drawCaptureTrace: createDrawCapturePanelKeySource(state.drawCaptureTrace),
-            foresight: createForesightPanelKeySource(state.foresight),
             diagnosticsPolicy: effectivePolicy.diagnostics,
             drawCapturePolicy: effectivePolicy.drawCaptureTrace,
-            foresightPolicy: effectivePolicy.foresight,
             runtimeFeedHealth: createRuntimeFeedHealthRenderKey(state.runtimeFeedHealth),
         }),
         hooks: createRuntimePanelRenderKey({
@@ -163,24 +160,6 @@ export function createDrawCapturePanelKeySource(trace: GuiDrawCaptureTrace | nul
             event.reason,
             event.status,
         ]),
-    };
-}
-export function createForesightPanelKeySource(snapshot: GuiForesightSnapshot | null): UnknownRecord {
-    const recent = snapshot?.recent ?? [];
-    const scan = recent.at(-1) ?? null;
-    return {
-        updatedAt: falsyFallback(snapshot?.updatedAt, ''),
-        recent: recent.length,
-        latestScan: scan
-            ? [
-                scan.at,
-                scan.status,
-                scan.blocks,
-                scan.stopReason,
-                scan.commandActionsTruncated,
-                scan.commandActions.length,
-            ]
-            : null,
     };
 }
 export function createTextRecordPanelKeySource(records: GuiTextRecord[], options: TextRecordPanelOptions = {}, renderContext: TextRecordRenderContext = createTextRecordRenderContext()): TextRecordPanelKeySource {

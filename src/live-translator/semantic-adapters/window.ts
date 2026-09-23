@@ -4,6 +4,8 @@ import { captureWindowAllocation } from './window/native-allocation.js';
 import { captureHelpAllocation } from './window/help-allocation.js';
 import { nativeSourceSpans } from './shared/source.js';
 function observe(observation: NativeTextObservation): readonly SemanticClue[] {
+    if (observation.family !== 'window' && observation.family !== 'game-message')
+        return [];
     if (observation.kind === 'source') {
         const spans = nativeSourceSpans(observation.text);
         return spans !== null && spans.length > 0 ? [{ kind: 'normalized-source', spans, complete: false }] : [];
@@ -14,9 +16,9 @@ function observe(observation: NativeTextObservation): readonly SemanticClue[] {
     if (members.length > 0)
         clues.push({ kind: 'ordered-members', members });
     if (observation.allocation !== null)
-        clues.push({ kind: 'safe-area', rect: observation.allocation });
+        clues.push({ kind: 'safe-area', area: observation.allocation });
     return clues;
 }
 export function windowAdapter(): SemanticAdapter {
-    return { observe, captures: [captureNativeText, captureWindowAllocation, captureHelpAllocation] };
+    return { family: 'window', observe, captures: [captureNativeText, captureWindowAllocation, captureHelpAllocation] };
 }

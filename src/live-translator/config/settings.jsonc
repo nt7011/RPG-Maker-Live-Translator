@@ -1,4 +1,8 @@
 {
+    "gui": {
+        // Check for translator releases when the monitor opens and every two hours.
+        "checkUpdates": true
+    },
     "translation": {
         // cap translator output (approx. token counts)
         "maxOutputTokens": 512
@@ -9,11 +13,82 @@
         "rejectCounterLike": true
     },
     "adapters": {
-        // Optional native clues, enabled by default. Changes apply after restarting the runtime.
+        // Optional adapters and pretranslation, enabled by default. Changes apply after restarting the runtime.
         // Use Window source order and available text space.
         "window": true,
         // Translate the current message before its native slow reveal completes.
-        "gameMessage": true
+        "gameMessage": true,
+        // Pretranslate upcoming GameMessages. Requires Window and GameMessage.
+        "foresight": true,
+        // Exact literal source clues for text drawn by Sprite instances.
+        "sprite": true
+    },
+    "foresight": {
+        // All Foresight settings apply at startup; restart the game after changes.
+        // Reveal future source text and translations in the monitor and copied view.
+        "showSpoilers": false,
+        // Prioritize messages within N Show Text blocks of the current GameMessage:
+        // 1000 - distance (999, 998, ...). Others and choice labels use
+        // max(0, 200 - distance). Equally distant branch alternatives tie;
+        // a merged continuation uses its nearest reachable path.
+        // Integer 0..999; 0 disables promotion. Cached/repeated/declined blocks count.
+        "prioritizedMessages": 2,
+        // Ignore limits below and restore the broad pre-horizon profile:
+        // no message horizon; 1,000,000 reads, 100,000 nodes, 50,000 candidates,
+        // 16,384 frontiers, depth 128, 33,554,432 retained text units;
+        // scan slices of 4,096 reads / 262,144 text units, drain 128;
+        // projection 4,096 work per slice / 1,000,000 total.
+        // Native capture and display use their original defaults shown below.
+        "nearlyUnbounded": false,
+        "limits": {
+            // Positive integers. A root shares these budgets across all branches and common events.
+            "scan": {
+                "targetMessages": 10,
+                // Extra allowance to finish open forks after reaching the target.
+                "messages": 20,
+                // Command reads, including route entries and common-event returns.
+                "reads": 2048,
+                // Also bounds accumulated common-event call frames.
+                "nodes": 256,
+                // Message and choice-label occurrences, including repeated text.
+                "candidates": 64,
+                "frontiers": 64,
+                // Maximum branch nesting and common-event call depth.
+                "depth": 16,
+                // Retained and inspected UTF-16 text units; inspected includes declined text.
+                "units": 131072,
+                "inspectedUnits": 262144,
+                // Per preparation turn: reads (shared with validation), inspected text, drain attempts.
+                "slice": 128,
+                "sliceUnits": 16384,
+                "drain": 8
+            },
+            "projection": {
+                // Tree-reduction node/edge work per preparation turn and per root.
+                "slice": 256,
+                "work": 4096
+            },
+            "view": {
+                // Monitor and copy limits, applied after tree reduction.
+                "nodes": 192,
+                "edges": 512,
+                "texts": 256,
+                // UTF-16 units per source or translated preview.
+                "snippet": 320,
+                // Deeper source addresses are omitted whole, never shortened.
+                "pathDepth": 128
+            },
+            "native": {
+                // Per-message/choice-list UTF-16 units and maximum number of choices.
+                "messageUnits": 16384,
+                "choices": 16384,
+                "indent": 128,
+                // Reads to verify the current native submission and nested capture stacks.
+                "captureReads": 4096,
+                "commandFrames": 128,
+                "windowFrames": 128
+            }
+        }
     },
     "manipulation": {
         "ignoreTranslationRegex": [],

@@ -1,6 +1,7 @@
 type HookMethod = (this: unknown, ...arguments_: unknown[]) => unknown;
 type HookSetter = (this: unknown, value: unknown) => unknown;
 type EnabledReader = () => boolean;
+export type AddOwnedHook = (spec: OwnedHookSpec, reportFailure: (error: unknown) => void) => boolean;
 interface OwnedHookSpecBase {
     readonly target: object;
     readonly key: PropertyKey;
@@ -8,10 +9,10 @@ interface OwnedHookSpecBase {
 }
 export type OwnedHookSpec = (OwnedHookSpecBase & {
     readonly kind: 'method';
-    readonly wrap: (nativeMethod: HookMethod, isEnabled: EnabledReader) => HookMethod;
+    readonly wrap: (nativeMethod: HookMethod, isEnabled: EnabledReader, add: AddOwnedHook) => HookMethod;
 }) | (OwnedHookSpecBase & {
     readonly kind: 'setter';
-    readonly wrap: (nativeSetter: HookSetter, isEnabled: EnabledReader) => HookSetter;
+    readonly wrap: (nativeSetter: HookSetter, isEnabled: EnabledReader, add: AddOwnedHook) => HookSetter;
 });
 export type OwnedHookDisposal = 'disposed' | 'already-disposed' | 'ownership-lost' | 'failed';
 export interface OwnedHookLease {
@@ -145,7 +146,7 @@ function installedDescriptor(spec: OwnedHookSpec, located: LocatedProperty, wrap
         set: wrapper,
     };
 }
-function prepareHook(spec: OwnedHookSpec, isEnabled: EnabledReader): InstalledHook | null {
+function prepareHook(spec: OwnedHookSpec, isEnabled: EnabledReader, add: AddOwnedHook): InstalledHook | null {
     const located = locateProperty(spec.target, spec.key);
     if (located === null) {
         if (spec.optional === true)
@@ -157,14 +158,14 @@ function prepareHook(spec: OwnedHookSpec, isEnabled: EnabledReader): InstalledHo
         if ('get' in located.descriptor || typeof located.descriptor.value !== 'function') {
             throw new TypeError(`${String(spec.key)} must be an ordinary data method.`);
         }
-        wrapper = spec.wrap(located.descriptor.value as HookMethod, isEnabled);
+        wrapper = spec.wrap(located.descriptor.value as HookMethod, isEnabled, add);
     }
     else {
         const nativeSetter = Reflect.get(located.descriptor, 'set') as unknown;
         if ('value' in located.descriptor || typeof nativeSetter !== 'function') {
             throw new TypeError(`${String(spec.key)} must be an accessor with a setter.`);
         }
-        wrapper = spec.wrap(nativeSetter as HookSetter, isEnabled);
+        wrapper = spec.wrap(nativeSetter as HookSetter, isEnabled, add);
     }
     if (typeof wrapper !== 'function') {
         throw new TypeError(`Hook wrapper for ${String(spec.key)} must be callable.`);
@@ -177,7 +178,142 @@ function prepareHook(spec: OwnedHookSpec, isEnabled: EnabledReader): InstalledHo
         installedDescriptor: installedDescriptor(spec, located, wrapper),
     };
 }
-export function installOwnedHooks(specs: readonly OwnedHookSpec[], reportFailure: (error: unknown) => void): OwnedHookLease {
+function enabledReader(token: InstallationToken, operation?: InstallationToken): EnabledReader {
+    return () => token.enabled && (operation === undefined || operation.enabled);
+}
+function createHookOwner(token: InstallationToken, reportFailure: (error: unknown) => void, maxAddedHooks: number) {
+    interface Registration {
+        readonly target: WeakRef<object>;
+        added: number;
+    }
+    interface Entry {
+        readonly registration: Registration;
+        readonly hooks: Map<PropertyKey, {
+            readonly hook: InstalledHook;
+            readonly order: number;
+        }>;
+    }
+    const byTarget = new WeakMap<object, Entry>();
+    const registrations = new Set<Registration>();
+    let added = 0, order = 0, busy = false, disposed = false;
+    function forget(registration: Registration): void {
+        if (!registrations.delete(registration))
+            return;
+        added -= registration.added;
+        registry.unregister(registration);
+    }
+    const registry = new FinalizationRegistry<Registration>(forget);
+    function entry(target: object): Entry {
+        let found = byTarget.get(target);
+        if (found === undefined) {
+            const registration = { target: new WeakRef(target), added: 0 };
+            found = { registration, hooks: new Map() };
+            byTarget.set(target, found);
+            registrations.add(registration);
+            registry.register(target, registration, registration);
+        }
+        return found;
+    }
+    function own(hooks: readonly InstalledHook[], targets: readonly object[], dynamic = false): void {
+        for (const target of targets)
+            entry(target);
+        for (const hook of hooks) {
+            const found = entry(hook.target);
+            found.hooks.set(hook.key, { hook, order: order++ });
+            if (dynamic) {
+                found.registration.added++;
+                added++;
+            }
+        }
+    }
+    function add(spec: OwnedHookSpec, reportAdditionFailure: (error: unknown) => void): boolean {
+        if (!token.enabled || disposed || busy)
+            return false;
+        const reservation = targetInstallations.get(spec.target);
+        if (reservation !== undefined && reservation !== token)
+            return false;
+        const prior = byTarget.get(spec.target)?.hooks.get(spec.key);
+        if (prior !== undefined)
+            return sameDescriptor(Object.getOwnPropertyDescriptor(spec.target, spec.key), prior.hook.installedDescriptor);
+        if (added >= maxAddedHooks)
+            return false;
+        busy = true;
+        targetInstallations.set(spec.target, token);
+        const operation = { enabled: false };
+        let hook: InstalledHook | null = null;
+        let attempted = false;
+        try {
+            hook = prepareHook(spec, enabledReader(token, operation), add);
+            if (hook === null)
+                return false;
+            if (!originalPropertyIsPresent(hook))
+                throw new Error('Discovered hook changed before installation.');
+            attempted = true;
+            Object.defineProperty(hook.target, hook.key, hook.installedDescriptor);
+            if (!sameDescriptor(Object.getOwnPropertyDescriptor(hook.target, hook.key), hook.installedDescriptor))
+                throw new Error('Could not verify discovered hook installation.');
+            own([hook], [], true);
+            operation.enabled = true;
+            return true;
+        }
+        catch (error) {
+            const rollback = attempted && hook !== null ? cleanupHooks([hook], reportAdditionFailure) : null;
+            if (hook !== null && rollback !== null && (rollback.failed || rollback.ownershipLost))
+                own([hook], [], true);
+            safeReport(reportAdditionFailure, error);
+            return false;
+        }
+        finally {
+            if (reservation === undefined && byTarget.get(spec.target) === undefined)
+                targetInstallations.delete(spec.target);
+            busy = false;
+        }
+    }
+    function dispose(): OwnedHookDisposal {
+        if (disposed)
+            return 'already-disposed';
+        if (busy)
+            return 'failed';
+        busy = true;
+        token.enabled = false;
+        const targets: object[] = [];
+        const hooks: {
+            readonly hook: InstalledHook;
+            readonly order: number;
+        }[] = [];
+        for (const registration of registrations) {
+            const target = registration.target.deref();
+            if (target === undefined) {
+                forget(registration);
+                continue;
+            }
+            targets.push(target);
+            const found = byTarget.get(target);
+            if (found !== undefined)
+                hooks.push(...found.hooks.values());
+        }
+        hooks.sort((a, b) => a.order - b.order);
+        const result = cleanupHooks(hooks.map((item) => item.hook), reportFailure);
+        busy = false;
+        if (result.failed)
+            return 'failed';
+        disposed = true;
+        releaseTargets(targets, token);
+        for (const registration of registrations)
+            forget(registration);
+        for (const target of targets)
+            byTarget.delete(target);
+        if (result.ownershipLost) {
+            safeReport(reportFailure, new Error('Hook installation no longer owns every installed descriptor.'));
+            return 'ownership-lost';
+        }
+        return 'disposed';
+    }
+    return { own, add, dispose };
+}
+export function installOwnedHooks(specs: readonly OwnedHookSpec[], reportFailure: (error: unknown) => void, maxAddedHooks = 0): OwnedHookLease {
+    if (!Number.isSafeInteger(maxAddedHooks) || maxAddedHooks < 0)
+        throw new RangeError('Dynamic hook capacity must be a non-negative integer.');
     const targets: object[] = [];
     for (const spec of specs) {
         if (targets.includes(spec.target))
@@ -192,7 +328,8 @@ export function installOwnedHooks(specs: readonly OwnedHookSpec[], reportFailure
     const token: InstallationToken = { enabled: false };
     for (const target of targets)
         targetInstallations.set(target, token);
-    const isEnabled = (): boolean => token.enabled;
+    const owner = createHookOwner(token, reportFailure, maxAddedHooks);
+    const isEnabled = enabledReader(token);
     let hooks: readonly InstalledHook[];
     try {
         const seen: {
@@ -205,7 +342,7 @@ export function installOwnedHooks(specs: readonly OwnedHookSpec[], reportFailure
                 throw new TypeError(`Duplicate hook target for ${String(spec.key)}.`);
             }
             seen.push({ target: spec.target, key: spec.key });
-            const hook = prepareHook(spec, isEnabled);
+            const hook = prepareHook(spec, isEnabled, owner.add);
             if (hook !== null)
                 prepared.push(hook);
         }
@@ -243,29 +380,7 @@ export function installOwnedHooks(specs: readonly OwnedHookSpec[], reportFailure
         }
         throw error;
     }
+    owner.own(hooks, targets);
     token.enabled = true;
-    let disposed = false;
-    let disposalInProgress = false;
-    return {
-        dispose: (): OwnedHookDisposal => {
-            if (disposed)
-                return 'already-disposed';
-            if (disposalInProgress)
-                return 'failed';
-            disposalInProgress = true;
-            token.enabled = false;
-            const cleanup = cleanupHooks(hooks, reportFailure);
-            if (cleanup.failed) {
-                disposalInProgress = false;
-                return 'failed';
-            }
-            disposed = true;
-            releaseTargets(targets, token);
-            if (cleanup.ownershipLost) {
-                safeReport(reportFailure, new Error('Hook installation no longer owns every installed descriptor.'));
-                return 'ownership-lost';
-            }
-            return 'disposed';
-        },
-    };
+    return { dispose: owner.dispose };
 }

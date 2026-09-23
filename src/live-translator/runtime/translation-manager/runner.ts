@@ -1,3 +1,4 @@
+import type { NumericTemplateOperation } from './numeric-templates.js';
 import type { CancellationClassification } from '../cancellation.js';
 import type { TranslatorExchange } from '../text-record-types.js';
 import { countTranslationMarkers, preservesTranslationMarkers } from '../translation-text-codec.js';
@@ -90,6 +91,7 @@ interface TranslationManagerRunnerSubscriberCandidate {
     readonly context: unknown;
 }
 interface TranslationManagerRunnerJobCandidate {
+    readonly numericTemplate?: NumericTemplateOperation;
     controller: unknown;
     deltaCount: unknown;
     lastDeltaAt: unknown;
@@ -194,7 +196,7 @@ function createRealmRunnerControllerFactory(runtimeScope: object): TranslationMa
         const { createAbortError, classifyCancellation, logger, preview, provider, maxRetries, retryBaseMs, retryMaxMs, requestTimeoutMs, } = source;
         const { finalizeProviderSuccess } = source.controllerFacades.eligibility;
         const { commitWithAuthority, finishJob } = source.controllerFacades.lineages;
-        const { getActiveSubscribers } = source.controllerFacades.jobs;
+        const { getActiveSubscribers, claimJobDispatch, releaseJobDispatch } = source.controllerFacades.jobs;
         const { settleJobSubscribers, markJobSubscribersRunning } = source.controllerFacades.subscribers;
         const { schedulePump } = source.controllerFacades.queue;
         const activeRunLeases = new Map<unknown, TranslationManagerRunnerRunLease>();
@@ -275,11 +277,13 @@ function createRealmRunnerControllerFactory(runtimeScope: object): TranslationMa
                 readonly hook?: unknown;
             }).hook;
             const highestHook = highest?.hook;
-            const hook = (highestHook as FalsySensitiveValue)
-                ? highestHook
-                : (jobHook as FalsySensitiveValue)
-                    ? jobHook
-                    : '';
+            const hook = jobHook === 'foresight'
+                ? jobHook
+                : (highestHook as FalsySensitiveValue)
+                    ? highestHook
+                    : (jobHook as FalsySensitiveValue)
+                        ? jobHook
+                        : '';
             return Object.freeze({ hook, records: Object.freeze(records) });
         }
         function constructJobController(): RuntimeAbortControllerCandidate | null {
@@ -341,7 +345,7 @@ function createRealmRunnerControllerFactory(runtimeScope: object): TranslationMa
                         Reflect.apply(onDelta, subscriber, [partial]);
                     }
                     catch (error) {
-                        observe(() => logger.warn(`[TranslationService] onDelta failed for ${subscriberCandidate.id as string}`, error));
+                        observeJobLog(job, () => logger.warn(`[TranslationService] onDelta failed for ${subscriberCandidate.id as string}`, error));
                     }
                 });
             });
@@ -397,6 +401,12 @@ function createRealmRunnerControllerFactory(runtimeScope: object): TranslationMa
             catch {
             }
             return Object.freeze({ code, error: operationalError, kind, message });
+        }
+        function observeJobLog(job: unknown, action: () => unknown): void {
+            observe(() => {
+                if ((job as TranslationManagerRunnerJobCandidate).hook !== 'foresight')
+                    action();
+            });
         }
         function recordTerminalDiagnostics(job: unknown, terminalStatus: unknown, terminalSubscribers: TranslationManagerRunnerTerminalSubscriberSnapshot, message: unknown = ''): void {
             const jobCandidate = job as TranslationManagerRunnerJobCandidate;
@@ -456,8 +466,13 @@ function createRealmRunnerControllerFactory(runtimeScope: object): TranslationMa
                     publication.successFinalizationAttempted = true;
                     try {
                         commitWithAuthority(publication.job, (authority: unknown) => {
-                            finalizeProviderSuccess(authority, publication.value);
+                            const numeric = (publication.job as TranslationManagerRunnerJobCandidate).numericTemplate;
+                            if (numeric)
+                                numeric.complete();
+                            else
+                                finalizeProviderSuccess(authority, publication.value);
                         });
+                        (publication.job as TranslationManagerRunnerJobCandidate).numericTemplate?.fail(false, 'operation ended without publication');
                     }
                     catch (error) {
                         const classification = classifyFailure(error);
@@ -471,13 +486,16 @@ function createRealmRunnerControllerFactory(runtimeScope: object): TranslationMa
                         });
                     }
                 }
+                if (publication.action === 'reject') {
+                    (publication.job as TranslationManagerRunnerJobCandidate).numericTemplate?.fail(publication.classification?.kind !== 'cancellation', publication.classification?.message ?? 'construction failed');
+                }
                 if (!publication.subscribersSettled) {
                     try {
                         settleJobSubscribers(publication.job, publication.action, publication.value, publication.classification);
                         publication.subscribersSettled = true;
                     }
                     catch (error) {
-                        observe(() => logger.warn('[TranslationService] terminal subscriber publication failed', error));
+                        observeJobLog(publication.job, () => logger.warn('[TranslationService] terminal subscriber publication failed', error));
                     }
                 }
                 if (!publication.jobFinished) {
@@ -486,7 +504,7 @@ function createRealmRunnerControllerFactory(runtimeScope: object): TranslationMa
                         publication.jobFinished = true;
                     }
                     catch (error) {
-                        observe(() => logger.warn('[TranslationService] terminal job publication failed', error));
+                        observeJobLog(publication.job, () => logger.warn('[TranslationService] terminal job publication failed', error));
                     }
                 }
                 if (!publication.diagnosticsRecorded) {
@@ -579,6 +597,7 @@ function createRealmRunnerControllerFactory(runtimeScope: object): TranslationMa
             }
             if (lease.capacityOwned)
                 return;
+            releaseJobDispatch(lease.job);
             if (activeRunLeases.get(lease.job) === lease)
                 activeRunLeases.delete(lease.job);
             if (!lease.cleanupScheduled) {
@@ -654,6 +673,7 @@ function createRealmRunnerControllerFactory(runtimeScope: object): TranslationMa
             if (lease.statusPublished || lease.startedAtPublished || lease.controllerPublished || lease.capacityOwned) {
                 return false;
             }
+            releaseJobDispatch(lease.job);
             if (activeRunLeases.get(lease.job) === lease)
                 activeRunLeases.delete(lease.job);
             pendingRunRollbacks.delete(lease);
@@ -687,7 +707,7 @@ function createRealmRunnerControllerFactory(runtimeScope: object): TranslationMa
                 settlePendingRunCleanups();
             })
                 .catch((error: unknown) => {
-                observe(() => logger.warn('[TranslationService] terminal runner task failed', error));
+                observeJobLog(job, () => logger.warn('[TranslationService] terminal runner task failed', error));
             });
             return activate;
         }
@@ -746,9 +766,11 @@ function createRealmRunnerControllerFactory(runtimeScope: object): TranslationMa
                 activate = prepareOwnedRunTask(job, signal, lease);
             }
             catch (startupError) {
-                observe(() => logger.warn('[TranslationService] runner startup preparation failed', startupError));
+                observeJobLog(job, () => logger.warn('[TranslationService] runner startup preparation failed', startupError));
                 return false;
             }
+            if (!claimJobDispatch(job))
+                return false;
             activeRunLeases.set(job, lease);
             try {
                 lease.capacityOwned = true;
@@ -762,7 +784,7 @@ function createRealmRunnerControllerFactory(runtimeScope: object): TranslationMa
             }
             catch (startupError) {
                 rollbackRunStartup(lease);
-                observe(() => logger.warn('[TranslationService] runner startup commit failed', startupError));
+                observeJobLog(job, () => logger.warn('[TranslationService] runner startup commit failed', startupError));
                 return false;
             }
             observe(() => markJobSubscribersRunning(job));
@@ -784,7 +806,7 @@ function createRealmRunnerControllerFactory(runtimeScope: object): TranslationMa
                 activate();
             }
             catch (activationError) {
-                observe(() => logger.warn('[TranslationService] runner activation failed', activationError));
+                observeJobLog(job, () => logger.warn('[TranslationService] runner activation failed', activationError));
             }
             return true;
         }
@@ -792,6 +814,7 @@ function createRealmRunnerControllerFactory(runtimeScope: object): TranslationMa
             const jobCandidate = job as TranslationManagerRunnerJobCandidate;
             let attempt = 0;
             let markerRetries = 0;
+            const numeric = jobCandidate.numericTemplate;
             for (;;) {
                 let markerFailure: unknown = null;
                 attempt += 1;
@@ -805,9 +828,11 @@ function createRealmRunnerControllerFactory(runtimeScope: object): TranslationMa
                 try {
                     const providerText = jobCandidate.text;
                     const providerKey = jobCandidate.key;
-                    if (markerRetries > 0 && signal && (signal as {
-                        readonly aborted?: unknown;
-                    }).aborted) {
+                    if ((numeric || markerRetries > 0) &&
+                        signal &&
+                        (signal as {
+                            readonly aborted?: unknown;
+                        }).aborted) {
                         throw createAbortError((signal as {
                             readonly reason?: unknown;
                         }).reason);
@@ -817,6 +842,8 @@ function createRealmRunnerControllerFactory(runtimeScope: object): TranslationMa
                         output: null,
                         markerMismatch: markerRetries > 0,
                     });
+                    if (numeric && !numeric.dispatch())
+                        throw createAbortError('Numeric construction was revoked.');
                     const translated = await provider.translate({
                         text: providerText,
                         key: providerKey,
@@ -827,7 +854,7 @@ function createRealmRunnerControllerFactory(runtimeScope: object): TranslationMa
                         metadata: jobCandidate.metadata,
                         promptContext: Object.freeze({
                             hasControlCodes: countTranslationMarkers(providerKey as string) > 0,
-                            markerCorrection: markerRetries > 0,
+                            markerCorrection: numeric?.markerCorrection ?? markerRetries > 0,
                         } satisfies PromptContext),
                         onDelta: (partial: unknown) => {
                             notifyDelta(job, partial);
@@ -854,20 +881,28 @@ function createRealmRunnerControllerFactory(runtimeScope: object): TranslationMa
                         }
                         throw emptyError;
                     }
-                    if (!preservesTranslationMarkers(providerKey as string, translated) && markerRetries < 3) {
+                    if (numeric && !numeric.validate(translated)) {
+                        const structureError = new runtime.Error('Translator changed numeric template structure.');
+                        structureError.code = 'NUMERIC_TEMPLATE_STRUCTURE';
+                        structureError.retryable = false;
+                        throw structureError;
+                    }
+                    if (!numeric &&
+                        !preservesTranslationMarkers(providerKey as string, translated) &&
+                        markerRetries < 3) {
                         const markerError = new runtime.Error('Translator changed the formatting marker count.');
                         markerError.code = 'TRANSLATION_MARKER_MISMATCH';
                         markerError.retryable = true;
                         markerFailure = markerError;
                         throw markerError;
                     }
-                    observe(() => logger.debug(`[TranslationService] ${jobCandidate.id as string} completed "${preview(jobCandidate.key) as string}"`));
+                    observeJobLog(job, () => logger.debug(`[TranslationService] ${jobCandidate.id as string} completed "${preview(jobCandidate.key) as string}"`));
                     return translated;
                 }
                 catch (error) {
                     const classification = classifyFailure(error);
                     const operationalError = classification.error;
-                    if (classification.kind === 'cancellation')
+                    if (numeric || classification.kind === 'cancellation')
                         throw operationalError;
                     observe(() => {
                         jobCandidate.lastError = operationalError;
@@ -900,7 +935,7 @@ function createRealmRunnerControllerFactory(runtimeScope: object): TranslationMa
                         retryInMs: waitMs,
                         error: classification.message,
                     })));
-                    observe(() => logger.warn(`[TranslationService] ${jobCandidate.id as string} attempt ${attempt as unknown as string} failed; retrying in ${waitMs as string}ms.`, operationalError));
+                    observeJobLog(job, () => logger.warn(`[TranslationService] ${jobCandidate.id as string} attempt ${attempt as unknown as string} failed; retrying in ${waitMs as string}ms.`, operationalError));
                     if (!markerMismatch)
                         await waitForRetry(waitMs, signal);
                 }

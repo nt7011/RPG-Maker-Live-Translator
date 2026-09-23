@@ -1,13 +1,16 @@
+import { bitmapSemanticCandidates, bitmapRowCorrespondence, bitmapCommonSourceMembers, } from '../../stores/bitmap-semantic-candidates.js';
+import { partitionBitmapRows, prepareBitmapNativeRows } from '../../stores/bitmap-native-fields.js';
+import type { SemanticControl } from '../text-record-types.js';
 import { resolveBitmapSourceGeometry, sameBitmapRow } from '../../stores/bitmap-line-geometry.js';
 import { textTemplate } from '../../stores/styled-text.js';
 import { createTextRecordsPublication } from '../text-records.js';
 import { acceptBitmapGrowingText, closeBitmapGrowingText, continuesBitmapGrowingText, supportsBitmapGrowingText, type BitmapGrowingText, } from '../../stores/bitmap-growing-text.js';
 import type { SemanticAdapter, TextObservationRef } from '../../semantic-adapters/contract.js';
 import { createBitmapSemanticDiagnostics } from '../../stores/bitmap-semantic-diagnostics.js';
-import { createBitmapSemanticClues, type BitmapSemanticSource } from '../../stores/bitmap-semantic-clues.js';
-import { layoutBitmapAssociation, supportsBitmapAssociation, type BitmapAssociationLayout, } from '../../stores/bitmap-association-layout.js';
+import { createBitmapSemanticClues, type BitmapSemanticSource, type BitmapSourceContradiction, } from '../../stores/bitmap-semantic-clues.js';
+import { layoutBitmapAssociation, type BitmapAssociationLayout } from '../../stores/bitmap-association-layout.js';
 import { createSemanticTextObserver } from '../../observer-hooks/semantic-text-observer.js';
-import type { BitmapTextDraw } from '../../stores/bitmap-text-layout.js';
+import { bitmapSourceRepaintRegion } from '../../stores/bitmap-text-layout.js';
 import { BITMAP_LIMITS } from '../../stores/bitmap-limits.js';
 import { captureRuntimeTiming, timed } from '../diagnostic-timing.js';
 import { observeBitmapCaptureAbort } from '../bitmap-capture-diagnostics.js';
@@ -15,16 +18,18 @@ import type { RuntimeResourceObserver } from '../diagnostics-ingress.js';
 import { createNativeLifetime } from '../native-lifetime.js';
 import { createBitmapContentStore, textOrigin } from '../../stores/bitmap-content.js';
 import { prepareBitmapCopiedRows, type BitmapCopiedRows } from '../../stores/bitmap-copied-rows.js';
-import { createBitmapFragmentPresentation } from './bitmap-fragment-presentation.js';
-import { createBitmapPixelDevice, type BitmapPixelDevice, type PixelCapture, type PixelProof, type PixelProofFailure, type PixelGroupProof, type PixelBounds, type PixelEffect, } from '../../gpu/bitmap-pixel-device.js';
+import { createBitmapFragmentPresentation } from '../../presentation/bitmap-fragment-presentation.js';
+import { createBitmapPixelDevice, type BitmapPixelDevice, type PixelCapture, type PixelProof, type PixelProofFailure, type PixelGroupProof, type PixelBounds, type PixelEffect, type PixelTextEvidence, type PixelTextGroup, } from '../../gpu/bitmap-pixel-device.js';
 import { installBitmapCommandObserver, createBitmapSourceReader, type BitmapTextCommand, type BitmapCanvasWrite, } from '../../observer-hooks/bitmap/bitmap-command-observer.js';
-import { locateProperty, type OwnedHookDisposal, type OwnedHookLease, type OwnedHookSpec, } from '../../observer-hooks/owned-hook-installer.js';
+import { installOwnedHooks, locateProperty, type OwnedHookDisposal, type OwnedHookLease, type OwnedHookSpec, } from '../../observer-hooks/owned-hook-installer.js';
 import { createBitmapRenderHost, type BitmapRenderBacking, type BitmapRenderUse, type BitmapDemandUse, } from '../../presentation/bitmap-render-host.js';
 import { assembleBitmapCommandRows, boundsIntersect, type BitmapCommandAtom, type BitmapTextBarriers, } from '../../stores/bitmap-command-rows.js';
-import { assembleBitmapTextAssociations, bitmapAssociationPredecessors, bitmapSemanticCandidates, type BitmapTextAssociation, } from '../../stores/bitmap-text-associations.js';
+import { assembleBitmapTextAssociations, planBitmapAssociationPredecessors, type BitmapTextAssociation, } from '../../stores/bitmap-text-associations.js';
 import { createSemanticTextStore, type SemanticTextChangeSet, type SemanticTranslationAttempt, type SemanticTextRevisionHandle, } from '../../stores/semantic-text-store.js';
 import { createSemanticTextTranslationHandoff } from './semantic-text-translation.js';
-import { createBitmapTranslationDemand, bitmapRegionsVisible, bitmapDemandContext, type BitmapTranslationDemand, } from './bitmap-translation-demand.js';
+import { createForesight } from './foresight.js';
+import type { ForesightSettings } from '../../configuration/foresight.js';
+import { createBitmapTranslationDemand, bitmapRegionsVisible, bitmapDemandContext, type BitmapTranslationDemand, } from '../../stores/bitmap-translation-demand.js';
 import type { RuntimeDiagnosticFact, RuntimeDiagnosticsIngress } from '../diagnostics-ingress.js';
 import type { TranslationManagerService } from '../translation-manager/manager.js';
 import { commitDescriptorTransaction, compensateDescriptorTransaction, createOwnDataDescriptorShadowUpdate, type DescriptorTransactionUpdate, } from '../descriptor-transaction.js';
@@ -39,6 +44,9 @@ export interface BitmapCoreOptions {
     readonly reportFailure: (failure: unknown) => void;
     readonly claimLifetimeOwner: (lease: BitmapCoreLifetimeLease) => void;
     readonly semanticAdapters?: readonly SemanticAdapter[];
+    readonly foresight?: boolean;
+    readonly foresightSettings?: ForesightSettings;
+    readonly logger?: unknown;
     readonly nativeHooks?: readonly OwnedHookSpec[];
 }
 interface Association extends BitmapTextAssociation {
@@ -49,12 +57,13 @@ interface Association extends BitmapTextAssociation {
 interface PendingTemplate {
     readonly source: BitmapSemanticSource;
     readonly handle: SemanticTextRevisionHandle;
-    changed: (() => void) | null;
+    changed: ((presentationChanged: boolean) => void) | null;
 }
 interface DisplayProof {
-    facts: readonly RuntimeDiagnosticFact[];
+    readonly facts: readonly RuntimeDiagnosticFact[];
     visible: boolean | null;
     submitted: boolean;
+    reported: boolean;
     rejected: ((groups: readonly PixelGroupProof[] | undefined) => void) | null;
     failure?: PixelProofFailure | null;
     groups?: readonly PixelGroupProof[];
@@ -69,12 +78,17 @@ interface SourceState {
     epoch: number;
     atoms: BitmapCommandAtom[];
     associations: readonly Association[];
+    nativeRows: {
+        readonly rows: ReturnType<typeof assembleBitmapCommandRows>;
+        readonly plans: ReturnType<typeof prepareBitmapNativeRows>;
+    } | null;
     backing: BitmapRenderBacking | null;
     display: HTMLCanvasElement | null;
     proof: DisplayProof | null;
     dirty: boolean;
+    membershipDirty: boolean;
     observed: boolean;
-    retryOnUse: boolean;
+    capacityRevision: number | null;
     rejectionEpoch: number;
 }
 interface Capture {
@@ -82,7 +96,7 @@ interface Capture {
     readonly y: number;
     readonly lineHeight: number;
     readonly token: PixelCapture;
-    readonly commands: Pick<BitmapCommandAtom, 'text' | 'layout' | 'geometry' | 'sequence' | 'draw'>[];
+    readonly commands: Pick<BitmapCommandAtom, 'text' | 'layout' | 'geometry' | 'repaint' | 'sequence' | 'draw'>[];
     bounds: PixelBounds | null;
     valid: boolean;
 }
@@ -97,7 +111,7 @@ function prototype(scope: Record<PropertyKey, unknown>, key: string): object {
 export function installBitmapCore(options: BitmapCoreOptions): void {
     const { scope, coreGeneration, diagnostics } = options;
     const timing = captureRuntimeTiming(diagnostics, coreGeneration);
-    const abort = observeBitmapCaptureAbort(diagnostics.acceptBitmapTextRejection, coreGeneration, abortCapture);
+    const abort = observeBitmapCaptureAbort(diagnostics.acceptBitmapTextRejection, coreGeneration, discardCapture);
     function resourceObserver(accept: RuntimeDiagnosticsIngress['acceptResourceEvent']): RuntimeResourceObserver | undefined {
         return accept === undefined
             ? undefined
@@ -153,6 +167,7 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
         demand: observeDemand,
         releaseOutput: (output) => {
             priorities.releaseOutput(output);
+            foresight?.releaseOutput(output);
             for (const value of demand.values()) {
                 if (!value.outputs.delete(output))
                     continue;
@@ -176,6 +191,7 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
         generation: coreGeneration,
         store: semantic,
         onScreenGameMessages: priorities.onScreenGameMessages,
+        foresight: () => foresight?.snapshot() ?? null,
     });
     const translations = createSemanticTextTranslationHandoff({
         requester: options.translationService,
@@ -201,8 +217,9 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
         outputs: Map<number, boolean | null>;
         episode: object;
     }>();
-    let gpu: BitmapPixelDevice | null = null, observer: OwnedHookLease | null = null, publication: DescriptorTransactionUpdate | null = null;
+    let gpu: BitmapPixelDevice | null = null, observer: OwnedHookLease | null = null, foresightObserver: OwnedHookLease | null = null, publication: DescriptorTransactionUpdate | null = null;
     let active = false, disposed = false, disposing = false, flushing = false;
+    let nativeWrites = 0, withdrawing = 0;
     let nextId = 1, clueVersion = 0, sequence = 0, displayRevision = 0, retainedAtoms = 0;
     const batches = new Map<SourceState, Capture>(), captures = new Map<BitmapTextCommand, Capture>();
     let pendingCopiedAtoms = 0;
@@ -226,6 +243,7 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
                         state.atoms.some((atom) => atom.draw !== undefined && clues?.copiedFrom(atom.draw, surface) === true));
                 for (const state of selected) {
                     state.dirty = true;
+                    state.membershipDirty = true;
                     withdraw(state);
                 }
             },
@@ -233,6 +251,16 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
             ...(semanticDiagnostics === undefined ? {} : { diagnostics: semanticDiagnostics }),
         })
         : null;
+    const foresight = createForesight({
+        scope,
+        enabled: options.foresight === true,
+        ...(options.foresightSettings === undefined ? {} : { settings: options.foresightSettings }),
+        logger: options.logger,
+        adapters: options.semanticAdapters ?? [],
+        requester: options.translationService,
+        accepted: (source) => clues?.completeSource(source)?.family === 'game-message',
+        changed: textRecords.changed,
+    });
     const semanticObserver = clues === null
         ? null
         : createSemanticTextObserver({
@@ -240,6 +268,7 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
             adapters: options.semanticAdapters ?? [],
             clues,
             reportFailure: options.reportFailure,
+            ...(foresight === null ? {} : { messageOrigin: foresight.position }),
             ...(semanticDiagnostics === undefined ? {} : { diagnostics: semanticDiagnostics }),
         });
     function probeSource(state: SourceState, action = 'updated'): void {
@@ -432,8 +461,9 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
                 return null;
             const snapshot = gpu.describeSnapshot(source, [
                 {
-                    effects: row.effects,
-                    draws: row.atoms.map((atom) => ({ text: atom.text, layout: atom.layout })),
+                    ...textEvidence(row.atoms),
+                    draws: [],
+                    targetRegions: [],
                 },
             ]);
             let sourceEnd = 0;
@@ -473,6 +503,7 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
         host,
         content: content.get,
         currentContent: content.peek,
+        availabilityRevision: () => gpu?.availabilityRevision() ?? 0,
         capture: content.capture,
         measure: (text, paint) => gpu?.measure(text, paint) ?? { width: NaN, left: 0, right: 0, ascent: 0, descent: 0 },
         ...(clues === null
@@ -482,47 +513,88 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
                     read: clues.provenance,
                     complete: clues.completeSource,
                     characters: clues.characters,
-                    contradict: clues.rejectSource,
+                    invalidated: clues.drawInvalidated,
                     version: () => clueVersion,
                 },
             }),
-        request: (predecessor, template, changed, completeSource) => {
-            const pending = predecessor === null && completeSource !== null ? pendingTemplates.get(completeSource) : undefined;
-            const adopted = pending !== undefined &&
-                !states
-                    .values()
-                    .some((state) => state.atoms.some((atom) => atom.draw !== undefined &&
-                    clues
-                        ?.provenance(atom.draw)
-                        .some((relation) => relation.source.observation === completeSource)))
-                ? pending
-                : undefined;
-            const plan = semantic.prepareReconciliation({
-                successors: [{ predecessor: predecessor ?? adopted?.handle ?? null, template }],
-                retired: [],
+        ...(diagnostics.accept === undefined
+            ? {}
+            : {
+                withdrawn: (handles: readonly SemanticTextRevisionHandle[]) => {
+                    for (const handle of handles)
+                        report({
+                            type: 'presentation.invalidated',
+                            textId: handle.textId,
+                            revision: handle.semanticRevision,
+                        });
+                },
+                refused: (handles: readonly SemanticTextRevisionHandle[], reason: string) => {
+                    for (const handle of handles)
+                        reportRefusal(handle, reason);
+                },
+            }),
+        reconcile: (fields, retired, changed) => {
+            const adopted = new Set<PendingTemplate>();
+            const completeClaims = new Map<TextObservationRef, number>();
+            for (const field of fields)
+                if (field.completeSource !== null)
+                    completeClaims.set(field.completeSource, (completeClaims.get(field.completeSource) ?? 0) + 1);
+            const successors = fields.map(({ predecessor, template, completeSource }) => {
+                const pending = predecessor === null && completeSource !== null ? pendingTemplates.get(completeSource) : undefined;
+                if (pending !== undefined &&
+                    !adopted.has(pending) &&
+                    completeClaims.get(pending.source.observation) === 1 &&
+                    !fragments.hasCompleteSource(pending.source.observation) &&
+                    !states
+                        .values()
+                        .some((state) => state.atoms.some((atom) => atom.draw !== undefined &&
+                        clues
+                            ?.provenance(atom.draw)
+                            .some((relation) => relation.source.observation === completeSource)))) {
+                    adopted.add(pending);
+                    return { predecessor: pending.handle, template };
+                }
+                return { predecessor, template };
             });
+            const plan = semantic.prepareReconciliation({ successors, retired });
             plan.commit();
-            if (adopted !== undefined) {
-                pendingTemplates.delete(adopted.source.observation);
-                adopted.changed = changed;
+            for (const entry of adopted) {
+                pendingTemplates.delete(entry.source.observation);
+                entry.changed = changed;
+            }
+            for (const [index, successor] of plan.changes.successors.entries()) {
+                const sources = fields[index]?.sources ?? [];
+                foresight?.associate(successor.handle, sources);
+                const controls = sources.map((source) => clues?.sourceControl(source) ?? 'none');
+                reportControl(successor.handle, fields[index]?.controlInvalidated || controls.includes('invalidated')
+                    ? 'invalidated'
+                    : (controls[0] ?? 'none'));
             }
             requestTranslations(plan.changes, undefined, changed);
-            const successor = plan.changes.successors[0];
-            if (successor === undefined)
-                throw new Error('Missing semantic successor.');
-            if (completeSource !== null) {
-                clues?.attached(completeSource);
-                if (pending !== undefined && adopted === undefined)
+            for (const handle of retired)
+                report({
+                    type: 'record.released',
+                    textId: handle.textId,
+                    revision: handle.semanticRevision,
+                    message: 'fragment-field-retired',
+                });
+            for (const source of new Set(fields.flatMap((field) => field.sources))) {
+                clues?.attached(source);
+                const pending = pendingTemplates.get(source);
+                if (pending !== undefined)
                     releasePending([pending], 'pending-template-not-adopted');
             }
-            return successor.handle;
+            return plan.changes.successors.map((successor) => successor.handle);
         },
-        release: (handle) => {
+        release: (handle, sources) => {
             if (semantic.read(handle) === null)
                 return;
+            if (sources.some((source) => clues?.sourceControl(source) === 'invalidated'))
+                reportControl(handle, 'invalidated');
             semantic.prepareReconciliation({ successors: [], retired: [handle] }).commit();
             translations.revokeBatch([handle]);
             priorities.release([handle]);
+            foresight?.release([handle]);
             demand.delete(handle);
             report({
                 type: 'record.released',
@@ -535,15 +607,16 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
             const value = semantic.read(handle);
             return value?.state === 'available' ? value.translation : null;
         },
-        proof: (token, handle, rejected) => {
-            const value = semantic.read(handle);
-            const attempt = semantic.currentAttempt(handle);
+        proof: (token, handles) => {
             const proof: DisplayProof = {
                 visible: null,
                 submitted: false,
-                rejected: rejected ?? null,
-                facts: [
-                    {
+                reported: false,
+                rejected: null,
+                facts: handles.map((handle) => {
+                    const value = semantic.read(handle);
+                    const attempt = semantic.currentAttempt(handle);
+                    return {
                         type: 'presentation.drawn',
                         message: 'native-batch-submitted',
                         textId: handle.textId,
@@ -558,13 +631,12 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
                             { name: 'translationTextId', value: handle.textId },
                             { name: 'translationRevision', value: handle.semanticRevision },
                         ],
-                    },
-                ],
+                    };
+                }),
             };
             pendingProofs.set(token, proof);
             return () => {
-                proof.submitted = true;
-                reportProof(proof);
+                submitProof(proof);
             };
         },
     });
@@ -597,26 +669,45 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
             pendingProofs.delete(proof);
     }
     function withdraw(state: SourceState): void {
-        const { backing, display } = state;
+        const { backing, display, proof, epoch } = state;
         state.backing = null;
         state.display = null;
         state.proof = null;
-        if (backing !== null)
-            host.release(backing);
-        else if (display !== null)
-            releaseDisplay(display);
+        withdrawing++;
+        try {
+            if (display !== null && !state.closed && diagnostics.accept !== undefined)
+                for (const fact of proof?.facts ?? [])
+                    report({
+                        ...fact,
+                        type: 'presentation.invalidated',
+                        message: 'native-display-withdrawn',
+                        physicalRevision: epoch,
+                    });
+        }
+        finally {
+            try {
+                if (backing !== null)
+                    host.release(backing);
+                else if (display !== null)
+                    releaseDisplay(display);
+            }
+            finally {
+                withdrawing--;
+            }
+        }
         probeSource(state);
     }
     function observeDemand(output: number, uses: readonly BitmapDemandUse[], complete: boolean): void {
         if (!isActive())
             return;
-        if (captures.size > 0 || flushing)
+        if (captures.size > 0 || nativeWrites > 0 || withdrawing > 0 || flushing)
             complete = false;
         const seen = new Map<SemanticTextRevisionHandle, {
             supported: boolean;
-            changed: () => void;
+            changed: (presentationChanged: boolean) => void;
         }>();
         const observations: BitmapTranslationDemand[] = [];
+        const submitted = new Set<SemanticTextRevisionHandle>();
         for (const use of uses) {
             const joined = fragments.demand(use.owner);
             const state = bySource.get(use.source);
@@ -628,25 +719,34 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
                         context: bitmapDemandContext(atom.draw === undefined ? [] : (clues?.provenance(atom.draw) ?? [])),
                         region: atom.bounds,
                     })),
-                    changed: () => {
-                        if (state)
+                    changed: (presentationChanged: boolean) => {
+                        if (state && presentationChanged)
                             state.dirty = true;
                     },
                 }))
                 : [joined];
             for (const item of associations) {
-                for (const piece of item.pieces)
+                for (const piece of item.pieces) {
+                    const visible = bitmapRegionsVisible([piece.region], use.samples);
                     observations.push({
                         handle: item.handle,
                         occurrence: regionOccurrence(use.occurrence, piece.member),
                         context: piece.context,
-                        visible: bitmapRegionsVisible([piece.region], use.samples),
+                        visible,
                     });
+                    if (foresight !== null &&
+                        semantic.isCurrent(item.handle) &&
+                        piece.context === 'game-message' &&
+                        use.supported &&
+                        use.samples.some((sample) => sample !== null && bitmapRegionsVisible([piece.region], [sample]) !== false))
+                        submitted.add(item.handle);
+                }
                 const prior = seen.get(item.handle);
                 seen.set(item.handle, { supported: use.supported || prior?.supported === true, changed: item.changed });
             }
         }
         priorities.reconcile(output, observations, complete);
+        foresight?.observeSubmission(output, submitted);
         for (const [handle, value] of demand) {
             if (!semantic.isCurrent(handle)) {
                 demand.delete(handle);
@@ -680,7 +780,7 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
         }
     }
     function prepareBatch(uses: readonly BitmapRenderUse[]) {
-        if (!isActive() || captures.size > 0)
+        if (!isActive() || captures.size > 0 || nativeWrites > 0 || withdrawing > 0)
             return null;
         const joined = fragments.prepare(uses, (requests, claimed) => {
             const pending = new Set<SourceState>();
@@ -691,7 +791,9 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
                 if (claimed.has(use.owner))
                     continue;
                 state.observed = true;
-                if (state.dirty && renderEpochs.get(state) === state.epoch)
+                if ((state.dirty ||
+                    (state.capacityRevision !== null && state.capacityRevision !== gpu?.availabilityRevision())) &&
+                    renderEpochs.get(state) === state.epoch)
                     pending.add(state);
             }
             return composePresentations(requests, prepareStates([...pending], true));
@@ -757,39 +859,42 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
                     probeEvent?.({ kind: 'probe-source', id: state.id, action: 'submitted' });
                     if (state.proof === null)
                         continue;
-                    state.proof.submitted = true;
-                    reportProof(state.proof);
+                    submitProof(state.proof);
                 }
             },
         };
     }
     function composePresentations(requests: Parameters<BitmapPixelDevice['compose']>[0], rows: ReturnType<typeof prepareStates>): ReturnType<BitmapPixelDevice['compose']> {
         if (gpu === null || !isActive())
-            return requests.map(() => null);
+            return requests.map(() => ({ refusal: 'unavailable-evidence' as const }));
         const combined = [...requests, ...rows];
         const results = combined.length === 0 ? [] : gpu.compose(combined);
-        const unowned = new Set(results.flatMap((result) => (result === null ? [] : [result.surface])));
+        const unowned = new Set(results.flatMap((result) => ('surface' in result ? [result.surface] : [])));
         try {
             for (const [index, item] of rows.entries()) {
                 const result = results[requests.length + index];
-                if (result != null) {
+                if (result !== undefined && 'surface' in result) {
                     publish(item, result);
                     unowned.delete(result.surface);
                 }
                 else if (item.epoch === item.state.epoch) {
-                    for (const { row } of item.translated)
-                        for (const source of row.clue?.sources ?? [])
-                            clues?.rejectSource(source.observation, 'gpu-preparation-unavailable');
-                    reconcile(item.state);
-                    item.state.dirty = true;
-                    item.state.retryOnUse = true;
+                    item.state.dirty = false;
+                    item.state.capacityRevision = result?.refusal === 'capacity' ? gpu.availabilityRevision() : null;
+                    for (const { row } of item.translated) {
+                        reportRefusal(row.handle, result?.refusal ?? 'unavailable-evidence', item.state);
+                        semanticDiagnostics?.presentation(row, {
+                            stage: 'presentation',
+                            reason: result?.refusal ?? 'unavailable-evidence',
+                        });
+                        reportContext(item.state, row);
+                    }
                 }
             }
             if (!isActive())
-                return requests.map(() => null);
+                return requests.map(() => ({ refusal: 'unavailable-evidence' as const }));
             const joined = results.slice(0, requests.length);
             for (const result of joined)
-                if (result !== null)
+                if ('surface' in result)
                     unowned.delete(result.surface);
             return joined;
         }
@@ -798,40 +903,53 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
                 releaseDisplay(surface);
         }
     }
-    function clearAtoms(state: SourceState): void {
-        retainedAtoms -= state.atoms.length;
-        for (const atom of state.atoms)
-            if (atom.effect !== null)
-                gpu?.releaseEffect(atom.effect);
-        state.atoms = [];
-    }
     function touch(state: SourceState): void {
         state.epoch++;
+        state.nativeRows = null;
         state.dirty = true;
+        state.membershipDirty = true;
         withdraw(state);
     }
     function reset(state: SourceState): void {
+        const device = gpu;
+        const effects = new Set(state.atoms.flatMap((atom) => (atom.effect === null ? [] : [atom.effect])));
+        retainedAtoms -= state.atoms.length;
+        state.atoms = [];
+        state.nativeRows = null;
+        const batch = batches.get(state);
+        const token = batch === undefined ? null : detachCapture(batch);
         for (const row of state.associations)
             closeBitmapGrowingText(row.growing);
+        const source = state.source.deref();
+        const releaseContent = source === undefined ? null : content.detach(source);
+        try {
+            touch(state);
+            if (token !== null)
+                device?.abort(token);
+            for (const effect of effects)
+                device?.releaseEffect(effect);
+        }
+        finally {
+            releaseContent?.();
+        }
         if (!state.closed)
             probeEvent?.({ kind: 'probe-source', id: state.id, action: 'reset' });
-        const source = state.source.deref();
-        if (source !== undefined)
-            content.invalidate(source);
-        touch(state);
-        clearAtoms(state);
-        const batch = batches.get(state);
-        if (batch !== undefined)
-            abort(batch);
         probeSource(state);
     }
-    function abortCapture(batch: Capture): void {
+    function detachCapture(batch: Capture): PixelCapture | null {
         if (!batch.valid)
-            return;
+            return null;
         retainedAtoms -= batch.commands.length;
         batch.valid = false;
-        gpu?.abort(batch.token);
-        batches.delete(batch.state);
+        if (batches.get(batch.state) === batch)
+            batches.delete(batch.state);
+        return batch.token;
+    }
+    function discardCapture(batch: Capture): void {
+        const token = detachCapture(batch);
+        if (token === null)
+            return;
+        gpu?.abort(token);
         probeSource(batch.state);
     }
     function seal(batch: Capture): void {
@@ -839,7 +957,7 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
             return;
         batches.delete(batch.state);
         batch.valid = false;
-        let effect = gpu.finish(batch.token);
+        let effect = gpu.finish(batch.token, batch.commands.flatMap((item) => (item.repaint === null ? [] : [item.repaint])));
         const inkless = batch.commands.every((item) => item.text.trim().length === 0);
         if (inkless && effect !== null) {
             gpu.releaseEffect(effect);
@@ -849,7 +967,9 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
             retainedAtoms -= batch.commands.length;
             return;
         }
-        const bounds = effect === null ? { x: 0, y: 0, width: batch.state.width, height: batch.state.height } : gpu.bounds(effect);
+        const bounds = effect === null
+            ? { x: 0, y: 0, width: batch.state.width, height: batch.state.height }
+            : gpu.damageBounds(effect);
         if (bounds === null) {
             retainedAtoms -= batch.commands.length;
             if (effect !== null)
@@ -858,6 +978,7 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
         }
         for (const item of batch.commands)
             batch.state.atoms.push({ ...item, effect, bounds });
+        batch.state.nativeRows = null;
         probeSource(batch.state);
     }
     function currentSource(state: SourceState): HTMLCanvasElement | null {
@@ -891,6 +1012,7 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
         semantic.prepareReconciliation({ successors: [], retired }).commit();
         translations.revokeBatch(retired);
         priorities.release(retired);
+        foresight?.release(retired);
         for (const handle of retired)
             demand.delete(handle);
         for (const handle of retired)
@@ -927,12 +1049,14 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
                 epoch: 0,
                 atoms: [],
                 associations: [],
+                nativeRows: null,
                 backing: null,
                 display: null,
                 proof: null,
                 dirty: true,
+                membershipDirty: true,
                 observed: false,
-                retryOnUse: false,
+                capacityRevision: null,
                 rejectionEpoch: -1,
             };
             states.add(state);
@@ -953,13 +1077,17 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
     }
     function releasePending(entries: readonly PendingTemplate[], reason: string): void {
         const retired = entries.filter((entry) => semantic.isCurrent(entry.handle)).map((entry) => entry.handle);
-        for (const entry of entries)
+        for (const entry of entries) {
+            if (clues?.sourceControl(entry.source.observation) === 'invalidated')
+                reportControl(entry.handle, 'invalidated');
             pendingTemplates.delete(entry.source.observation);
+        }
         if (retired.length === 0)
             return;
         semantic.prepareReconciliation({ successors: [], retired }).commit();
         translations.revokeBatch(retired);
         priorities.release(retired);
+        foresight?.release(retired);
         for (const handle of retired)
             demand.delete(handle);
         for (const handle of retired)
@@ -998,8 +1126,10 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
                 throw new Error('Missing complete-source template.');
             const entry: PendingTemplate = { source, handle, changed: null };
             pendingTemplates.set(source.observation, entry);
-            requestTranslations(plan.changes, undefined, () => {
-                entry.changed?.();
+            reportControl(handle, clues.sourceControl(source.observation));
+            foresight?.associate(handle, [source.observation]);
+            requestTranslations(plan.changes, undefined, (presentationChanged) => {
+                entry.changed?.(presentationChanged);
             });
         }
     }
@@ -1012,100 +1142,53 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
                     clues?.provenance(atom.draw).some((relation) => relation.source.observation === token))));
     }
     function reconcileRows(state: SourceState): void {
-        const version = clueVersion;
+        const version = clueVersion, epoch = state.epoch;
         const context = semanticDiagnostics?.collect();
         const surface = state.source.deref();
         const recordedBarriers = surface === undefined ? undefined : textBarriers.get(surface);
         const barriers: BitmapTextBarriers = recordedBarriers === undefined ? [] : recordedBarriers;
-        const groups = assembleBitmapCommandRows(state.atoms, barriers);
+        if (state.nativeRows === null) {
+            const rows = assembleBitmapCommandRows(state.atoms, barriers);
+            state.nativeRows = { rows, plans: prepareBitmapNativeRows(rows) };
+        }
+        const baseline = state.nativeRows.rows;
         const surfaceRef = surface === undefined ? null : (clues?.surfaceRef(surface) ?? null);
+        const evidence = clues === null || surfaceRef === null
+            ? { members: [], sources: [] }
+            : bitmapRowCorrespondence(baseline, surfaceRef, clues.provenance, clues.characters);
+        const groups = partitionBitmapRows(state.nativeRows.plans, bitmapCommonSourceMembers(evidence), (row, reason) => context?.note(row.atoms, { stage: 'association', reason }));
+        const withdrawals = new Map<TextObservationRef, BitmapSourceContradiction>();
         const candidates = clues === null || surfaceRef === null || gpu === null
             ? []
             : bitmapSemanticCandidates(groups, {
-                surface: surfaceRef,
+                evidence,
                 width: state.width,
                 height: state.height,
                 barriers,
-                read: clues.provenance,
                 complete: clues.completeSource,
-                contradict: clues.rejectSource,
+                contradict: (source, reason) => withdrawals.set(source, reason),
                 characters: clues.characters,
                 rejected: (atoms: readonly BitmapCommandAtom[], reason: string, source: BitmapSemanticSource, area?: PixelBounds | null) => {
-                    context?.reject(atoms, {
+                    context?.note(atoms, {
                         stage: 'association',
                         reason,
                         source,
                         ...(area === undefined ? {} : { area }),
                     });
-                    clues.rejectSource(source.observation, reason);
                 },
             });
-        const admitted = candidates.filter((candidate) => {
-            const device = gpu;
-            if (device !== null &&
-                supportsBitmapAssociation(candidate, candidate.clue?.sources.length !== 1
-                    ? null
-                    : (clues?.characters(candidate.clue.sources[0].observation) ?? null), (reason) => {
-                    const decision = {
-                        stage: 'layout' as const,
-                        reason,
-                        ...(candidate.clue === undefined
-                            ? {}
-                            : { source: candidate.clue.sources[0], area: candidate.clue.allocation }),
-                    };
-                    semanticDiagnostics?.refuse(candidate, decision);
-                    context?.reject(candidate.atoms, decision);
-                    for (const source of candidate.clue?.sources ?? [])
-                        clues?.rejectSource(source.observation, reason);
-                }))
-                return true;
-            context?.reject(candidate.atoms, {
-                stage: 'layout',
-                reason: 'source-layout-unsupported',
-                ...(candidate.clue === undefined ? {} : { source: candidate.clue.sources[0] }),
-            });
-            return false;
-        });
-        const assembled = assembleBitmapTextAssociations(groups, admitted.filter((candidate) => candidate.clue?.sources.every((source) => clues?.sourceActive(source.observation)) ?? true), (candidate, reason) => {
-            context?.reject(candidate.atoms, {
+        const assembled = assembleBitmapTextAssociations(groups, candidates.filter((candidate) => candidate.clue?.sources.every((source) => clues?.sourceActive(source.observation)) ?? true), (candidate, reason) => {
+            context?.note(candidate.atoms, {
                 stage: 'association',
                 reason,
                 ...(candidate.clue === undefined ? {} : { source: candidate.clue.sources[0] }),
             });
-            for (const source of candidate.clue?.sources ?? [])
-                clues?.rejectSource(source.observation, reason);
         });
-        if (version !== clueVersion)
+        for (const [source, reason] of withdrawals)
+            clues?.invalidateSource(source, reason);
+        if (!isActive() || state.closed || epoch !== state.epoch || version !== clueVersion)
             return;
-        const geometric = bitmapAssociationPredecessors(state.associations, assembled);
-        const completePredecessors = new Map<TextObservationRef, Association[]>();
-        for (const prior of state.associations) {
-            if (prior.clue?.complete !== true)
-                continue;
-            const token = prior.clue.sources[0].observation;
-            completePredecessors.getOrInsertComputed(token, () => []).push(prior);
-        }
-        const predecessors = assembled.map((row, index) => {
-            const old = geometric[index];
-            if (row.clue?.complete === true) {
-                const token = row.clue.sources[0].observation;
-                if (old?.clue?.complete === true && old.clue.sources[0].observation === token)
-                    return old;
-                const members = new Set(row.reading);
-                const extensions = (completePredecessors.get(token) ?? []).filter((prior) => prior.reading.every((atom) => members.has(atom)));
-                if (extensions.length === 1)
-                    return extensions[0] ?? null;
-                return null;
-            }
-            return old?.clue?.complete === true ? null : (old ?? null);
-        });
-        const claims = new Map<Association, number>();
-        for (const prior of predecessors)
-            if (prior != null)
-                claims.set(prior, (claims.get(prior) ?? 0) + 1);
-        for (const [index, prior] of predecessors.entries())
-            if (prior != null && claims.get(prior) !== 1)
-                predecessors[index] = null;
+        const predecessors = planBitmapAssociationPredecessors(state.associations, assembled);
         const completeSuccessors = new Map<BitmapSemanticSource, number>();
         for (const row of assembled)
             if (row.clue?.complete === true) {
@@ -1135,8 +1218,8 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
         const plan = semantic.prepareReconciliation({ successors, retired: unused.map((row) => row.handle) });
         plan.commit();
         for (const entry of adopted) {
-            entry.changed = () => {
-                if (!state.closed)
+            entry.changed = (presentationChanged) => {
+                if (!state.closed && presentationChanged)
                     state.dirty = true;
             };
             pendingTemplates.delete(entry.source.observation);
@@ -1146,8 +1229,8 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
             const successor = plan.changes.successors[index];
             if (successor === undefined)
                 throw new Error('Semantic reconciliation omitted a current association.');
-            if (row.clue?.complete === true)
-                clues?.attached(row.clue.sources[0].observation);
+            for (const source of row.clue?.sources ?? [])
+                clues?.attached(source.observation);
             const prior = predecessors[index];
             const growing = prior?.growing?.active === true &&
                 prior.growing.textId === successor.handle.textId &&
@@ -1170,6 +1253,8 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
             if (!growing.has(prior.growing))
                 closeBitmapGrowingText(prior.growing);
         for (const old of unused) {
+            if (rowControl(old) === 'invalidated')
+                reportControl(old.handle, 'invalidated');
             report({
                 type: 'record.released',
                 textId: old.handle.textId,
@@ -1179,13 +1264,19 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
             if (!isActive())
                 return;
         }
+        const attached = new Set(state.associations.flatMap((row) => row.clue?.sources.map((source) => source.observation) ?? []));
         if (clues !== null)
-            releasePending([...pendingTemplates.values()].filter((entry) => clues.completeSource(entry.source.observation) === null), 'pending-source-unavailable');
-        requestTranslations(plan.changes, state.id, () => {
-            state.dirty = true;
+            releasePending([...pendingTemplates.values()].filter((entry) => attached.has(entry.source.observation) ||
+                clues.completeSource(entry.source.observation) === null), 'pending-source-unavailable');
+        requestTranslations(plan.changes, state.id, (presentationChanged) => {
+            if (presentationChanged)
+                state.dirty = true;
         });
-        for (const row of state.associations)
+        for (const row of state.associations) {
+            reportControl(row.handle, rowControl(row));
+            foresight?.associate(row.handle, row.clue?.sources.map((source) => source.observation) ?? []);
             reportContext(state, row, context);
+        }
     }
     function reportContext(state: SourceState, row: Association, context = semanticDiagnostics?.collect()): void {
         if (context === undefined)
@@ -1202,7 +1293,39 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
         });
     }
     const reconcile = timed(timing, 'reconciliation', reconcileRows, ([state]) => [state.atoms.length, 0]);
-    function requestTranslations(changes: SemanticTextChangeSet, bitmapId: number | undefined, changed: () => void): void {
+    function reportRefusal(handle: SemanticTextRevisionHandle, reason: string, state?: SourceState): void {
+        if (diagnostics.accept === undefined)
+            return;
+        const attempt = semantic.currentAttempt(handle);
+        report({
+            type: 'presentation.rejected',
+            textId: handle.textId,
+            revision: handle.semanticRevision,
+            ...(attempt === null ? {} : { attempt: attempt.sequence }),
+            ...(state === undefined ? {} : { physicalTextId: state.id, physicalRevision: state.epoch }),
+            message: reason,
+            fields: [
+                { name: 'stage', value: 'presentation' },
+                { name: 'reason', value: reason },
+            ],
+        });
+    }
+    function reportControl(handle: SemanticTextRevisionHandle, control: SemanticControl): void {
+        semantic.setControl(handle, control);
+        if (diagnostics.accept !== undefined)
+            report({
+                type: 'semantic.control',
+                textId: handle.textId,
+                revision: handle.semanticRevision,
+                fields: [{ name: 'control', value: control }],
+            });
+    }
+    function rowControl(row: BitmapTextAssociation): SemanticControl {
+        if (row.reading.some((atom) => atom.draw !== undefined && clues?.drawInvalidated(atom.draw)))
+            return 'invalidated';
+        return row.clue?.sources[0]?.family ?? 'none';
+    }
+    function requestTranslations(changes: SemanticTextChangeSet, bitmapId: number | undefined, changed: (presentationChanged: boolean) => void): void {
         trimPending();
         for (const handle of changes.issued) {
             report({
@@ -1224,31 +1347,65 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
         deliverTranslations(attempts, changed);
         translations.revokeBatch(changes.revoked);
         priorities.release(changes.revoked);
+        foresight?.release(changes.revoked);
         for (const handle of changes.revoked)
             demand.delete(handle);
     }
-    function deliverTranslations(attempts: readonly SemanticTranslationAttempt[], changed: () => void): void {
+    function presentationCandidate(handle: SemanticTextRevisionHandle, growing: BitmapGrowingText | null | undefined) {
+        const value = semantic.read(handle);
+        const candidate = value?.state === 'available'
+            ? { handle, translation: value.translation }
+            : value?.state === 'translating' || value?.state === 'observed'
+                ? growing?.latest
+                : null;
+        return candidate == null ||
+            candidate.translation.text === candidate.handle.sourceText ||
+            candidate.translation.text === handle.sourceText
+            ? null
+            : candidate;
+    }
+    function deliverTranslations(attempts: readonly SemanticTranslationAttempt[], changed: (presentationChanged: boolean) => void): void {
         const admissions = translations.requestBatch(attempts);
         for (const admission of admissions) {
             const attempt = admission.request;
             const growing = growingRequests.get(attempt.handle);
             if (admission.immediateSettlement !== null) {
+                const before = presentationCandidate(attempt.handle, growing);
                 if (growing !== undefined)
                     acceptBitmapGrowingText(growing, attempt, admission.immediateSettlement);
                 if (semantic.settleTranslation(attempt, admission.immediateSettlement).kind === 'accepted' &&
                     attempt.recovery)
-                    changed();
+                    changed(candidateChanged(before, presentationCandidate(attempt.handle, growing)));
             }
             else
                 void admission.completion.then((settlement) => {
                     if (!isActive())
                         return;
+                    const before = presentationCandidate(attempt.handle, growing);
                     const accepted = semantic.settleTranslation(attempt, settlement).kind === 'accepted';
                     const advanced = growing !== undefined && acceptBitmapGrowingText(growing, attempt, settlement);
                     if (accepted || advanced)
-                        changed();
+                        changed(accepted
+                            ? candidateChanged(before, presentationCandidate(attempt.handle, growing))
+                            : advanced);
                 });
         }
+    }
+    function candidateChanged(before: ReturnType<typeof presentationCandidate>, after: ReturnType<typeof presentationCandidate>): boolean {
+        return before?.handle !== after?.handle || before?.translation !== after?.translation;
+    }
+    function textEvidence(atoms: readonly BitmapCommandAtom[]): PixelTextEvidence {
+        return {
+            effects: [...new Set(atoms.flatMap((atom) => (atom.effect === null ? [] : [atom.effect])))],
+            sourceRegions: atoms.flatMap((atom) => atom.repaint === null ? [] : [{ effect: atom.effect, bounds: atom.repaint }]),
+        };
+    }
+    function clipRegions(regions: readonly PixelBounds[], width: number, height: number): PixelBounds[] {
+        return regions.flatMap((area) => {
+            const x = Math.max(0, area.x), y = Math.max(0, area.y);
+            const right = Math.min(width, area.x + area.width), bottom = Math.min(height, area.y + area.height);
+            return right > x && bottom > y ? [{ x, y, width: right - x, height: bottom - y }] : [];
+        });
     }
     function preparePresentation(state: SourceState): {
         state: SourceState;
@@ -1261,11 +1418,8 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
             layout: BitmapAssociationLayout;
             translationHandle: SemanticTextRevisionHandle;
         }[];
-        groups: {
-            effects: readonly PixelEffect[];
-            draws: readonly BitmapTextDraw[];
-            targetRegions?: readonly PixelBounds[];
-        }[];
+        groups: PixelTextGroup[];
+        preserve: PixelTextEvidence[];
     } | null {
         const source = state.source.deref();
         if (!isActive() ||
@@ -1279,39 +1433,33 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
         const device = gpu;
         probeSource(state);
         const translated = state.associations.flatMap((row) => {
-            const value = semantic.read(row.handle);
-            const candidate = value?.state === 'available'
-                ? { handle: row.handle, translation: value.translation }
-                : value?.state === 'translating' || value?.state === 'observed'
-                    ? row.growing?.latest
-                    : null;
-            if (candidate == null ||
-                candidate.translation.text === candidate.handle.sourceText ||
-                candidate.translation.text === row.handle.sourceText)
+            const candidate = presentationCandidate(row.handle, row.growing);
+            if (candidate === null)
                 return [];
             let layoutReason = 'translated-layout-unavailable';
-            const layout = layoutBitmapAssociation(row, candidate.translation, (text, paint) => device.measure(text, paint), row.layoutCache, row.clue?.sources.length !== 1 ? null : (clues?.characters(row.clue.sources[0].observation) ?? null), (reason) => {
+            const layout = layoutBitmapAssociation(row, candidate.translation, (text, paint) => device.measure(text, paint), row.layoutCache, row.clue?.index ?? null, (reason) => {
                 layoutReason = reason;
             });
             if (layout === null) {
+                reportRefusal(row.handle, layoutReason, state);
                 if (row.clue !== undefined) {
-                    semanticDiagnostics?.refuse(row, {
+                    semanticDiagnostics?.presentation(row, {
                         stage: 'layout',
                         reason: layoutReason,
                         source: row.clue.sources[0],
                         area: row.clue.allocation,
                     });
-                    for (const source of row.clue.sources)
-                        clues?.rejectSource(source.observation, layoutReason);
                     reportContext(state, row);
                 }
                 return [];
             }
+            semanticDiagnostics?.presentation(row, null);
             row.layoutCache = layout;
             return [{ row, translation: layout.visibleText, layout, translationHandle: candidate.handle }];
         });
         if (translated.length === 0 || currentClueVersion !== clueVersion)
             return null;
+        const replaced = new Set(translated.flatMap(({ row }) => row.atoms));
         return {
             state,
             epoch,
@@ -1319,11 +1467,36 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
             translated,
             source,
             groups: translated.map(({ row, layout }) => ({
-                effects: row.effects,
+                ...textEvidence(row.atoms),
                 draws: layout.draws,
-                ...(layout.targetRegions === null ? {} : { targetRegions: layout.targetRegions }),
+                targetRegions: clipRegions(layout.targetRegions, source.width, source.height),
+                fallback: layout.fallback === null
+                    ? null
+                    : {
+                        draws: layout.fallback.draws,
+                        targetRegions: clipRegions(layout.fallback.regions, source.width, source.height),
+                    },
             })),
+            preserve: [textEvidence(state.atoms.filter((atom) => !replaced.has(atom)))],
         };
+    }
+    function reportSourceProofRefusal(state: SourceState, epoch: number, surface: HTMLCanvasElement, rows: readonly Association[], groups: readonly PixelGroupProof[] | undefined): void {
+        if (!isActive() || state.closed || state.epoch !== epoch || state.display !== surface)
+            return;
+        const rejected = rows.filter((row, index) => row.clue !== undefined &&
+            groups?.[index]?.visible !== true &&
+            state.associations.some((current) => current.handle === row.handle));
+        if (rejected.length === 0)
+            return;
+        if (semanticDiagnostics !== undefined)
+            for (const row of rejected)
+                semanticDiagnostics.presentation(row, {
+                    stage: 'presentation',
+                    reason: 'gpu-proof-rejected',
+                    ...(row.clue === undefined ? {} : { source: row.clue.sources[0], area: row.clue.allocation }),
+                });
+        for (const row of rejected)
+            reportContext(state, row);
     }
     function publish(preparedPresentation: NonNullable<ReturnType<typeof preparePresentation>>, result: {
         surface: HTMLCanvasElement;
@@ -1344,28 +1517,9 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
         const proof: DisplayProof = {
             visible: null,
             submitted: false,
+            reported: false,
             rejected: translated.some((item) => item.row.clue !== undefined)
-                ? (groups) => {
-                    if (!isActive() || state.closed || state.epoch !== epoch || state.display !== result.surface)
-                        return;
-                    const rejected = translated.filter((item, index) => item.row.clue !== undefined &&
-                        groups?.[index]?.visible !== true &&
-                        state.associations.some((current) => current.handle === item.row.handle));
-                    if (rejected.length === 0)
-                        return;
-                    if (semanticDiagnostics !== undefined)
-                        for (const { row } of rejected)
-                            semanticDiagnostics.refuse(row, {
-                                stage: 'presentation',
-                                reason: 'safe-area-gpu-proof-rejected',
-                                ...(row.clue === undefined
-                                    ? {}
-                                    : { source: row.clue.sources[0], area: row.clue.allocation }),
-                            });
-                    for (const { row } of rejected)
-                        for (const source of row.clue?.sources ?? [])
-                            clues?.rejectSource(source.observation, 'safe-area-gpu-proof-rejected');
-                }
+                ? reportSourceProofRefusal.bind(null, state, epoch, result.surface, translated.map(({ row }) => row))
                 : null,
             facts: diagnostics.accept === undefined
                 ? []
@@ -1398,11 +1552,19 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
         state.proof = proof;
         pendingProofs.set(result.proof, proof);
     }
-    function reportProof(proof: DisplayProof): void {
-        if (proof.visible === null || !proof.submitted)
+    function submitProof(proof: DisplayProof): void {
+        if (proof.submitted)
             return;
+        proof.submitted = true;
+        for (const fact of proof.facts)
+            report({ ...fact, type: 'presentation.submitted', message: 'native-batch-submitted' });
+        reportProof(proof);
+    }
+    function reportProof(proof: DisplayProof): void {
+        if (proof.visible === null || !proof.submitted || proof.reported)
+            return;
+        proof.reported = true;
         const facts = proof.facts;
-        proof.facts = [];
         const rejected = proof.rejected;
         proof.rejected = null;
         if (!proof.visible)
@@ -1455,23 +1617,32 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
         for (const state of selectedStates) {
             if (!isActive())
                 break;
-            if (!state.dirty || !state.observed || (state.retryOnUse && !nativeUse))
+            if (nativeUse && state.capacityRevision !== null && state.capacityRevision !== gpu?.availabilityRevision())
+                state.dirty = true;
+            if (!state.dirty || !state.observed || batches.has(state))
                 continue;
+            const epoch = state.epoch;
             const source = currentSource(state);
             if (source === null || source !== state.source.deref()) {
                 retire(state);
                 continue;
             }
             state.dirty = false;
-            state.retryOnUse = false;
+            state.capacityRevision = null;
             withdraw(state);
-            let prepared: ReturnType<typeof preparePresentation>;
-            let version: number;
-            do {
-                version = clueVersion;
-                reconcile(state);
-                prepared = preparePresentation(state);
-            } while (isActive() && version !== clueVersion);
+            if (epoch !== state.epoch || batches.has(state))
+                continue;
+            if (state.membershipDirty) {
+                let version: number;
+                do {
+                    version = clueVersion;
+                    state.membershipDirty = false;
+                    reconcile(state);
+                } while (isActive() && epoch === state.epoch && version !== clueVersion);
+                if (state.membershipDirty || batches.has(state))
+                    continue;
+            }
+            const prepared = preparePresentation(state);
             if (prepared !== null)
                 presentations.push(prepared);
         }
@@ -1481,7 +1652,7 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
             currentSource(item.state) === item.source);
     }
     function beforeRender(): void {
-        if (!isActive() || flushing || captures.size > 0 || gpu === null)
+        if (!isActive() || flushing || captures.size > 0 || nativeWrites > 0 || withdrawing > 0 || gpu === null)
             return;
         const graphics = scope['Graphics'] as Record<string, unknown> | undefined;
         const renderer = graphics?.['_renderer'] ?? (graphics?.['_app'] as Record<string, unknown> | undefined)?.['renderer'];
@@ -1510,6 +1681,7 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
             for (const state of states)
                 renderEpochs.set(state, state.epoch);
             composePresentations([], prepareStates([...states.values()]));
+            foresight?.prepare();
         }
         finally {
             flushing = false;
@@ -1522,6 +1694,7 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
             return 'failed';
         disposing = true;
         active = false;
+        foresight?.dispose();
         let failed = false, lost = false;
         try {
             failed ||= !textRecords.dispose();
@@ -1539,6 +1712,13 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
             const hostResult = host.dispose();
             failed ||= hostResult === 'failed';
             lost ||= hostResult === 'ownership-lost';
+            if (foresightObserver !== null) {
+                const result = foresightObserver.dispose();
+                failed ||= result === 'failed';
+                lost ||= result === 'ownership-lost';
+                if (result !== 'failed')
+                    foresightObserver = null;
+            }
             if (observer !== null) {
                 const result = observer.dispose();
                 failed ||= result === 'failed';
@@ -1708,6 +1888,7 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
                 captures.set(command, batch);
             },
             write: (receipt) => {
+                nativeWrites++;
                 if (!isActive() || gpu === null)
                     return;
                 if (gpu.needsReclamation())
@@ -1801,13 +1982,18 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
                 probeSource(state);
             },
             afterWrite: (receipt, returned) => {
-                content.afterWrite(receipt, returned);
-                const { command } = receipt;
-                if (returned || command === null)
-                    return;
-                const capture = captures.get(command);
-                if (capture?.valid)
-                    abort(capture);
+                try {
+                    content.afterWrite(receipt, returned);
+                    const { command } = receipt;
+                    if (returned || command === null)
+                        return;
+                    const capture = captures.get(command);
+                    if (capture?.valid)
+                        abort(capture);
+                }
+                finally {
+                    nativeWrites--;
+                }
             },
             finish: (command, returned) => {
                 const current = captures.get(command);
@@ -1819,10 +2005,12 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
                     return;
                 }
                 const draw = clues?.enabled() ? clues.issueDraw() : undefined;
+                const metrics = device.measure(command.text, command.layout.paint);
                 current.commands.push({
                     text: command.text,
                     layout: command.layout,
-                    geometry: resolveBitmapSourceGeometry(command.layout, device.measure(command.text, command.layout.paint).width),
+                    geometry: resolveBitmapSourceGeometry(command.layout, metrics.width),
+                    repaint: bitmapSourceRepaintRegion(command.layout, metrics),
                     sequence: ++sequence,
                     ...(draw === undefined ? {} : { draw }),
                 });
@@ -1836,13 +2024,29 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
                     limit: null,
                 });
                 current.state.dirty = true;
+                current.state.membershipDirty = true;
             },
             reset: (source) => {
                 textBarriers.delete(source);
-                content.invalidate(source);
                 const state = bySource.get(source);
                 if (state !== undefined)
                     reset(state);
+                else
+                    content.invalidate(source);
+            },
+            completedClear: (source) => {
+                nativeWrites++;
+                try {
+                    textBarriers.delete(source);
+                    const state = bySource.get(source);
+                    if (state !== undefined)
+                        reset(state);
+                    else
+                        content.invalidate(source);
+                }
+                finally {
+                    nativeWrites--;
+                }
             },
             destroy: (bitmap) => {
                 const source = resolveSource(bitmap);
@@ -1879,6 +2083,16 @@ export function installBitmapCore(options: BitmapCoreOptions): void {
                 }),
             reportFailure: failure,
         });
+        if (foresight !== null && foresight.position.hooks.length > 0) {
+            try {
+                foresightObserver = installOwnedHooks(foresight.position.hooks, () => {
+                    foresight.disable();
+                });
+            }
+            catch {
+                foresight.disable();
+            }
+        }
         active = true;
         textRecords.activate();
         report({ type: 'runtime.event', message: 'bitmap-core-installed' });

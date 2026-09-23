@@ -1,102 +1,7 @@
-import { falsyFallback, isGuiArray, isUnknownRecord, stringValue } from './types.js';
-import type { UnknownRecord } from './types.js';
+import { falsyFallback, isUnknownRecord, stringValue } from './types.js';
 import type { RecordView } from './text-records/model.js';
-import { hasFailedPresentation } from './text-records/model.js';
 export function formatRecordOutcome(record: RecordView): string {
-    if (hasFailedPresentation(record))
-        return record.state === 'available' ? 'Translation accepted — redraw failed' : 'Redraw failed';
-    switch (record.state) {
-        case 'available':
-            return record.translation !== null && record.translation === record.sourceText
-                ? 'Translation accepted — unchanged output'
-                : 'Translation accepted';
-        case 'no-translation':
-            return record.reason ? `Skipped by policy: ${record.reason}` : 'Skipped by policy';
-        case 'failed':
-            return 'Translation failed';
-        case 'observed':
-            return 'Observed';
-        case 'translating':
-            return 'Pending translation';
-        default:
-            return 'Translation state unknown';
-    }
-}
-export function formatRecordEvent(type: string, message: string, fields: unknown) {
-    const entries: UnknownRecord[] = isGuiArray(fields) ? fields.filter(isUnknownRecord) : [];
-    if (type === 'semantic.context') {
-        const stage = entries.find((field) => field['name'] === 'stage');
-        const status = entries.find((field) => field['name'] === 'status');
-        const reason = entries.find((field) => field['name'] === 'reason');
-        const knownStage = typeof stage?.['value'] === 'string' &&
-            ['observation', 'clue', 'association', 'layout', 'presentation'].includes(stage['value']);
-        const knownStatus = typeof status?.['value'] === 'string' && status['value'].length > 0;
-        const knownReason = typeof reason?.['value'] === 'string' && reason['value'].length > 0;
-        const reasonText = knownReason ? String(reason['value']) : '';
-        return {
-            label: `Context ${knownStage ? String(stage['value']) : 'decision'}${knownStatus ? `: ${String(status['value'])}` : ''}`,
-            message: [reasonText, message !== type && message !== reasonText ? message : '']
-                .filter(Boolean)
-                .join(' | '),
-            fields: entries.filter((field) => !(knownStage && field === stage) &&
-                !(knownStatus && field === status) &&
-                !(knownReason && field === reason)),
-        };
-    }
-    let label: string;
-    switch (type) {
-        case 'record.observed':
-            label = 'Record observed';
-            break;
-        case 'record.changed':
-            label = 'Record changed';
-            break;
-        case 'translation.requested':
-            label = 'Translation requested';
-            break;
-        case 'translation.exchange':
-            label = 'Translator input / output';
-            break;
-        case 'translation.available':
-            label = 'Translation accepted';
-            break;
-        case 'translation.noop':
-            return {
-                label: message && message !== type ? `Skipped by policy: ${message}` : 'Skipped by policy',
-                message: '',
-                fields: entries,
-            };
-        case 'translation.rejected':
-            label = 'Translation failed';
-            break;
-        case 'translation.superseded':
-            label = 'Translation superseded';
-            break;
-        case 'presentation.drawn':
-            label = 'Presentation drawn';
-            break;
-        case 'presentation.rejected':
-            label = 'Presentation failed';
-            break;
-        case 'presentation.invalidated':
-            label = 'Presentation invalidated';
-            break;
-        case 'record.released':
-            label = 'Record released';
-            break;
-        case 'lifecycle.ignored':
-            label = 'Lifecycle decision ignored';
-            break;
-        case 'failure':
-            label = 'Record failure';
-            break;
-        case 'runtime.event':
-            label = 'Runtime event';
-            break;
-        default:
-            label = type || 'Record event';
-    }
-    return { label, message: message === type ? '' : message, fields: entries };
+    return record.presentation.explanation;
 }
 export type GuiTextStatusClass = 'completed' | 'translating' | 'pending' | 'detected' | 'failed' | 'skipped' | 'stale' | 'removed' | 'disappeared';
 export function formatDetails(details: unknown): string {
@@ -118,28 +23,6 @@ export function formatDetailValue(value: unknown): string {
     catch {
         return stringValue(value);
     }
-}
-export function formatDrawRun(drawRun: unknown): string {
-    if (!isUnknownRecord(drawRun))
-        return '-';
-    const parts: string[] = [];
-    if (drawRun['type'])
-        parts.push(stringValue(drawRun['type']));
-    if (drawRun['confidence'])
-        parts.push(`confidence=${stringValue(drawRun['confidence'])}`);
-    if (drawRun['reason'])
-        parts.push(`reason=${stringValue(drawRun['reason'])}`);
-    if (Number.isFinite(Number(drawRun['unitCount'])))
-        parts.push(`units=${String(Number(drawRun['unitCount']))}`);
-    return parts.length ? parts.join(', ') : '-';
-}
-export function formatPolicySection(policy: unknown): string {
-    if (!isUnknownRecord(policy))
-        return '-';
-    const pairs = Object.keys(policy)
-        .filter((key) => key !== 'updatedAt' && policy[key] !== undefined && policy[key] !== null && policy[key] !== '')
-        .map((key) => `${key}=${formatDetailValue(policy[key])}`);
-    return pairs.length ? pairs.join(', ') : '-';
 }
 export function formatBounds(bounds: unknown): string {
     if (!isUnknownRecord(bounds))

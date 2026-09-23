@@ -1,7 +1,6 @@
-import type { GuiDrawCaptureEvent, GuiDrawCaptureTrace, GuiForesightAction, GuiForesightScan, GuiForesightSnapshot, GuiForesightValue, GuiTranslationDiagnosticsEvent, GuiTranslationDiagnosticsJob, GuiTranslationProviderStatus, GuiTranslationDiagnosticsSnapshot, GuiTranslationDiagnosticsSubscriber, GuiTranslationStatusSnapshot, UnknownRecord, } from '../types.js';
+import type { GuiDrawCaptureEvent, GuiDrawCaptureTrace, GuiTranslationDiagnosticsEvent, GuiTranslationDiagnosticsJob, GuiTranslationProviderStatus, GuiTranslationDiagnosticsSnapshot, GuiTranslationDiagnosticsSubscriber, GuiTranslationStatusSnapshot, UnknownRecord, } from '../types.js';
 import { copyGuiOwnDataRecord, createGuiOwnDataRecord, defineGuiOwnDataProperty, falsyFallback, isGuiArray, isUnknownRecord, stringValue, } from '../types.js';
 const applyRuntimeDiagnosticFunction = Reflect.apply;
-const listRuntimeDiagnosticKeys = Object.keys;
 const runtimeDiagnosticNumber = Number;
 const runtimeDiagnosticNumberIsFinite = Number.isFinite;
 const runtimeDiagnosticNumberIsSafeInteger = Number.isSafeInteger;
@@ -9,7 +8,6 @@ const maximumRuntimeDiagnosticNumber = Math.max;
 const minimumRuntimeDiagnosticNumber = Math.min;
 const roundRuntimeDiagnosticNumber = Math.round;
 const trimRuntimeDiagnosticString = String.prototype.trim;
-const RUNTIME_FORESIGHT_VALUE_LIST_LIMIT = 32;
 function mapRuntimeDiagnosticList<Output>(value: unknown, normalize: (entry: unknown) => Output, limit = Number.MAX_SAFE_INTEGER): Output[] {
     if (!isGuiArray(value))
         return [];
@@ -93,118 +91,6 @@ export function normalizeDrawCaptureTraceEvent(event: unknown): GuiDrawCaptureEv
         bounds: isUnknownRecord(source['bounds']) ? copyGuiOwnDataRecord(source['bounds']) : null,
         details: copyGuiOwnDataRecord(source),
     };
-}
-export function normalizeForesightSnapshot(snapshot: unknown): GuiForesightSnapshot | null {
-    if (!isUnknownRecord(snapshot))
-        return null;
-    return {
-        updatedAt: falsyFallback(snapshot['updatedAt'], null),
-        summary: isUnknownRecord(snapshot['summary']) ? copyGuiOwnDataRecord(snapshot['summary']) : null,
-        recent: mapRuntimeDiagnosticList(snapshot['recent'], normalizeForesightScan),
-        diagnosticsSurface: snapshot['diagnosticsSurface'] === true,
-    };
-}
-export function normalizeForesightScan(scan: unknown): GuiForesightScan {
-    const source = isUnknownRecord(scan) ? scan : createGuiOwnDataRecord();
-    return {
-        at: falsyFallback(source['at'], null),
-        interpreterId: source['interpreterId'] ? stringValue(source['interpreterId']) : '',
-        status: source['status'] ? stringValue(source['status']) : 'scanned',
-        matchedCurrentMessage: source['matchedCurrentMessage'] === true,
-        startIndex: normalizeNullableInteger(source['startIndex']),
-        stopIndex: normalizeNullableInteger(source['stopIndex']),
-        stopReason: source['stopReason'] ? stringValue(source['stopReason']) : '',
-        stopReasonLabel: source['stopReasonLabel'] ? stringValue(source['stopReasonLabel']) : '',
-        barrierCode: normalizeNullableInteger(source['barrierCode']),
-        barrierLabel: source['barrierLabel'] ? stringValue(source['barrierLabel']) : '',
-        budget: clonePlainObject(source['budget']),
-        scannedCommands: normalizeInteger(source['scannedCommands']),
-        advancedCommands: normalizeInteger(source['advancedCommands']),
-        staleRiskCommands: normalizeInteger(source['staleRiskCommands']),
-        staleRiskCommandCounts: clonePlainObject(source['staleRiskCommandCounts']),
-        staleRiskCommandLabels: clonePlainObject(source['staleRiskCommandLabels']),
-        blocks: normalizeInteger(source['blocks']),
-        routeCommands: normalizeInteger(source['routeCommands']),
-        routeBarriers: normalizeInteger(source['routeBarriers']),
-        routeBarrierCode: normalizeNullableInteger(source['routeBarrierCode']),
-        routeBarrierLabel: source['routeBarrierLabel'] ? stringValue(source['routeBarrierLabel']) : '',
-        routeBarrierReason: source['routeBarrierReason'] ? stringValue(source['routeBarrierReason']) : '',
-        transparentCommands: clonePlainObject(source['transparentCommands']),
-        transparentCommandLabels: clonePlainObject(source['transparentCommandLabels']),
-        pathStops: cloneForesightList(source['pathStops']),
-        commandActionLimit: normalizeInteger(source['commandActionLimit']),
-        commandActionsTruncated: normalizeInteger(source['commandActionsTruncated']),
-        commandActions: mapRuntimeDiagnosticList(source['commandActions'], normalizeForesightCommandAction),
-    };
-}
-export function normalizeForesightCommandAction(action: unknown): GuiForesightAction {
-    const source = isUnknownRecord(action) ? action : createGuiOwnDataRecord();
-    return {
-        index: normalizeNullableInteger(source['index']),
-        code: normalizeNullableInteger(source['code']),
-        label: source['label'] ? stringValue(source['label']) : '',
-        classification: source['classification'] ? stringValue(source['classification']) : '',
-        native: source['native'] === true,
-        category: source['category'] ? stringValue(source['category']) : '',
-        scanBehavior: source['scanBehavior'] ? stringValue(source['scanBehavior']) : '',
-        action: source['action'] ? stringValue(source['action']) : '',
-        stalenessRisk: source['stalenessRisk'] ? stringValue(source['stalenessRisk']) : '',
-        stopReason: source['stopReason'] ? stringValue(source['stopReason']) : '',
-        stopReasonLabel: source['stopReasonLabel'] ? stringValue(source['stopReasonLabel']) : '',
-        summary: source['summary'] ? stringValue(source['summary']) : '',
-        priorityDistance: normalizeNullableInteger(source['priorityDistance']),
-        branchDepth: normalizeInteger(source['branchDepth']),
-        branchPath: normalizeForesightBranchPath(source['branchPath']),
-        listContext: cloneForesightValue(source['listContext'], 0),
-        nestedList: cloneForesightValue(source['nestedList'], 0),
-        budget: cloneForesightValue(source['budget'], 0),
-        consumedCommands: cloneForesightList(source['consumedCommands']),
-        routeCommandActions: cloneForesightList(source['routeCommandActions']),
-        controlFlowTarget: cloneForesightValue(source['controlFlowTarget'], 0),
-        branches: cloneForesightList(source['branches']),
-    };
-}
-export function cloneForesightList(value: unknown): GuiForesightValue[] {
-    return mapRuntimeDiagnosticList(value, (entry) => cloneForesightValue(entry, 0));
-}
-export function cloneForesightValue(value: unknown, depth: number): GuiForesightValue {
-    if (value === null || value === undefined)
-        return value;
-    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean')
-        return value;
-    if (depth >= 4)
-        return '[Object]';
-    if (isGuiArray(value)) {
-        return mapRuntimeDiagnosticList(value, (entry) => cloneForesightValue(entry, depth + 1), RUNTIME_FORESIGHT_VALUE_LIST_LIMIT);
-    }
-    if (!isUnknownRecord(value))
-        return stringValue(value);
-    const result = createGuiOwnDataRecord();
-    const keys = applyRuntimeDiagnosticFunction(listRuntimeDiagnosticKeys, Object, [value]);
-    const length = minimumRuntimeDiagnosticNumber(keys.length, RUNTIME_FORESIGHT_VALUE_LIST_LIMIT);
-    for (let index = 0; index < length; index += 1) {
-        const key = keys[index];
-        if (key !== undefined)
-            defineGuiOwnDataProperty(result, key, cloneForesightValue(value[key], depth + 1));
-    }
-    return result;
-}
-export function clonePlainObject(value: unknown): UnknownRecord {
-    const result = createGuiOwnDataRecord();
-    if (!isUnknownRecord(value))
-        return result;
-    const keys = applyRuntimeDiagnosticFunction(listRuntimeDiagnosticKeys, Object, [value]);
-    const length = keys.length;
-    for (let index = 0; index < length; index += 1) {
-        const key = keys[index];
-        if (key === undefined)
-            continue;
-        const entry = value[key];
-        if (entry === null || entry === undefined)
-            continue;
-        defineGuiOwnDataProperty(result, key, typeof entry === 'object' ? cloneForesightValue(entry, 0) : entry);
-    }
-    return result;
 }
 export function normalizeNullableInteger(value: unknown): number | null {
     if (value === null ||
@@ -359,17 +245,4 @@ export function normalizeInteger(value: unknown): number {
     return runtimeDiagnosticNumberIsFinite(numeric)
         ? maximumRuntimeDiagnosticNumber(0, roundRuntimeDiagnosticNumber(numeric))
         : 0;
-}
-function normalizeForesightBranchPath(value: unknown): number[] {
-    const path = mapRuntimeDiagnosticList(value, normalizeNullableInteger);
-    const normalized: number[] = [];
-    let outputIndex = 0;
-    for (let index = 0; index < path.length; index += 1) {
-        const entry = path[index];
-        if (entry === null || entry === undefined)
-            continue;
-        defineGuiOwnDataProperty(normalized, outputIndex, entry);
-        outputIndex += 1;
-    }
-    return normalized;
 }

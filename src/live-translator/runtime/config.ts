@@ -1,6 +1,6 @@
 import { captureLogRedactor } from './log-redaction-port.js';
 import { createNoThrowLoggerSinks } from './logger/no-throw-sinks.js';
-import { normalizeProviderName, normalizeProviderSelection, type ProviderSchemaWarningSink, } from './translation-providers/provider-schema.js';
+import { normalizeProviderName, normalizeProviderSelection, type ProviderSchemaWarningSink, } from '../configuration/schema.js';
 type PropertyBag = Record<PropertyKey, unknown>;
 type RuntimeFunction = (...args: unknown[]) => unknown;
 interface RuntimeScopeCandidate {

@@ -92,15 +92,6 @@ main {
     transform: rotate(-90deg);
 }
 
-#foresight-panel.foresight-panel-disabled > summary {
-    cursor: default;
-}
-
-#foresight-panel.foresight-panel-disabled > summary::after {
-    background-image: var(--gui-disabled-icon);
-    transform: none;
-}
-
 .collapsible-panel:not([open]) > summary {
     margin-bottom: 0;
 }

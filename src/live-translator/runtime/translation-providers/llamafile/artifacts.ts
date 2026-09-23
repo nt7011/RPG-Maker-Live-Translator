@@ -5,6 +5,7 @@ import type * as Https from 'node:https';
 import type * as Path from 'node:path';
 import type * as Net from 'node:net';
 import type * as Os from 'node:os';
+import type * as Stream from 'node:stream';
 import { acquireArtifactLock, ARTIFACT_LOCK_PORT } from './artifact-lock.js';
 import { selectLlamafileProfile, selectLlamafileRuntime, type LlamafileArtifact } from './catalog.js';
 const DOWNLOAD_IDLE_TIMEOUT_MS = 60000;
@@ -36,6 +37,7 @@ interface NodeRuntime {
     readonly path: typeof Path;
     readonly net: typeof Net;
     readonly os: typeof Os;
+    readonly stream: typeof Stream;
 }
 interface MutableArtifactStatus {
     phase: LlamafileArtifactPhase;
@@ -208,6 +210,7 @@ export function createLlamafileArtifactsModule(runtimeScope: unknown): Llamafile
             return new Promise((resolve, reject) => {
                 let request: Http.ClientRequest | null = null;
                 let responseStream: Http.IncomingMessage | null = null;
+                let sizeGuard: Stream.Transform | null = null;
                 let writer: Fs.WriteStream | null = null;
                 let settled = false;
                 const stopRequestTimeout = (): void => {
@@ -217,7 +220,7 @@ export function createLlamafileArtifactsModule(runtimeScope: unknown): Llamafile
                     catch {
                     }
                 };
-                const fail = (error: Error): void => {
+                const fail = (error: unknown): void => {
                     if (settled)
                         return;
                     settled = true;
@@ -225,6 +228,7 @@ export function createLlamafileArtifactsModule(runtimeScope: unknown): Llamafile
                     stopRequestTimeout();
                     request?.destroy();
                     responseStream?.destroy();
+                    sizeGuard?.destroy();
                     writer?.destroy();
                     reject(error);
                 };
@@ -242,35 +246,57 @@ export function createLlamafileArtifactsModule(runtimeScope: unknown): Llamafile
                         response.destroy();
                         return;
                     }
-                    const statusCode = response.statusCode ?? 0;
-                    const location = response.headers.location;
-                    if (statusCode >= 300 && statusCode < 400 && location) {
-                        settled = true;
-                        stopRequestTimeout();
-                        response.destroy();
-                        activeCancel = null;
-                        void download({ ...artifact, url: new URL(location, artifact.url).href }, partialPath, offset, redirects + 1).then(resolve, reject);
-                        return;
+                    try {
+                        const statusCode = response.statusCode ?? 0;
+                        const location = response.headers.location;
+                        if (statusCode >= 300 && statusCode < 400 && location) {
+                            const redirectedUrl = new URL(location, artifact.url);
+                            if (redirectedUrl.protocol !== 'http:' && redirectedUrl.protocol !== 'https:') {
+                                throw createError('Artifact redirect must use HTTP or HTTPS.', 'LLAMAFILE_DOWNLOAD_REDIRECT');
+                            }
+                            settled = true;
+                            stopRequestTimeout();
+                            response.destroy();
+                            activeCancel = null;
+                            void Promise.resolve()
+                                .then(() => download({ ...artifact, url: redirectedUrl.href }, partialPath, offset, redirects + 1))
+                                .then(resolve, reject);
+                            return;
+                        }
+                        if (statusCode !== 200 && statusCode !== 206) {
+                            throw createError(`Artifact download returned HTTP ${String(statusCode)}.`, 'LLAMAFILE_DOWNLOAD_HTTP');
+                        }
+                        const resumed = statusCode === 206 && offset > 0;
+                        let completed = resumed ? offset : 0;
+                        const contentLength = response.headers['content-length'];
+                        if (contentLength !== undefined && Number(contentLength) > artifact.size - completed) {
+                            throw createError(`Downloaded ${artifact.id} artifact exceeds its expected size.`, 'LLAMAFILE_DOWNLOAD_SIZE');
+                        }
+                        sizeGuard = new node.stream.Transform({
+                            transform(chunk: Buffer, _encoding, callback) {
+                                if (chunk.length > artifact.size - completed) {
+                                    callback(createError(`Downloaded ${artifact.id} artifact exceeds its expected size.`, 'LLAMAFILE_DOWNLOAD_SIZE'));
+                                    return;
+                                }
+                                completed += chunk.length;
+                                status.completedBytes = completed;
+                                callback(null, chunk);
+                            },
+                        });
+                        writer = node.fs.createWriteStream(partialPath, { flags: resumed ? 'a' : 'w' });
+                        retainFileClosure(writer);
+                        activeCancel = () => {
+                            fail(createClosedError());
+                        };
+                        response.on('error', fail);
+                        sizeGuard.on('error', fail);
+                        writer.on('error', fail);
+                        writer.on('finish', finish);
+                        response.pipe(sizeGuard).pipe(writer);
                     }
-                    if (statusCode !== 200 && statusCode !== 206) {
-                        fail(createError(`Artifact download returned HTTP ${String(statusCode)}.`, 'LLAMAFILE_DOWNLOAD_HTTP'));
-                        return;
+                    catch (error) {
+                        fail(error);
                     }
-                    const resumed = statusCode === 206 && offset > 0;
-                    let completed = resumed ? offset : 0;
-                    writer = node.fs.createWriteStream(partialPath, { flags: resumed ? 'a' : 'w' });
-                    retainFileClosure(writer);
-                    activeCancel = () => {
-                        fail(createClosedError());
-                    };
-                    response.on('data', (chunk: Buffer) => {
-                        completed += chunk.length;
-                        status.completedBytes = completed;
-                    });
-                    response.on('error', fail);
-                    writer.on('error', fail);
-                    writer.on('finish', finish);
-                    response.pipe(writer);
                 });
                 activeCancel = () => {
                     fail(createClosedError());
@@ -338,6 +364,7 @@ export function createLlamafileArtifactsModule(runtimeScope: unknown): Llamafile
             path: load('path') as typeof Path,
             net: load('net') as typeof Net,
             os: load('os') as typeof Os,
+            stream: load('stream') as typeof Stream,
         };
     }
     function normalizeArtifacts(value: unknown): readonly LlamafileArtifact[] {

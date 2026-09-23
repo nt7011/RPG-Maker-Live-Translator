@@ -1,3 +1,4 @@
+export type SemanticControl = 'window' | 'sprite' | 'game-message' | 'none' | 'invalidated';
 export interface SemanticTranslationFailure {
     readonly stage: 'admission' | 'provider' | 'encoding' | 'decoding';
     readonly reason: string;
@@ -11,6 +12,7 @@ export interface TextRecordRequest {
     readonly stream: boolean;
 }
 export interface SemanticTextRecordSnapshot {
+    readonly semanticControl: SemanticControl;
     readonly translator: TranslatorExchange | null;
     readonly textId: number;
     readonly semanticRevision: number;
@@ -22,7 +24,7 @@ export interface SemanticTextRecordSnapshot {
     readonly failure: SemanticTranslationFailure | null;
     readonly request: TextRecordRequest | null;
 }
-export interface RuntimeTextRecordSnapshot extends SemanticTextRecordSnapshot {
+export interface RuntimeTextRecordSnapshot extends Pick<SemanticTextRecordSnapshot, 'textId' | 'semanticRevision' | 'attempt' | 'sourceText' | 'state' | 'translation' | 'request' | 'semanticControl'> {
     readonly onScreenGameMessage: boolean;
 }
 export interface TextRecordsSnapshot {
@@ -30,9 +32,11 @@ export interface TextRecordsSnapshot {
     readonly sequence: number;
     readonly active: boolean;
     readonly records: readonly RuntimeTextRecordSnapshot[];
+    readonly foresight: ForesightView | null;
 }
 export interface TranslatorExchange {
     readonly input: string;
     readonly output: string | null;
     readonly markerMismatch: boolean;
 }
+import type { ForesightView } from '../foresight/view.js';

@@ -4,6 +4,7 @@ import type { RuntimeConfigModule } from './config.js';
 import { createTranslationComposition } from './composition/translation.js';
 import { installBitmapCore } from './composition/bitmap-core.js';
 import { createSemanticAdapters } from './composition/semantic-adapters.js';
+import { foresightEnabled, foresightSettings } from './composition/foresight.js';
 import { createInstantRevealHooks } from './hacks/instant-reveal.js';
 import { createSpeedupHooks } from './hacks/speedup.js';
 import type { RuntimeDiagnosticsIngress } from './diagnostics-ingress.js';
@@ -41,6 +42,8 @@ export function startNativeRuntime({ configModule, createLoggerBundle, diagnosti
             installBitmapCore({
                 ...options,
                 semanticAdapters: createSemanticAdapters(settings),
+                foresight: foresightEnabled(settings),
+                foresightSettings: foresightSettings(settings),
                 nativeHooks: [...createInstantRevealHooks(scope, settings), ...createSpeedupHooks(scope, settings)],
             });
         },

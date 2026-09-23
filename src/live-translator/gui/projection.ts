@@ -194,10 +194,12 @@ function stringPrefix(value: string, limit: number): string {
 }
 function projectString(value: string, limits: GuiProjectionLimits, budget: ProjectionBudget): unknown {
     const retainedLimit = minimumProjectionNumber(value.length, limits.maxStringCodeUnits, budget.remainingStringCodeUnits);
+    if (retainedLimit === value.length) {
+        budget.remainingStringCodeUnits -= value.length;
+        return value;
+    }
     const retained = stringPrefix(value, retainedLimit);
     budget.remainingStringCodeUnits -= retained.length;
-    if (retained.length === value.length)
-        return value;
     const details = createProjectionRecord();
     const totalLimitReached = limits.maxStringCodeUnits >= value.length;
     defineDataProperty(details, 'limit', totalLimitReached ? limits.maxTotalStringCodeUnits : limits.maxStringCodeUnits);

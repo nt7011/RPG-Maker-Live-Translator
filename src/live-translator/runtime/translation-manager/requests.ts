@@ -1,3 +1,4 @@
+import { readNumericObservation, type NumericTemplateController } from './numeric-templates.js';
 import type { TranslationManagerControllerFacades } from './controller-facades.js';
 import { preservesTranslationMarkers } from '../translation-text-codec.js';
 import type { TranslatorExchange } from '../text-record-types.js';
@@ -16,6 +17,9 @@ interface TranslationManagerRequestsDiagnosticsCandidate {
     flush(): unknown;
 }
 interface TranslationManagerRequestsScopeCandidate {
+    readonly numericTemplates?: NumericTemplateController;
+    readonly applySubstitutePlaintextBeforeTranslationRules: RuntimeFunction;
+    readonly substitutePlaintextBeforeTranslationRules: unknown;
     readonly OVERRIDE_REGEX_SETTING: unknown;
     readonly normalizeCacheKey: RuntimeFunction;
     readonly createImmediateHandle: TranslationManagerHandlesModule['createImmediateHandle'];
@@ -33,6 +37,8 @@ interface TranslationManagerNormalizedRequestCandidate {
     readonly timeoutMs: unknown;
     readonly onDelta: unknown;
     readonly onTranslatorExchange?: unknown;
+    readonly numericObservation?: unknown;
+    readonly dispatchGroup?: unknown;
     readonly recordId: unknown;
     readonly metadata: unknown;
     readonly signal: unknown;
@@ -143,6 +149,8 @@ function createRealmRequestsControllerFactory(runtimeScope: object): Translation
                 timeoutMs: candidate.timeoutMs,
                 onDelta: candidate.onDelta,
                 onTranslatorExchange: candidate.onTranslatorExchange,
+                numericObservation: candidate.numericObservation,
+                dispatchGroup: candidate.dispatchGroup,
                 recordId: candidate.recordId,
                 metadata: candidate.metadata,
                 signal: candidate.signal,
@@ -354,9 +362,17 @@ function createRealmRequestsControllerFactory(runtimeScope: object): Translation
                 return admission;
             }
             const cached = lookupCompleted(normalizedRequest.normalized);
+            let numericResult: string | null = null;
+            if (readNumericObservation(normalizedRequest.numericObservation, normalizedRequest.normalized) !== null &&
+                source.numericTemplates &&
+                source.applySubstitutePlaintextBeforeTranslationRules(normalizedRequest.normalized, source.substitutePlaintextBeforeTranslationRules) === normalizedRequest.normalized) {
+                numericResult = source.numericTemplates.observe({ ...normalizedRequest }, requestProviderPump);
+            }
             if (cached !== null) {
                 return completeCacheHit(cached, normalizedRequest);
             }
+            if (numericResult !== null)
+                return createImmediateAdmission(numericResult, normalizedRequest, 'numeric-template', 'completed');
             return requestFromProvider(normalizedRequest, requestProviderPump);
         }
         function requestFromProvider(normalizedRequest: TranslationManagerNormalizedRequestCandidate, requestProviderPump: () => void): AcceptedTranslationRequestBatchAdmission {

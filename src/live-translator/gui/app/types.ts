@@ -1,3 +1,4 @@
+import type { RecordPresentation } from './text-records/presentation.js';
 import type { GuiProjectionPolicy } from '../projection.js';
 export type UnknownRecord = Record<PropertyKey, unknown>;
 const applyGuiTypeFunction = Reflect.apply;
@@ -9,7 +10,7 @@ const guiTypeObjectHasOwn = Object.hasOwn;
 const guiTypeArrayIsArray = Array.isArray;
 const GuiTypeString = String;
 const GuiTypeError = TypeError;
-export type GuiRuntimeFeedName = 'settings' | 'hooks' | 'textRecords' | 'translation' | 'drawCapture' | 'foresight';
+export type GuiRuntimeFeedName = 'settings' | 'hooks' | 'textRecords' | 'translation' | 'drawCapture';
 export interface GuiRuntimeFeedHealth {
     status: 'current' | 'failed' | 'unavailable';
     observedGeneration: number;
@@ -128,6 +129,7 @@ export interface GuiPolicyEvent {
 }
 export type GuiSemanticTranslationState = 'observed' | 'translating' | 'available' | 'no-translation' | 'failed';
 export interface GuiTextRecord {
+    presentation: RecordPresentation | null;
     id: string;
     hook: string;
     hookKey: string;
@@ -344,57 +346,6 @@ export interface GuiDrawCaptureTrace {
     summary: UnknownRecord;
     events: GuiDrawCaptureEvent[];
 }
-export type GuiForesightValue = string | number | boolean | null | undefined | GuiForesightValue[] | UnknownRecord;
-export interface GuiForesightAction extends UnknownRecord {
-    index: number | null;
-    code: number | null;
-    label: string;
-    classification: string;
-    native: boolean;
-    category: string;
-    scanBehavior: string;
-    action: string;
-    stalenessRisk: string;
-    stopReason: string;
-    stopReasonLabel: string;
-    summary: string;
-    priorityDistance: number | null;
-    branchDepth: number;
-    branchPath: number[];
-    branches: GuiForesightValue[];
-}
-export interface GuiForesightScan extends UnknownRecord {
-    at: unknown;
-    interpreterId: string;
-    status: string;
-    matchedCurrentMessage: boolean;
-    startIndex: number | null;
-    stopIndex: number | null;
-    stopReason: string;
-    stopReasonLabel: string;
-    barrierCode: number | null;
-    barrierLabel: string;
-    budget: UnknownRecord;
-    scannedCommands: number;
-    advancedCommands: number;
-    staleRiskCommands: number;
-    blocks: number;
-    routeCommands: number;
-    routeBarriers: number;
-    routeBarrierCode: number | null;
-    routeBarrierLabel: string;
-    routeBarrierReason: string;
-    pathStops: GuiForesightValue[];
-    commandActionLimit: number;
-    commandActionsTruncated: number;
-    commandActions: GuiForesightAction[];
-}
-export interface GuiForesightSnapshot {
-    updatedAt: unknown;
-    summary: UnknownRecord | null;
-    recent: GuiForesightScan[];
-    diagnosticsSurface: boolean;
-}
 export interface GuiRuntimeContext extends UnknownRecord {
     supportPath?: string;
     gameRoot?: string;
@@ -438,18 +389,11 @@ export interface GuiConfiguredPolicy {
         limit: number | null;
         targetTexts: string[];
     };
-    foresight: {
-        enabled: boolean;
-        showSpoilers: boolean;
-        actionDisplayLimit: number;
-    };
     textRecords: {
         inactiveDisplayLimit: number;
     };
 }
 export interface GuiDiagnosticsLimits {
-    foresightScans: number;
-    foresightMessages: number;
     archivedItems: number;
     detachedItems: number;
     pastJobs: number;
@@ -476,13 +420,9 @@ export interface GuiRuntimeState {
     translationDiagnostics: GuiTranslationDiagnosticsSnapshot | null;
     provider: GuiTranslationProviderStatus | null;
     drawCaptureTrace: GuiDrawCaptureTrace | null;
-    foresight: GuiForesightSnapshot | null;
     providerLabel: string;
 }
 export interface GuiViewState {
-    foresight: {
-        messagesOnly: boolean;
-    };
     textRecords: {
         selectedDetailKey: string;
     };
@@ -522,21 +462,10 @@ export interface GuiEffectivePolicy {
         disabledReason: string;
         eventDisplayLimit: number;
     };
-    foresight: {
-        configuredEnabled: boolean;
-        controlsEnabled: boolean;
-        visible: boolean;
-        messagesOnly: boolean;
-        showSpoilers: boolean;
-        actionDisplayLimit: number;
-        disabledReason: string;
-        messageFilterTitle: string;
-    };
     textRecords: {
         detailsEnabled: boolean;
         historyVisible: boolean;
         inactiveDisplayLimit: number;
-        showForesightSpoilers: boolean;
         selectedDetailKey: string;
     };
 }

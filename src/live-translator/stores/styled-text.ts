@@ -205,11 +205,12 @@ export function bindTextTranslation(translation: TextTranslation, source: Styled
         const end = template.styleEnds[run.sourceRun];
         if (end === undefined)
             throw new Error('Translation references a missing source span.');
-        const paints = source.runs.filter((paint, index) => paint.end > start && (source.runs[index - 1]?.end ?? 0) < end);
-        const first = paints[0];
+        let paintIndex = textPaintRunAt(source.runs, start + 1);
+        const paintEnd = Math.min(source.runs.length, textPaintRunAt(source.runs, end) + 1);
+        const first = source.runs[paintIndex];
         if (first === undefined)
             break;
-        if (paints.length === 1 && source.text.length >= end) {
+        if (paintEnd === paintIndex + 1 && source.text.length >= end) {
             parts.push({ text: translation.text.slice(targetStart, run.end), paint: first.paint });
         }
         else {
@@ -223,7 +224,10 @@ export function bindTextTranslation(translation: TextTranslation, source: Styled
             let paint = first.paint;
             for (let index = targetFrom; index < targetTo; index++) {
                 const position = binding.sourceEnds[sourceStart + Math.min(index - targetFrom, sourceCount - 1)];
-                const observed = position === undefined ? first : paints.find((run) => run.end >= position);
+                if (position !== undefined)
+                    while (paintIndex < paintEnd && (source.runs[paintIndex]?.end ?? Infinity) < position)
+                        paintIndex++;
+                const observed = position === undefined ? first : paintIndex < paintEnd ? source.runs[paintIndex] : undefined;
                 if (observed === undefined)
                     return createStyledText(parts);
                 paint = observed.paint;
@@ -238,6 +242,17 @@ export function bindTextTranslation(translation: TextTranslation, source: Styled
         targetStart = run.end;
     }
     return createStyledText(parts);
+}
+function textPaintRunAt(runs: readonly StyledTextRun[], position: number): number {
+    let lo = 0, hi = runs.length;
+    while (lo < hi) {
+        const mid = Math.floor((lo + hi) / 2);
+        if ((runs[mid]?.end ?? Infinity) < position)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    return lo;
 }
 function coveredTextPositions(ends: readonly number[], offset: number): number {
     let lo = 0, hi = ends.length;

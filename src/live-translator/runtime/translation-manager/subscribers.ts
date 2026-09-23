@@ -153,6 +153,7 @@ function createRealmSubscribersControllerFactory(runtimeScope: object): Translat
             for (const failure of terminalization.failures) {
                 observe(() => source.translationDiagnostics.recordLazy('subscriber.settlement_error', () => ({
                     jobId: (job as TranslationManagerSubscriberJobCandidate).id,
+                    hook: (job as TranslationManagerSubscriberJobCandidate).hook,
                     subscriberId: failure.subscriber.id,
                     error: source.formatError(failure.error),
                 })));
@@ -193,6 +194,7 @@ function createRealmSubscribersControllerFactory(runtimeScope: object): Translat
             catch (policyError) {
                 observe(() => source.translationDiagnostics.recordLazy('subscriber.policy_error', () => ({
                     jobId: job.id,
+                    hook: job.hook,
                     error: source.formatError(policyError),
                 })));
             }

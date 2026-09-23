@@ -430,6 +430,11 @@ function installErrorGuard(): void {
         }
     }
     function suppressWindowError(event: unknown): unknown {
+        if (!enabled)
+            return undefined;
+        const target = propertyValue(event, 'target');
+        if (target != null && target !== scope)
+            return undefined;
         const error = propertyValue(event, 'error');
         const entry = recordError('uncaught-error', error, {
             name: propertyValue(error, 'name'),
@@ -444,6 +449,8 @@ function installErrorGuard(): void {
         return false;
     }
     function suppressUnhandledRejection(event: unknown): unknown {
+        if (!enabled)
+            return undefined;
         const reason = propertyValue(event, 'reason');
         const reasonMessage = propertyValue(reason, 'message');
         let message: unknown;
@@ -475,8 +482,10 @@ function installErrorGuard(): void {
             return false;
         const catchException = sceneManager['catchException'];
         if (isRuntimeFunction(catchException) && propertyValue(catchException, '__liveTranslatorErrorGuard') !== true) {
-            const guarded = (error: unknown): unknown => {
-                showSuppressionAlert(recordError('scene-exception', error));
+            const guarded = function (this: unknown, ...args: unknown[]): unknown {
+                if (!enabled)
+                    return Reflect.apply(catchException, this, args);
+                showSuppressionAlert(recordError('scene-exception', args[0]));
                 return undefined;
             };
             try {
@@ -487,7 +496,11 @@ function installErrorGuard(): void {
         }
         const onError = sceneManager['onError'];
         if (isRuntimeFunction(onError) && propertyValue(onError, '__liveTranslatorErrorGuard') !== true) {
-            const guarded = (event: unknown): unknown => suppressWindowError(event);
+            const guarded = function (this: unknown, ...args: unknown[]): unknown {
+                if (!enabled)
+                    return Reflect.apply(onError, this, args);
+                return suppressWindowError(args[0]);
+            };
             try {
                 sceneManager['onError'] = markGuarded(guarded, onError);
             }
@@ -496,7 +509,11 @@ function installErrorGuard(): void {
         }
         const onReject = sceneManager['onReject'];
         if (isRuntimeFunction(onReject) && propertyValue(onReject, '__liveTranslatorErrorGuard') !== true) {
-            const guarded = (event: unknown): unknown => suppressUnhandledRejection(event);
+            const guarded = function (this: unknown, ...args: unknown[]): unknown {
+                if (!enabled)
+                    return Reflect.apply(onReject, this, args);
+                return suppressUnhandledRejection(args[0]);
+            };
             try {
                 sceneManager['onReject'] = markGuarded(guarded, onReject);
             }

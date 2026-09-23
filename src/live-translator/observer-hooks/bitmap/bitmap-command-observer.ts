@@ -1,12 +1,14 @@
 import { captureCanvasAppearanceOperation, type CanvasAppearanceOperation, } from '../canvas/canvas-appearance-operation.js';
 import { timed, type RuntimeTiming } from '../../runtime/diagnostic-timing.js';
 import { createCanvasClearEvidence, isNativeCanvasOperation } from '../canvas/canvas-clear-evidence.js';
+import { wrapCompletedCanvasClear } from '../canvas/canvas-completed-clear.js';
 import { installOwnedHooks, locateProperty, type OwnedHookSpec } from '../owned-hook-installer.js';
 import { createCanvasPixelDamageReader, resolveCanvasPixelDamage } from '../canvas/canvas-pixel-damage.js';
 import { captureDrawTextPaint, normalizedDrawTextSource } from './text-command.js';
+import { BITMAP_LIMITS } from '../../stores/bitmap-limits.js';
 import { isTextPaint } from '../../stores/styled-text.js';
 import type { BitmapTextLayout } from '../../stores/bitmap-text-layout.js';
-import type { CanvasPixelDamage as ExactGpuMutationDamage } from '../canvas/canvas-pixel-damage.js';
+import type { CanvasPixelDamage } from '../canvas/canvas-pixel-damage.js';
 export interface BitmapTextCommand {
     readonly bitmap: object;
     readonly source: HTMLCanvasElement;
@@ -16,7 +18,7 @@ export interface BitmapTextCommand {
 export interface BitmapCanvasWrite {
     readonly source: HTMLCanvasElement;
     readonly image?: unknown;
-    readonly damage: ExactGpuMutationDamage;
+    readonly damage: CanvasPixelDamage;
     readonly command: BitmapTextCommand | null;
     readonly erases: boolean;
     readonly sourceIsBlank: boolean;
@@ -53,6 +55,7 @@ export function installBitmapCommandObserver(options: {
     readonly observesAppearance: (source: HTMLCanvasElement, image: unknown) => boolean;
     readonly write: (receipt: BitmapCanvasWrite) => void;
     readonly afterWrite: (receipt: BitmapCanvasWrite, returned: boolean) => void;
+    readonly completedClear: (source: HTMLCanvasElement) => void;
     readonly finish: (command: BitmapTextCommand, returned: boolean) => void;
     readonly reset: (source: HTMLCanvasElement) => void;
     readonly destroy: (bitmap: object) => void;
@@ -224,7 +227,11 @@ export function installBitmapCommandObserver(options: {
             optional: true,
             wrap: (native, enabled) => {
                 const trusted = isNativeCanvasOperation(native, key);
-                return function (this: unknown, ...args: unknown[]) {
+                const completedClear = (key === 'clearRect' || key === 'reset') &&
+                    trusted &&
+                    isNativeCanvasOperation(canvasGetter, 'get canvas');
+                const invokeWrite = completedClear ? Reflect.apply : invokeNative;
+                const ordinary = function (this: unknown, ...args: unknown[]) {
                     const [text, x, y, maxWidth] = args;
                     if (trusted &&
                         (key === 'fillText' || key === 'strokeText') &&
@@ -294,7 +301,7 @@ export function installBitmapCommandObserver(options: {
                         });
                     let returned = false;
                     try {
-                        const result = invokeNative(native, this, args);
+                        const result = invokeWrite(native, this, args);
                         returned = true;
                         return result;
                     }
@@ -308,6 +315,20 @@ export function installBitmapCommandObserver(options: {
                             });
                     }
                 };
+                return completedClear
+                    ? wrapCompletedCanvasClear(native, key, ordinary, {
+                        timing: options.timing,
+                        enabled,
+                        canvas: canvasGetter as (this: unknown) => HTMLCanvasElement,
+                        commandOwned: (source) => commands.some((item) => item.source === source),
+                        evidence: cleared,
+                        completed: (source) => {
+                            safe(() => {
+                                options.completedClear(source);
+                            });
+                        },
+                    })
+                    : ordinary;
             },
         });
     for (const key of ['save', 'restore', 'clip'] as const)
@@ -338,18 +359,24 @@ export function installBitmapCommandObserver(options: {
             key,
             wrap: (native, enabled) => {
                 const trusted = isNativeCanvasOperation(native, `set ${key}`);
+                const set = timed(options.timing, 'bitmap-native', function (this: unknown, value: unknown) {
+                    const result = Reflect.apply(native, this, [value]);
+                    if (enabled())
+                        safe(() => {
+                            cleared.reset(this as HTMLCanvasElement, trusted);
+                            if (trusted)
+                                options.completedClear(this as HTMLCanvasElement);
+                        });
+                    return result;
+                });
                 return function (this: unknown, value: unknown) {
                     if (enabled())
                         safe(() => {
                             cleared.forget(this as HTMLCanvasElement);
-                            options.reset(this as HTMLCanvasElement);
+                            if (!trusted)
+                                options.reset(this as HTMLCanvasElement);
                         });
-                    const result = invokeNative(native, this, [value]);
-                    if (enabled())
-                        safe(() => {
-                            cleared.reset(this as HTMLCanvasElement, trusted);
-                        });
-                    return result;
+                    return Reflect.apply(set, this, [value]);
                 };
             },
         });
@@ -392,11 +419,11 @@ export function installBitmapCommandObserver(options: {
                 continue;
             const phase = hook.target === options.renderBoundary.target ? 'render' : 'bitmap-observer';
             if (hook.kind === 'method') {
-                const wrap: typeof hook.wrap = (native, enabled) => timed(timing, phase, hook.wrap(native, enabled));
+                const wrap: typeof hook.wrap = (native, enabled, add) => timed(timing, phase, hook.wrap(native, enabled, add));
                 hooks[i] = { ...hook, wrap };
             }
             else {
-                const wrap: typeof hook.wrap = (native, enabled) => timed(timing, phase, hook.wrap(native, enabled));
+                const wrap: typeof hook.wrap = (native, enabled, add) => timed(timing, phase, hook.wrap(native, enabled, add));
                 hooks[i] = { ...hook, wrap };
             }
         }
@@ -411,7 +438,7 @@ export function installBitmapCommandObserver(options: {
                 wrap: (native) => timed(timing, `frame:${method}`, native),
             });
     }
-    const lease = installOwnedHooks(hooks, options.reportFailure);
+    const lease = installOwnedHooks(hooks, options.reportFailure, BITMAP_LIMITS.evidence);
     if (timing === undefined)
         return lease;
     const document = options.visibilityDocument;

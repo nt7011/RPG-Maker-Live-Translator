@@ -68,15 +68,19 @@ export function createTranslationDiagnosticsPortModule(globalScope: PropertyBag)
                 catch (error) {
                     details = { observationError: formatTranslationObservationError(error) };
                 }
+                if (readDiagnosticsProperty(details, 'hook') === 'foresight')
+                    return null;
                 return [project(type, OBSERVATION_LIMITS, ''), copy(details, OBSERVATION_LIMITS, {})];
             });
         }
         function rememberJob(job: unknown, terminalStatus: unknown, details: unknown = {}): void {
-            binding.invokeLazy('rememberJob', () => [
-                copy(job, JOB_LIMITS, {}),
-                project(terminalStatus, OBSERVATION_LIMITS, ''),
-                copy(details, OBSERVATION_LIMITS, {}),
-            ]);
+            binding.invokeLazy('rememberJob', () => readDiagnosticsProperty(job, 'hook') === 'foresight'
+                ? null
+                : [
+                    copy(job, JOB_LIMITS, {}),
+                    project(terminalStatus, OBSERVATION_LIMITS, ''),
+                    copy(details, OBSERVATION_LIMITS, {}),
+                ]);
         }
         function dispose(): boolean {
             return binding.dispose();

@@ -12,6 +12,7 @@ const mapDeleteIntrinsic = Reflect.getOwnPropertyDescriptor(Map.prototype, 'dele
 const mapForEachIntrinsic = Reflect.getOwnPropertyDescriptor(Map.prototype, 'forEach')?.value as RuntimeFunction;
 const mapSizeIntrinsic = Reflect.getOwnPropertyDescriptor(Map.prototype, 'size')?.get as RuntimeFunction;
 const setAddIntrinsic = Reflect.getOwnPropertyDescriptor(Set.prototype, 'add')?.value as RuntimeFunction;
+const setHasIntrinsic = Reflect.getOwnPropertyDescriptor(Set.prototype, 'has')?.value as RuntimeFunction;
 const setDeleteIntrinsic = Reflect.getOwnPropertyDescriptor(Set.prototype, 'delete')?.value as RuntimeFunction;
 const setForEachIntrinsic = Reflect.getOwnPropertyDescriptor(Set.prototype, 'forEach')?.value as RuntimeFunction;
 const setSizeIntrinsic = Reflect.getOwnPropertyDescriptor(Set.prototype, 'size')?.get as RuntimeFunction;
@@ -46,6 +47,7 @@ export interface SubscriberPreparationInput {
     readonly timeoutMs: unknown;
     readonly onDelta: unknown;
     readonly onTranslatorExchange?: unknown;
+    readonly dispatchGroup?: unknown;
     readonly recordId: unknown;
     readonly hook: unknown;
     readonly source: unknown;
@@ -186,6 +188,7 @@ interface SubscriberCell {
     readonly timeoutMs: unknown;
     readonly onDelta: unknown;
     readonly onTranslatorExchange?: unknown;
+    readonly dispatchGroup: symbol | null;
     readonly hook: unknown;
     readonly source: unknown;
     readonly sourceHint: unknown;
@@ -243,6 +246,9 @@ export interface SubscriberTerminalizationBatch {
     readonly failures: readonly SubscriberTerminalizationFailure[];
 }
 export interface SubscriberOwnershipRegistry {
+    readonly canDispatchJob: (job: unknown) => boolean;
+    readonly claimJobDispatch: (job: unknown) => boolean;
+    readonly releaseJobDispatch: (job: unknown) => void;
     createJobProjection(job: object): JobSubscriberProjection;
     prepareSubscriber(input: SubscriberPreparationInput): SubscriberPreparationOutcome;
     stageAdmission(token: unknown): SubscriberView;
@@ -280,6 +286,9 @@ function mapSize(store: Map<unknown, unknown>): number {
 }
 function setAdd<Value>(store: Set<Value>, value: Value): void {
     Reflect.apply(setAddIntrinsic, store, [value]);
+}
+function setHas<Value>(store: Set<Value>, value: Value): boolean {
+    return Reflect.apply(setHasIntrinsic, store, [value]) as boolean;
 }
 function setDelete<Value>(store: Set<Value>, value: Value): boolean {
     return Reflect.apply(setDeleteIntrinsic, store, [value]) as boolean;
@@ -330,6 +339,8 @@ export function createSubscriberOwnershipRegistry(options: SubscriberOwnershipOp
     const { createSubscriberHandleLease, settleSubscriberHandleLease, createAbortError, normalizeRecordKey, now, scheduleDeadline, cancelDeadline, reportSecondaryError, } = options;
     const jobs = new NativeMap<object, Map<string, SubscriberCell>>();
     const records = new NativeMap<string, Set<SubscriberCell>>();
+    const dispatches = new NativeMap<object, Set<symbol>>();
+    const runningGroups = new NativeMap<symbol, Set<object>>();
     const views = new NativeWeakMap<object, SubscriberCell>();
     const projections = new NativeWeakMap<object, JobSubscriberProjection>();
     const admissionCells = new NativeWeakMap<object, SubscriberCell>();
@@ -384,6 +395,52 @@ export function createSubscriberOwnershipRegistry(options: SubscriberOwnershipOp
                 result.push(cell);
         });
         return result;
+    }
+    function attachDispatchGroup(job: object, group: symbol | null): void {
+        const groups = mapGet(dispatches, job);
+        if (groups === undefined || group === null)
+            return;
+        setAdd(groups, group);
+        let running = mapGet(runningGroups, group);
+        if (running === undefined) {
+            running = new NativeSet();
+            mapSet(runningGroups, group, running);
+        }
+        setAdd(running, job);
+    }
+    function canDispatchJob(job: unknown): boolean {
+        return activeCells(job).every((cell) => {
+            if (cell.dispatchGroup === null)
+                return true;
+            const running = mapGet(runningGroups, cell.dispatchGroup);
+            if (running === undefined)
+                return true;
+            return setSize(running) === 1 && setHas(running, job);
+        });
+    }
+    function claimJobDispatch(job: unknown): boolean {
+        if (!isObjectLike(job) || mapGet(dispatches, job) !== undefined || !canDispatchJob(job))
+            return false;
+        mapSet(dispatches, job, new NativeSet());
+        for (const cell of activeCells(job))
+            attachDispatchGroup(job, cell.dispatchGroup);
+        return true;
+    }
+    function releaseJobDispatch(job: unknown): void {
+        if (!isObjectLike(job))
+            return;
+        const groups = mapGet(dispatches, job);
+        if (groups === undefined)
+            return;
+        mapDelete(dispatches, job);
+        setForEach(groups, (group) => {
+            const running = mapGet(runningGroups, group);
+            if (running === undefined)
+                return;
+            setDelete(running, job);
+            if (setSize(running) === 0)
+                mapDelete(runningGroups, group);
+        });
     }
     function makeView(cell: SubscriberCell): SubscriberView {
         return Object.freeze({
@@ -912,6 +969,7 @@ export function createSubscriberOwnershipRegistry(options: SubscriberOwnershipOp
             timeoutMs,
             onDelta: input.onDelta,
             onTranslatorExchange: input.onTranslatorExchange,
+            dispatchGroup: typeof input.dispatchGroup === 'symbol' ? input.dispatchGroup : null,
             hook: input.hook,
             source: input.source,
             sourceHint: input.sourceHint,
@@ -1121,6 +1179,7 @@ export function createSubscriberOwnershipRegistry(options: SubscriberOwnershipOp
         if (arguments.length >= 2)
             cell.status = status;
         cell.phase = 'active';
+        attachDispatchGroup(cell.job, cell.dispatchGroup);
         return cell.view;
     }
     function terminalizeAdmission(token: unknown, error: unknown, status: 'canceled' | 'failed'): SubscriberTerminalizationReceipt | null {
@@ -1282,6 +1341,9 @@ export function createSubscriberOwnershipRegistry(options: SubscriberOwnershipOp
         return true;
     }
     return Object.freeze({
+        canDispatchJob,
+        claimJobDispatch,
+        releaseJobDispatch,
         createJobProjection,
         prepareSubscriber,
         stageAdmission,

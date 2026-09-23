@@ -1,6 +1,6 @@
 import type { TextRecordsSnapshot } from '../../runtime/text-record-types.js';
 import type { TranslationStatusSnapshot } from '../../runtime/translation-status-types.js';
-import type { GuiResourceSnapshot, GuiConfiguredPolicy, GuiDrawCaptureTrace, GuiEffectivePolicy, GuiForesightSnapshot, GuiHookResult, GuiHookSummary, GuiTranslationDiagnosticsSnapshot, GuiRuntimeContext, GuiRuntimeFeedHealthMap, GuiRuntimeState, GuiTextRecord, GuiTextHistoryCacheEntry, GuiTextSummary, GuiViewState, UnknownRecord, } from './types.js';
+import type { GuiResourceSnapshot, GuiConfiguredPolicy, GuiDrawCaptureTrace, GuiEffectivePolicy, GuiHookResult, GuiHookSummary, GuiTranslationDiagnosticsSnapshot, GuiRuntimeContext, GuiRuntimeFeedHealthMap, GuiRuntimeState, GuiTextRecord, GuiTextHistoryCacheEntry, GuiTextSummary, GuiViewState, UnknownRecord, } from './types.js';
 import { createInitialRuntimeFeedHealth } from './runtime/feed-health.js';
 export const refs: Record<string, HTMLElement | undefined> = {};
 export const INACTIVE_TEXT_DISPLAY_LIMIT = 100;
@@ -10,7 +10,6 @@ export const VERSION_CHECK_INTERVAL_MS = 2 * 60 * 60 * 1000;
 export const VERSION_CHECK_TIMEOUT_MS = 8000;
 export const VERSION_CHECK_MAX_BYTES = 16 * 1024;
 export const VERSION_CHECK_MAX_REDIRECTS = 5;
-export const FORESIGHT_ACTION_DISPLAY_LIMIT = 150;
 export interface GuiState {
     providerStatus: TranslationStatusSnapshot | null;
     startedAt: number;
@@ -53,7 +52,6 @@ export interface GuiState {
     textDiagnosticsSurface: boolean;
     translationDiagnostics: GuiTranslationDiagnosticsSnapshot | null;
     drawCaptureTrace: GuiDrawCaptureTrace | null;
-    foresight: GuiForesightSnapshot | null;
     foresightMessagesOnly: boolean;
     logLines: string[];
     provider: string;
@@ -106,7 +104,6 @@ export const state: GuiState = {
     textDiagnosticsSurface: false,
     translationDiagnostics: null,
     drawCaptureTrace: null,
-    foresight: null,
     foresightMessagesOnly: true,
     logLines: [],
     provider: '-',

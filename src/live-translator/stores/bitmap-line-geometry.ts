@@ -62,6 +62,20 @@ export function sameBitmapLineFrame(a: BitmapLineFrame, b: BitmapLineFrame): boo
         a.lineHeight === b.lineHeight &&
         a.alignment === b.alignment);
 }
+export function anchorBitmapHorizontalRoom(frame: BitmapLineFrame, left: number, right: number): {
+    readonly left: number;
+    readonly right: number;
+} {
+    if (frame.alignment === 'left')
+        return { left: frame.x, right: left > frame.x ? frame.x : right };
+    if (frame.alignment === 'right') {
+        const anchor = frame.x + frame.width;
+        return { left: right < anchor ? anchor : left, right: anchor };
+    }
+    const center = frame.x + frame.width / 2;
+    const radius = Math.max(0, Math.min(center - left, right - center));
+    return { left: center - radius, right: center + radius };
+}
 export function bitmapLineTextX(frame: BitmapLineFrame, advance: number): number {
     return frame.x + (frame.width - advance) * bitmapAlignmentFactor(frame.alignment);
 }

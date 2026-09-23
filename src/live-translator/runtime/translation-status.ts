@@ -246,6 +246,10 @@ export function createTranslationStatusModule(): TranslationStatusModule {
                         if (listeners.has(listener))
                             deliver(listener, snapshot);
                     }
+                    if (!snapshot.active) {
+                        listeners.clear();
+                        notifyAgain = false;
+                    }
                 } while (notifyAgain);
             }
             finally {
@@ -307,7 +311,6 @@ export function createTranslationStatusModule(): TranslationStatusModule {
             if (active) {
                 active = false;
                 publish();
-                listeners.clear();
             }
             if (publicationRunning)
                 return false;

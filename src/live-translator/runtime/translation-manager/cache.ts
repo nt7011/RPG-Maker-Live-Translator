@@ -257,6 +257,14 @@ export function createTranslationManagerCacheModule(common: unknown, constants: 
         function isVisible(key: unknown): boolean {
             return !shouldHide(key);
         }
+        function countVisibleEntries(): number {
+            let count = 0;
+            for (const key of entries.keys()) {
+                if (isVisible(key))
+                    count += 1;
+            }
+            return count;
+        }
         function captureVisibleEntriesFrom(source: ReadonlyMap<unknown, unknown>): TranslationMapEntry[] {
             const visible: TranslationMapEntry[] = [];
             for (const [key, value] of source) {
@@ -646,7 +654,7 @@ export function createTranslationManagerCacheModule(common: unknown, constants: 
         }
         const readonlyView: ReadonlyCompletedTranslationMap = Object.freeze({
             get size(): number {
-                return captureVisibleEntries().length;
+                return countVisibleEntries();
             },
             has,
             get,
@@ -655,7 +663,7 @@ export function createTranslationManagerCacheModule(common: unknown, constants: 
         });
         const owner: CompletedTranslationMap = Object.freeze({
             get size(): number {
-                return captureVisibleEntries().length;
+                return countVisibleEntries();
             },
             readonlyView,
             has,

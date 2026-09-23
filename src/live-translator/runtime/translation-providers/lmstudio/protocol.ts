@@ -631,18 +631,20 @@ export function createLmStudioProtocolModule(common: TranslationProviderCommonMo
     }
     function createSseParser(): LmStudioSseParser {
         let buffer = '';
+        let scanOffset = 0;
         function lineEndingLengthAt(input: string, index: number): number {
-            if (input[index] === '\n')
+            const character = input.charCodeAt(index);
+            if (character === 10)
                 return 1;
-            if (input[index] !== '\r')
+            if (character !== 13)
                 return 0;
-            return input[index + 1] === '\n' ? 2 : 1;
+            return input.charCodeAt(index + 1) === 10 ? 2 : 1;
         }
         function findFrameSeparator(input: string): {
             index: number;
             length: number;
         } | null {
-            for (let index = 0; index < input.length; index += 1) {
+            for (let index = scanOffset; index < input.length; index += 1) {
                 const firstLength = lineEndingLengthAt(input, index);
                 if (firstLength === 0)
                     continue;
@@ -651,8 +653,13 @@ export function createLmStudioProtocolModule(common: TranslationProviderCommonMo
                 if (secondLength > 0) {
                     return { index, length: firstLength + secondLength };
                 }
+                if (secondIndex >= input.length) {
+                    scanOffset = index;
+                    return null;
+                }
                 index = secondIndex - 1;
             }
+            scanOffset = input.length;
             return null;
         }
         function drain(final = false): unknown[] {
@@ -663,11 +670,13 @@ export function createLmStudioProtocolModule(common: TranslationProviderCommonMo
                     break;
                 const frame = buffer.slice(0, separator.index);
                 buffer = buffer.slice(separator.index + separator.length);
+                scanOffset = 0;
                 appendSseEvent(events, frame);
             }
             if (final && buffer) {
                 const frame = buffer;
                 buffer = '';
+                scanOffset = 0;
                 appendSseEvent(events, frame);
             }
             return events;

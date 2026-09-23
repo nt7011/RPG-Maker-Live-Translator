@@ -7,6 +7,7 @@ export interface BitmapCommandAtom {
     readonly text: string;
     readonly layout: BitmapTextLayout;
     readonly geometry: BitmapSourceGeometry | null;
+    readonly repaint: PixelBounds | null;
     readonly effect: PixelEffect | null;
     readonly bounds: PixelBounds;
     readonly sequence: number;
@@ -18,6 +19,16 @@ export interface BitmapCommandRow {
     readonly effects: readonly PixelEffect[];
     readonly source: StyledText;
     readonly frame: BitmapLineFrame;
+}
+export function bitmapCommandRow(reading: readonly BitmapCommandAtom[]): BitmapCommandRow {
+    const atoms = reading.toSorted((a, b) => a.sequence - b.sequence);
+    return {
+        atoms,
+        reading,
+        effects: [...new Set(atoms.flatMap((atom) => (atom.effect === null ? [] : [atom.effect])))],
+        source: createStyledText(reading.map((atom) => ({ text: atom.text, paint: atom.layout.paint }))),
+        frame: bitmapLineFrame(reading.flatMap((atom) => (atom.geometry === null ? [] : [atom.geometry]))),
+    };
 }
 export type BitmapTextBarriers = readonly PixelBounds[] | null;
 export function boundsIntersect(a: PixelBounds, b: PixelBounds): boolean {
@@ -80,14 +91,7 @@ export function assembleBitmapCommandRows(atoms: readonly BitmapCommandAtom[], b
             return false;
         if (effects.size === 0 && members.some((atom) => atom.text.trim().length !== 0))
             return false;
-        const chronological = members.toSorted((a, b) => a.sequence - b.sequence);
-        result.push({
-            atoms: chronological,
-            reading,
-            effects: [...new Set(chronological.flatMap((atom) => (atom.effect === null ? [] : [atom.effect])))],
-            source: createStyledText(reading.map((atom) => ({ text: atom.text, paint: atom.layout.paint }))),
-            frame: bitmapLineFrame(reading.flatMap((atom) => (atom.geometry === null ? [] : [atom.geometry]))),
-        });
+        result.push(bitmapCommandRow(reading));
         return true;
     }
     const spatial = atoms.toSorted((a, b) => a.layout.placement.y - b.layout.placement.y ||

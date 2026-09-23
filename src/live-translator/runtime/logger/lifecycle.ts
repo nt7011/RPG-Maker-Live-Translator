@@ -38,6 +38,7 @@ export interface LoggerLifecycleInput {
     readonly scheduleThrottleReset: unknown;
 }
 export interface LoggerLifecycle {
+    readonly hasOrdinaryLogCapacity: () => boolean;
     readonly admitOrdinaryLog: (bypassThrottle: boolean) => boolean;
     readonly getFastTimestamp: () => string;
 }
@@ -138,16 +139,21 @@ export function createLoggerLifecycle(input: LoggerLifecycleInput): LoggerLifecy
             throttleCadence = { kind: 'failed' };
         }
     }
-    function admitOrdinaryLog(bypassThrottle: boolean): boolean {
-        if (bypassThrottle)
-            return true;
+    function hasOrdinaryLogCapacity(): boolean {
         if (maxLogsPerFrame === 0)
             return false;
         if (throttleCadence.kind !== 'available') {
             return true;
         }
-        if (logThrottle >= maxLogsPerFrame)
+        return logThrottle < maxLogsPerFrame;
+    }
+    function admitOrdinaryLog(bypassThrottle: boolean): boolean {
+        if (bypassThrottle)
+            return true;
+        if (!hasOrdinaryLogCapacity())
             return false;
+        if (throttleCadence.kind !== 'available')
+            return true;
         logThrottle += 1;
         acquireThrottleResetOwnership();
         return true;
@@ -209,6 +215,7 @@ export function createLoggerLifecycle(input: LoggerLifecycleInput): LoggerLifecy
         return timestampCache.kind === 'initialized' ? timestampCache.value : '00:00:00';
     }
     return {
+        hasOrdinaryLogCapacity,
         admitOrdinaryLog,
         getFastTimestamp,
     };

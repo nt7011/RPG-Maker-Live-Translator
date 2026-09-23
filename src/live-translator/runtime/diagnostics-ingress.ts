@@ -1,6 +1,6 @@
 import type { TimingEdge } from './diagnostic-timing.js';
 import { captureLogRedactor, redactRecordSink, type LogRedactor } from './log-redaction-port.js';
-export type RuntimeDiagnosticFactType = 'record.observed' | 'record.changed' | 'semantic.context' | 'lifecycle.ignored' | 'translation.exchange' | 'translation.requested' | 'translation.available' | 'translation.noop' | 'translation.rejected' | 'translation.superseded' | 'presentation.drawn' | 'presentation.rejected' | 'presentation.invalidated' | 'record.released' | 'failure' | 'runtime.event';
+export type RuntimeDiagnosticFactType = 'record.observed' | 'record.changed' | 'semantic.context' | 'semantic.control' | 'lifecycle.ignored' | 'translation.exchange' | 'translation.requested' | 'translation.priority' | 'translation.available' | 'translation.noop' | 'translation.rejected' | 'translation.superseded' | 'presentation.submitted' | 'presentation.drawn' | 'presentation.rejected' | 'presentation.invalidated' | 'record.released' | 'failure' | 'runtime.event';
 export type RuntimeDiagnosticLevel = 'info' | 'warn' | 'error';
 export type RuntimeDiagnosticScalar = string | number | boolean | null;
 export interface RuntimeDiagnosticField {
@@ -101,6 +101,32 @@ function readOwnDataProperty(value: unknown, key: PropertyKey): unknown {
     }
 }
 const noRuntimeDiagnosticsIngress: RuntimeDiagnosticsIngress = Object.freeze({});
+const factTags: Partial<Record<RuntimeDiagnosticFactType, Readonly<Record<string, readonly string[]>>>> = {
+    'semantic.control': { control: ['window', 'game-message', 'sprite', 'none', 'invalidated'] },
+    'semantic.context': {
+        status: ['accepted', 'disabled', 'rejected'],
+        family: ['window', 'game-message', 'sprite'],
+        stage: ['observation', 'clue', 'association', 'layout', 'presentation'],
+        areaKind: ['line', 'block'],
+        presentationStage: ['layout', 'presentation'],
+    },
+    'presentation.drawn': { presentationKind: ['final', 'growing'] },
+};
+function redactFact(fact: RuntimeDiagnosticFact, redactor: LogRedactor): RuntimeDiagnosticFact {
+    const copied = redactor.record(fact, ['type', 'level', 'fields.*.name']);
+    const tags = Object.hasOwn(factTags, copied.type) ? factTags[copied.type] : undefined;
+    if (tags === undefined || copied.fields === undefined)
+        return copied;
+    const original = readOwnDataProperty(fact, 'fields');
+    return {
+        ...copied,
+        fields: copied.fields.map((field, index) => {
+            const value = readOwnDataProperty(readOwnDataProperty(original, String(index)), 'value');
+            const allowed = Object.hasOwn(tags, field.name) ? tags[field.name] : undefined;
+            return typeof value === 'string' && allowed?.includes(value) ? { ...field, value } : field;
+        }),
+    };
+}
 export function captureRuntimeDiagnosticsIngress(scope: unknown, redactor: LogRedactor | undefined = captureLogRedactor(scope)): RuntimeDiagnosticsIngress {
     const service = readOwnDataProperty(scope, 'LiveTranslatorDiagnostics');
     const ingress = readOwnDataProperty(service, 'ingress');
@@ -110,13 +136,23 @@ export function captureRuntimeDiagnosticsIngress(scope: unknown, redactor: LogRe
     const captured: MutableRuntimeDiagnosticsIngress = {};
     if (typeof accept === 'function') {
         const pinnedAccept = accept as NonNullable<RuntimeDiagnosticsIngress['accept']>;
-        captured.accept = redactRecordSink(function acceptFact(fact: RuntimeDiagnosticFact): void {
+        function acceptFact(fact: RuntimeDiagnosticFact): void {
             try {
                 Reflect.apply(pinnedAccept, ingress, [fact]);
             }
             catch {
             }
-        }, redactor, ['type', 'level', 'fields.*.name']);
+        }
+        captured.accept =
+            redactor === undefined
+                ? acceptFact
+                : (fact) => {
+                    try {
+                        acceptFact(redactFact(fact, redactor));
+                    }
+                    catch {
+                    }
+                };
     }
     const bitmapTextRejectionAccept = readOwnDataProperty(ingress, 'acceptBitmapTextRejection');
     if (typeof bitmapTextRejectionAccept === 'function') {

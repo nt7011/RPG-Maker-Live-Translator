@@ -140,10 +140,10 @@ export function createLoggerModule(redactor: LogRedactor | undefined = captureLo
                 return false;
             }
         }
-        function forceLog(args: readonly unknown[]): void {
+        function forceLog(args: readonly unknown[], bypassThrottle?: boolean): void {
             if (!isLoggingEnabled())
                 return;
-            if (!lifecycle.admitOrdinaryLog(shouldUseThrottleBypass()))
+            if (!lifecycle.admitOrdinaryLog(bypassThrottle ?? shouldUseThrottleBypass()))
                 return;
             sinks.log(args);
         }
@@ -169,6 +169,12 @@ export function createLoggerModule(redactor: LogRedactor | undefined = captureLo
             const normalizedLevel = normalizeLevel(level);
             if (!shouldLogNormalizedLevel(normalizedLevel))
                 return;
+            let bypassThrottle: boolean | undefined;
+            if (normalizedLevel !== 'error' && normalizedLevel !== 'warn' && !lifecycle.hasOrdinaryLogCapacity()) {
+                bypassThrottle = shouldUseThrottleBypass();
+                if (!bypassThrottle && !lifecycle.hasOrdinaryLogCapacity())
+                    return;
+            }
             if (suppressionPolicy.shouldSuppress(args))
                 return;
             switch (normalizedLevel) {
@@ -179,7 +185,7 @@ export function createLoggerModule(redactor: LogRedactor | undefined = captureLo
                     sinks.warn(args);
                     break;
                 default:
-                    forceLog(args);
+                    forceLog(args, bypassThrottle);
                     break;
             }
         }

@@ -44,29 +44,49 @@ export function createCanvasClearEvidence(canvasPrototype: object, contextProtot
         }
         states.set(source, { blank: true, unclipped: true, stack: [] });
     }
-    function beginWrite(source: HTMLCanvasElement, context: CanvasRenderingContext2D, name: string, args: readonly unknown[], trusted: boolean): boolean {
-        const entry = state(source);
-        entry.blank = false;
-        if (!trusted) {
-            forget(source);
+    function admitsClear(source: HTMLCanvasElement, context: CanvasRenderingContext2D, name: string, args: readonly unknown[], trusted: boolean): boolean {
+        if (!trusted)
             return false;
-        }
         if (name === 'reset')
             return true;
-        if (name !== 'clearRect' || !readersTrusted || !entry.unclipped)
+        if (name !== 'clearRect' || !readersTrusted || states.get(source)?.unclipped !== true)
             return false;
         const [x, y, w, h] = args;
         if (![x, y, w, h].every((value) => typeof value === 'number' && Number.isFinite(value)))
             return false;
         const matrix = Reflect.apply(transform as (...args: unknown[]) => unknown, context, []) as DOMMatrix;
-        if (matrix.a !== 1 || matrix.b !== 0 || matrix.c !== 0 || matrix.d !== 1 || matrix.e !== 0 || matrix.f !== 0)
-            return false;
+        for (const [key, expected] of [
+            ['a', 1],
+            ['b', 0],
+            ['c', 0],
+            ['d', 1],
+            ['e', 0],
+            ['f', 0],
+        ] as const) {
+            const descriptor = locateProperty(matrix, key)?.descriptor;
+            if (descriptor === undefined)
+                return false;
+            const getter: unknown = Reflect.get(descriptor, 'get');
+            if ('value' in descriptor) {
+                if (descriptor.value !== expected)
+                    return false;
+            }
+            else if (!isNativeCanvasOperation(getter, `get ${key}`) ||
+                Reflect.apply(getter as () => number, matrix, []) !== expected)
+                return false;
+        }
         const sourceWidth = Reflect.apply(width as () => number, source, []);
         const sourceHeight = Reflect.apply(height as () => number, source, []);
         return (Math.min(x as number, (x as number) + (w as number)) <= 0 &&
             Math.min(y as number, (y as number) + (h as number)) <= 0 &&
             Math.max(x as number, (x as number) + (w as number)) >= sourceWidth &&
             Math.max(y as number, (y as number) + (h as number)) >= sourceHeight);
+    }
+    function beginWrite(source: HTMLCanvasElement, context: CanvasRenderingContext2D, name: string, args: readonly unknown[], trusted: boolean): boolean {
+        state(source).blank = false;
+        if (!trusted)
+            forget(source);
+        return admitsClear(source, context, name, args, trusted);
     }
     function endWrite(source: HTMLCanvasElement, name: string, cleared: boolean): void {
         if (!cleared)
@@ -94,6 +114,7 @@ export function createCanvasClearEvidence(canvasPrototype: object, contextProtot
         isBlank: (source: HTMLCanvasElement, context: CanvasRenderingContext2D) => states.get(source)?.blank === true && transparent(context),
         forget,
         reset,
+        admitsClear,
         beginWrite,
         endWrite,
         clipState,

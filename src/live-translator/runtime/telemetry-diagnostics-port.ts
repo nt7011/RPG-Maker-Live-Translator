@@ -60,6 +60,8 @@ export function createTelemetryDiagnosticsPortModule(globalScope: PropertyBag): 
             observe('logTextDetected', { source, text, x, y, extraInfo });
         }
         function logTranslation(event: unknown, text: unknown, result: unknown = null, timing: unknown = null): void {
+            if (readDiagnosticsProperty(timing, 'hook') === 'foresight')
+                return;
             observe('logTranslation', { event, text, result, timing });
         }
         function logDraw(event: unknown, text: unknown, x: unknown, y: unknown, extraInfo: unknown = {}): void {

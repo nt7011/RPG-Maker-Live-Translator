@@ -7,7 +7,6 @@ import { getVisibleHookSummary, summarizeHookResults } from './runtime/records.j
 import { refs, state } from './state.js';
 import type { GuiHookSummary, GuiStatusSummaryModel, GuiPolicySnapshot, GuiRuntimeContextPolicy, UnknownRecord, } from './types.js';
 import { falsyFallback, isGuiDetailsElement, isGuiHtmlElement, isUnknownRecord, propertyValue, stringValue, } from './types.js';
-const disabledForesightSummaryBindings = new WeakSet<EventTarget>();
 const logRedactor = captureLogRedactor(getGameWindow());
 export function initRefs(): void {
     for (const element of document.querySelectorAll('[id]')) {
@@ -316,35 +315,6 @@ export function formatError(err: unknown): string {
         return 'unknown error';
     const message = propertyValue(err, 'message');
     return message ? stringValue(message) : stringValue(err);
-}
-export function bindDisabledForesightPanelGuard(): void {
-    const panel = refs['foresight-panel'];
-    const summary = panel?.querySelectorAll('summary').item(0) ?? null;
-    if (!summary || disabledForesightSummaryBindings.has(summary))
-        return;
-    disabledForesightSummaryBindings.add(summary);
-    summary.addEventListener('click', (event) => {
-        if (!isForesightPanelDisabled())
-            return;
-        event.preventDefault();
-        event.stopPropagation();
-        if (isGuiDetailsElement(panel))
-            panel.open = false;
-    });
-    summary.addEventListener('keydown', (event) => {
-        if (!isForesightPanelDisabled())
-            return;
-        if (event.key !== 'Enter' && event.key !== ' ')
-            return;
-        event.preventDefault();
-        event.stopPropagation();
-        if (isGuiDetailsElement(panel))
-            panel.open = false;
-    });
-}
-export function isForesightPanelDisabled(): boolean {
-    const panel = refs['foresight-panel'];
-    return panel?.classList.contains('foresight-panel-disabled') === true;
 }
 export function bindFoldedPanelSummaryControls(): void {
     const controls = document.querySelectorAll('summary button, summary input, summary label, summary a');

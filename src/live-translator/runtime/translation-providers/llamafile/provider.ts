@@ -66,8 +66,9 @@ export function createLlamafileProviderModule(common: TranslationProviderCommonM
         let closed = false;
         const waiters = new Set<() => void>();
         const startup = initialize();
-        void startup.catch((error: unknown) => {
-            logger.error('[LiveTranslator][llamafile] startup failed', error);
+        void startup
+            .catch((error: unknown) => logger.error('[LiveTranslator][llamafile] startup failed', error))
+            .catch(() => {
         });
         async function initialize(): Promise<LlamaCppProvider> {
             try {
@@ -105,38 +106,108 @@ export function createLlamafileProviderModule(common: TranslationProviderCommonM
         async function withBackend<T>(request: unknown, call: (backend: LlamaCppProvider, options: object) => Promise<T>): Promise<T> {
             assertUsable();
             const input = request && typeof request === 'object' ? (request as Record<string, unknown>) : {};
+            const parentSignal = input['signal'];
+            const timeoutMs = input['timeoutMs'];
+            assertUsable();
+            const requestAbort = new AbortController();
             const linked = createLinkedAbort({
-                signal: input['signal'],
-                timeoutMs: input['timeoutMs'] ?? cfg.request_timeout_ms,
+                signal: parentSignal,
+                timeoutMs: timeoutMs ?? cfg.request_timeout_ms,
             });
             const signal = linked.signal as AbortSignal;
             return new Promise<T>((resolve, reject) => {
                 let settled = false;
-                const finish = (success: boolean, value: unknown): void => {
-                    if (settled)
-                        return;
-                    settled = true;
+                let linkedOwned = true;
+                let listenerOwned = false;
+                let listenerAcquiring = false;
+                const release = (): void => {
                     waiters.delete(onClose);
-                    signal.removeEventListener('abort', onAbort);
-                    linked.cleanup();
+                    if (listenerOwned && !listenerAcquiring) {
+                        listenerOwned = false;
+                        try {
+                            signal.removeEventListener('abort', onAbort);
+                        }
+                        catch {
+                        }
+                    }
+                    if (linkedOwned) {
+                        linkedOwned = false;
+                        try {
+                            linked.cleanup();
+                        }
+                        catch {
+                        }
+                    }
+                };
+                const complete = (success: boolean, value: unknown, cancel: boolean): void => {
+                    if (cancel) {
+                        requestAbort.abort(value);
+                    }
+                    release();
                     if (success)
                         resolve(value as T);
                     else
                         reject(value);
                 };
+                const finish = (success: boolean, value: unknown, cancel = false): void => {
+                    if (settled)
+                        return;
+                    settled = true;
+                    complete(success, value, cancel);
+                };
                 const onAbort = (): void => {
-                    finish(false, linked.getAbortReason() ?? signal.reason);
+                    if (settled)
+                        return;
+                    settled = true;
+                    let reason: unknown;
+                    try {
+                        reason = linked.getAbortReason() ?? signal.reason;
+                    }
+                    catch (error) {
+                        reason = error;
+                    }
+                    complete(false, reason, true);
                 };
                 const onClose = (): void => {
-                    finish(false, createError('Managed llamafile provider is closed.', 'LLAMAFILE_PROVIDER_CLOSED'));
+                    finish(false, createError('Managed llamafile provider is closed.', 'LLAMAFILE_PROVIDER_CLOSED'), true);
                 };
                 waiters.add(onClose);
                 const task = startup.then(async (readyBackend) => {
                     if (settled)
                         return undefined;
                     assertUsable();
-                    signal.throwIfAborted();
-                    const result = await call(readyBackend, { ...input, signal });
+                    if (settled)
+                        return undefined;
+                    const delegated: Record<PropertyKey, unknown> = {};
+                    for (const key of Reflect.ownKeys(input)) {
+                        if (!Reflect.getOwnPropertyDescriptor(input, key)?.enumerable)
+                            continue;
+                        const value: unknown = key === 'signal'
+                            ? requestAbort.signal
+                            : key === 'timeoutMs'
+                                ? timeoutMs
+                                : Reflect.get(input, key);
+                        Object.defineProperty(delegated, key, {
+                            value,
+                            enumerable: true,
+                            configurable: true,
+                            writable: true,
+                        });
+                    }
+                    delegated['signal'] = requestAbort.signal;
+                    const onDelta = delegated['onDelta'];
+                    if (typeof onDelta === 'function') {
+                        delegated['onDelta'] = (partial: unknown): unknown => {
+                            if (settled || closed)
+                                return undefined;
+                            const observed: unknown = Reflect.apply(onDelta, undefined, [partial]);
+                            return observed;
+                        };
+                    }
+                    if (settled)
+                        return undefined;
+                    requestAbort.signal.throwIfAborted();
+                    const result = await call(readyBackend, delegated);
                     assertUsable();
                     return result;
                 });
@@ -145,9 +216,25 @@ export function createLlamafileProviderModule(common: TranslationProviderCommonM
                 }, (error: unknown) => {
                     finish(false, error);
                 });
-                signal.addEventListener('abort', onAbort, { once: true });
-                if (signal.aborted)
-                    onAbort();
+                try {
+                    listenerOwned = true;
+                    listenerAcquiring = true;
+                    try {
+                        signal.addEventListener('abort', onAbort, { once: true });
+                    }
+                    finally {
+                        listenerAcquiring = false;
+                        if (settled)
+                            release();
+                    }
+                    if (signal.aborted)
+                        onAbort();
+                    if (closed)
+                        onClose();
+                }
+                catch (error) {
+                    finish(false, error, true);
+                }
             });
         }
         function getRuntimeStatus(): Readonly<TranslationProviderRuntimeStatus> {

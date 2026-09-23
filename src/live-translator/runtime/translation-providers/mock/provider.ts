@@ -8,6 +8,7 @@ interface MockProviderCommonDependencies {
     readonly normalizeMockTranslatorConfig: (rootConfig?: unknown) => MockTranslatorConfig;
 }
 interface MockTranslationOptionsCandidate {
+    readonly characterCount?: unknown;
     readonly useRandomizedStrings?: unknown;
     readonly random?: unknown;
 }
@@ -27,6 +28,7 @@ interface AbortSignalCandidate {
 export interface MockTranslatorConfig {
     readonly capacity: number;
     readonly delayMs: number;
+    readonly characterCount: number;
     readonly useRandomizedStrings: boolean;
 }
 export interface MockTranslatorProvider {
@@ -267,10 +269,21 @@ export function createMockTranslatorProviderModule(common: TranslationProviderCo
         const cfg = options && typeof options === 'object'
             ? (options as MockTranslationOptionsCandidate)
             : ({} as MockTranslationOptionsCandidate);
-        if (cfg.useRandomizedStrings === true) {
-            return mockTranslateTextRandomized(text, cfg.random);
-        }
-        return mockTranslateTextSequential(text);
+        const translated = cfg.useRandomizedStrings === true
+            ? mockTranslateTextRandomized(text, cfg.random)
+            : mockTranslateTextSequential(text);
+        const offset = cfg.characterCount;
+        const characterCount = typeof offset === 'number' && Number.isInteger(offset) ? offset : 0;
+        return translated
+            .split('\n')
+            .map((line) => {
+            const characters = Array.from(line);
+            const length = Math.max(1, characters.length + characterCount);
+            if (length > characters.length)
+                return line + 'A'.repeat(length - characters.length);
+            return characters.slice(0, length).join('');
+        })
+            .join('\n');
     }
     function mockTranslateTextSequential(text: unknown): string {
         let cjkIndex = 0;

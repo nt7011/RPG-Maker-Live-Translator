@@ -1,3 +1,4 @@
+import { locateProperty } from '../owned-hook-installer.js';
 export type CanvasPixelDamage = {
     readonly kind: 'full';
 } | {
@@ -7,10 +8,8 @@ export type CanvasPixelDamage = {
     readonly width: number;
     readonly height: number;
 };
-type ExactGpuMutationDamage = CanvasPixelDamage;
-import { locateProperty } from '../owned-hook-installer.js';
 type CanvasMutationMethod = 'clearRect' | 'fillRect' | 'strokeRect' | 'fill' | 'stroke' | 'fillText' | 'strokeText' | 'drawImage' | 'putImageData' | 'reset' | 'drawFocusIfNeeded';
-const fullDamage: ExactGpuMutationDamage = Object.freeze({ kind: 'full' });
+const fullDamage: CanvasPixelDamage = Object.freeze({ kind: 'full' });
 type CapturedMethod = (receiver: unknown, arguments_: readonly unknown[]) => unknown;
 type CapturedGetter = (receiver: unknown) => unknown;
 type CanvasPaintStateKey = 'globalAlpha' | 'fillStyle' | 'imageSmoothingEnabled' | 'shadowColor' | 'globalCompositeOperation' | 'shadowBlur' | 'shadowOffsetX' | 'shadowOffsetY' | 'filter' | 'lineWidth' | 'lineJoin' | 'miterLimit';
@@ -112,7 +111,7 @@ function boundedPaintState(reader: CanvasPixelDamageReader, context: CanvasRende
         reader.readState(context, 'shadowOffsetY') === 0 &&
         reader.readState(context, 'filter') === 'none');
 }
-function rectangle(x: unknown, y: unknown, width: unknown, height: unknown, margin = 0): ExactGpuMutationDamage {
+function rectangle(x: unknown, y: unknown, width: unknown, height: unknown, margin = 0): CanvasPixelDamage {
     if (!finiteNumber(x) || !finiteNumber(y) || !finiteNumber(width) || !finiteNumber(height))
         return fullDamage;
     const left = Math.min(x, x + width) - margin;
@@ -137,7 +136,7 @@ function strokeMargin(reader: CanvasPixelDamageReader, context: CanvasRenderingC
         return null;
     return (lineWidth / 2) * Math.max(1, miterLimit) + 1;
 }
-function textDamage(reader: CanvasPixelDamageReader, context: CanvasRenderingContext2D, arguments_: readonly unknown[], stroked: boolean): ExactGpuMutationDamage {
+function textDamage(reader: CanvasPixelDamageReader, context: CanvasRenderingContext2D, arguments_: readonly unknown[], stroked: boolean): CanvasPixelDamage {
     const [textValue, x, y, maximumWidth] = arguments_;
     const text = textValue === null ||
         typeof textValue === 'string' ||
@@ -179,7 +178,7 @@ function textDamage(reader: CanvasPixelDamageReader, context: CanvasRenderingCon
         return fullDamage;
     return { kind: 'rect', x: left, y: top, width: right - left, height: bottom - top };
 }
-function drawImageDamage(reader: CanvasPixelDamageReader, context: CanvasRenderingContext2D, arguments_: readonly unknown[]): ExactGpuMutationDamage {
+function drawImageDamage(reader: CanvasPixelDamageReader, context: CanvasRenderingContext2D, arguments_: readonly unknown[]): CanvasPixelDamage {
     if (arguments_.length !== 5 && arguments_.length !== 9)
         return fullDamage;
     if (!boundedPaintState(reader, context))
@@ -188,7 +187,7 @@ function drawImageDamage(reader: CanvasPixelDamageReader, context: CanvasRenderi
         return rectangle(arguments_[1], arguments_[2], arguments_[3], arguments_[4], 1);
     return rectangle(arguments_[5], arguments_[6], arguments_[7], arguments_[8], 1);
 }
-function putImageDataDamage(arguments_: readonly unknown[]): ExactGpuMutationDamage {
+function putImageDataDamage(arguments_: readonly unknown[]): CanvasPixelDamage {
     const [, destinationX, destinationY, dirtyX, dirtyY, dirtyWidth, dirtyHeight] = arguments_;
     if (arguments_.length === 3)
         return fullDamage;
@@ -210,7 +209,7 @@ function putImageDataDamage(arguments_: readonly unknown[]): ExactGpuMutationDam
     const sourceBottom = Math.max(sy, sy + sh);
     return rectangle(dx + sourceLeft, dy + sourceTop, Math.max(0, sourceRight - sourceLeft), Math.max(0, sourceBottom - sourceTop));
 }
-export function resolveCanvasPixelDamage(reader: CanvasPixelDamageReader, context: CanvasRenderingContext2D, method: CanvasMutationMethod, arguments_: readonly unknown[]): ExactGpuMutationDamage {
+export function resolveCanvasPixelDamage(reader: CanvasPixelDamageReader, context: CanvasRenderingContext2D, method: CanvasMutationMethod, arguments_: readonly unknown[]): CanvasPixelDamage {
     try {
         switch (method) {
             case 'clearRect':
@@ -248,6 +247,6 @@ export function resolveCanvasPixelDamage(reader: CanvasPixelDamageReader, contex
         return fullDamage;
     }
 }
-export function completeSurfacePixelDamage(): ExactGpuMutationDamage {
+export function completeSurfacePixelDamage(): CanvasPixelDamage {
     return fullDamage;
 }

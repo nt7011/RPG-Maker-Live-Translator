@@ -269,7 +269,7 @@ export function createBitmapFragmentGroups(options: {
         prepare,
         register,
         retire,
-        owner: (native: object) => owners.get(native)?.group,
+        owner: (native: object) => owners.get(native),
         dispose: () => {
             disposed = true;
             for (const group of groups)

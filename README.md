@@ -4,20 +4,24 @@ RPG Maker MV / MZ Live Translator - Simply translates the text on the game scree
 
 Supports most games. Since RPG Maker is a scriptable platform, no implementation of a translator will work against every game. Chances are that some games will have subtle issues or won't work at all.
 
-Intended to be used with LM Studio (but deepl API key support exists as well for users without a GPU - for now)
+One thing it will never do is break the game silently, which is a recurring problem with file based machine translations.
 
+A decent graphics card or an Apple Silicon mac required to run the LLM translation yourself (so that it's free).
 <p>
   <img src="docs-assets/demo-1.png" alt="Screenshot 1" width="49%">
   <img src="docs-assets/demo-2.png" alt="Screenshot 2" width="49%">
 </p>
 
-## How it works
+## How it works, simplified
 
-1. Intercepts all kinds of text draw.
-2. See if cached translation is available.
-3. If not, asynchronous translation request is sent to the LLM.
-4. When ready, fulfill the promise by clearing out the original and draw the translation in place.
-5. ~~Foresight: Tries to peek ahead of the dialogue and finds texts to pre-translate. Branching paths (user choices, if's) are supported.~~ (not yet reimplemented as of 5.0)
+| Game                   | Translator                                                |
+| ---------------------- | --------------------------------------------------------- |
+| I'm going to draw text | Saves the background                                      |
+| I've drawn the text    | Takes note                                                |
+| ??                     | Translation arrived - draw background and the translation |
+| GC'd                   | Forgets                                                   |
+
+Foresight: Tries to peek ahead of the dialogue and finds texts to pre-translate.
 
 ## Web Installer (Recommended)
 
@@ -25,32 +29,28 @@ https://rmlt.pages.dev
 
 Simply visit with a Chromium browser and point the game folder (where there's Game.exe).
 
-## Prerequisites:
+## Prerequisites
 
 1. If there's no `scripts/` in your game folder, it's probably been hidden inside `.exe` with Enigma Virtual Box. Unpack first.
-2. (Required for most games) Update the game's included nw.js library. All RPGMV/MZ games ship with nwjs installations - sometimes with very outdated ones that will not work with this addon. https://nwjs.io/downloads/ - Extract all files to the game directory (where Game.exe is) and change the name of nwjs.exe to Game.exe.
+
+2. Update the game's included nw.js library. All RPGMV/MZ games ship with nwjs installations - sometimes with very outdated ones that will not work with this addon. https://nwjs.io/downloads/ - Extract all files to the game directory (where Game.exe is) and change the name of nwjs.exe to Game.exe.
 
 ## Alternative Installations
 
-### Local Installer
-
-- Run `powershell -ExecutionPolicy Bypass -File local-installer\installer.ps1 -GameRoot "C:\Path\To\Game"`. If the release folders are already copied next to `Game.exe`, `-GameRoot` can be omitted.
-
-### Manual Installation
-
-1. Copy `live-translator/` to `js/plugins/live-translator/` or `www/js/plugins/live-translator/`.
-2. Copy `live-translator/config-templates/settings.release.json` to `js/plugins/live-translator/settings.json` or `www/js/plugins/live-translator/settings.json`.
-3. Copy `live-translator/config-templates/translator.release.json` to `js/plugins/live-translator/translator.json` or `www/js/plugins/live-translator/translator.json`.
-4. Add an enabled `plugins.js` entry named `live-translator/live-translator-loader`.
-5. Inspect `package.json` and make sure `name` field is not empty.
-
-Then, go to `js/plugins/live-translator/` or `www/js/plugins/live-translator/` to edit `translator.json` for provider settings and `settings.json` for addon behavior.
+Out of service. Go ask Codex or Claude to make one.
 
 ## Translators
 
-llamafile - 0-click LLM download and execution
+llamafile
 
-llama.cpp - for advanced users
+- 0-click LLM download and execution
+
+- artifacts will be kept in .rmlt/
+
+llama.cpp
+
+- for advanced users
+  . Batching is required (3+ recommended)
 
 LM Studio (deprecated)
 
@@ -103,3 +103,15 @@ The translator monitor opens automatically when the game starts. If you close it
 4.0 - Almost a complete rewrite: foresight support. compatibility improvements, batching, priority, performance optimizations, and more
 
 5.0 - Rewrite. New low level architecture.
+
+5.1 - reimplement foresight / performance improvements
+
+---
+
+RPG Maker MZ: ©Gotcha Gotcha Games Inc./YOJI OJIMA 2020.
+
+RPG Maker MV: ©Gotcha Gotcha Games Inc./YOJI OJIMA 2015.
+
+RPG MAKER is a registered trademark or trademark owned by Gotcha Gotcha Games Inc.
+
+This independent project is not affiliated with or endorsed by Gotcha Gotcha Games Inc.

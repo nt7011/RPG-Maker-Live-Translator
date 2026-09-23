@@ -107,6 +107,8 @@ interface TranslationRequestSourceCandidate {
     readonly signal?: unknown;
     readonly onDelta?: unknown;
     readonly onTranslatorExchange?: unknown;
+    readonly numericObservation?: unknown;
+    readonly dispatchGroup?: unknown;
     readonly timeoutMs?: unknown;
     readonly requestTimeoutMs?: unknown;
     readonly request_timeout_ms?: unknown;
@@ -298,6 +300,10 @@ const createTranslationManagerEligibilityController = function createController(
             stream: streamRequested && !!providerCapabilities && providerCapabilities.streaming === true,
             priority,
             signal: requestSource.signal,
+            ...(Object.hasOwn(requestSource, 'numericObservation')
+                ? { numericObservation: requestSource.numericObservation }
+                : {}),
+            ...(typeof requestSource.dispatchGroup === 'symbol' ? { dispatchGroup: requestSource.dispatchGroup } : {}),
             onDelta: typeof requestSource.onDelta === 'function' ? requestSource.onDelta : null,
             onTranslatorExchange: typeof requestSource.onTranslatorExchange === 'function' ? requestSource.onTranslatorExchange : null,
             timeoutMs: getPositiveSetting({ translation: requestSource }, ['timeoutMs', 'requestTimeoutMs', 'request_timeout_ms'], requestTimeoutMs),

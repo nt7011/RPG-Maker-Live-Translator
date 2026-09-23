@@ -1,6 +1,6 @@
 import type { CancellationModule } from '../cancellation.js';
-import { normalizeLlamafileConfig as parseLlamafileConfig, type LlamafileConfig, normalizeLlamaCppConfig as parseLlamaCppConfig, normalizeLmStudioConfig as parseLmStudioConfig, normalizeMockTranslatorConfig as parseMockTranslatorConfig, normalizeProviderName as parseProviderName, normalizeProviderSelection, MAX_PROVIDER_TIMEOUT_MS, type LlamaCppConfig, type LmStudioConfig, type MockTranslatorConfig, type NormalizedProviderSelection, } from './provider-schema.js';
-export type { LlamafileConfig, LlamaCppConfig, LmStudioConfig, MockTranslatorConfig } from './provider-schema.js';
+import { normalizeLlamafileConfig as parseLlamafileConfig, type LlamafileConfig, normalizeLlamaCppConfig as parseLlamaCppConfig, normalizeLmStudioConfig as parseLmStudioConfig, normalizeMockTranslatorConfig as parseMockTranslatorConfig, normalizeProviderName as parseProviderName, normalizeProviderSelection, MAX_PROVIDER_TIMEOUT_MS, type LlamaCppConfig, type LmStudioConfig, type MockTranslatorConfig, type NormalizedProviderSelection, } from '../../configuration/schema.js';
+export type { LlamafileConfig, LlamaCppConfig, LmStudioConfig, MockTranslatorConfig, } from '../../configuration/schema.js';
 type FalsySensitiveValue = string | number | boolean | bigint | symbol | object;
 type Falsy = false | 0 | 0n | '' | null | undefined;
 type StringCoercionCandidate = string | number | boolean | bigint | symbol | null | undefined;
@@ -676,7 +676,9 @@ export function createTranslationProviderCommonModule(cancellation: Cancellation
         const end = findBoundedUnquotedTagEnd(input, maxPartialLength);
         if (end >= 0) {
             const candidate = input.slice(0, end + 1);
-            const complete = kind === 'close' ? /^<\s*\/\s*think\s*>$/iu.test(candidate) : /^<\s*think\b[\s\S]*>$/iu.test(candidate);
+            const complete = kind === 'close'
+                ? /^<\s*\/\s*think\s*>$/iu.test(candidate)
+                : /^<\s*think(?:\s[\s\S]*|\/\s*)?>$/iu.test(candidate);
             if (!complete)
                 return { status: 'invalid', length: 0, selfClosing: false };
             return {
@@ -720,7 +722,11 @@ export function createTranslationProviderCommonModule(cancellation: Cancellation
         if (!matched.valid || !matched.complete)
             return matched.valid;
         index = matched.index;
-        return index >= input.length || !/[A-Za-z0-9_]/u.test(indexedCharacter(input, index));
+        if (index >= input.length)
+            return true;
+        if (/\s/u.test(indexedCharacter(input, index)))
+            return true;
+        return input[index] === '/' && skipTagWhitespace(input, index + 1) === input.length;
     }
     function isPartialThinkCloseTag(input: string): boolean {
         let index = skipTagWhitespace(input, 1);

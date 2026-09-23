@@ -31,3 +31,13 @@ export function nativeSourceSpans(text: string): readonly NativeSourceSpan[] | n
         spans.push({ kind: 'text', start, end: text.length });
     return spans;
 }
+export function isLiteralSource(text: string): boolean {
+    if (text.length === 0)
+        return false;
+    for (const character of text) {
+        const code = character.charCodeAt(0);
+        if ((code < 32 || (code >= 127 && code <= 159)) && !/[\s\p{White_Space}]/u.test(character))
+            return false;
+    }
+    return true;
+}
