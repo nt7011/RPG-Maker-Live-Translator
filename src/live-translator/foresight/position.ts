@@ -310,19 +310,19 @@ export function createForesightPosition(scope: object, limits: ForesightNativeLi
                         return null;
                     const { origin } = binding;
                     const receiver = origin.message.deref(), interpreter = origin.interpreter.deref(), list = origin.list.deref();
-                    const owner = binding.owner.deref(), state = binding.state.deref();
+                    const owner = binding.owner.deref();
+                    const currentState = own(owner, '_textState');
                     if (receiver === undefined ||
                         interpreter === undefined ||
                         list === undefined ||
                         owner === undefined ||
-                        state === undefined ||
                         origins.get(receiver) !== origin ||
                         generations.get(interpreter) !== origin.generation ||
                         own(interpreter, '_list') !== list ||
                         own(interpreter, '_index') !== origin.next ||
                         own(interpreter, '_waitMode') !== 'message' ||
-                        own(state, 'text') !== binding.text ||
-                        (own(owner, '_textState') !== state && own(owner, '_textState') !== null) ||
+                        (currentState !== null &&
+                            (currentState !== binding.state.deref() || own(currentState, 'text') !== binding.text)) ||
                         strings(own(receiver, '_texts'), limits, limits.captureReads)?.join('\n') !== origin.text ||
                         !sameStrings(origin.choices, strings(own(receiver, '_choices'), limits, limits.choices)))
                         return null;
